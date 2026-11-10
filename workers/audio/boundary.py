@@ -78,8 +78,12 @@ def validate_config(config, artifacts):
         p = canonical_path(name)
         if hashlib.sha256(p.read_bytes()).hexdigest() != digest:
             raise ValueError('BOUNDARY_STALE_CODE')
-    if config['legacy_lock']['path'] != str(paths['runtime_root'] / 'cache/gateway-generation.lock'):
-        raise ValueError('BOUNDARY_LEGACY_LOCK_PATH')
+    # Trusted owner binding assigns two independent coordination roles. The
+    # legacy lock stays at its pinned legacy location when model runtime moves.
+    shared, legacy = config['shared_lock'], config['legacy_lock']
+    if (shared['path'] == legacy['path'] or
+            (shared['device'], shared['inode']) == (legacy['device'], legacy['inode'])):
+        raise ValueError('BOUNDARY_LOCK_ROLE_COLLISION')
     for name in ('shared_lock', 'legacy_lock'):
         fd = open_existing_lock(config[name])
         os.close(fd)
