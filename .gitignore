@@ -1,0 +1,15 @@
+# Private operational bindings and generated data are never source.
+config/
+*.private.json
+.env
+.env.*
+__pycache__/
+*.pyc
+.venv/
+models/
+checkpoints/
+artifacts/
+outputs/
+*.wav
+*.sqlite*
+*.log
