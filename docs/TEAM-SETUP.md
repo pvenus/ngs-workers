@@ -93,3 +93,29 @@ Actual start commands and isolated tests are in
 [AudioForge README](../modules/audioforge/README.md). Do not remove `--check`
 from the commands above until the intended operator has completed this handoff.
 No LaunchAgent, request, DB or running service is created by this document.
+
+## ImageForge is a separate lightweight service
+
+ImageForge is included in this same repository but uses a separate service venv
+and data namespace. Its HTTP operations require Pillow/NumPy, not generation
+weights. Follow the package's [installation instructions](../modules/imageforge/README.md)
+with a new venv outside the checkout, on the main SSD. The MCP extra is separate
+from the HTTP service. Do not start a second server beside the existing port 8000
+LaunchAgent.
+
+For the internal layout, explicitly set `IMAGEFORGE_STORAGE_MODE=internal` and
+choose `IMAGEFORGE_STORAGE_BASE` outside the checkout. The intended role is
+`$HOME/Workspaces/Workers/data/imageforge`; its shared namespace is
+`resources/v1/imageforge`. Set `IMAGEFORGE_LEGACY_ROOT` and
+`IMAGEFORGE_LEGACY_INVENTORY` only to the intended owner's reviewed internal
+legacy directory and inventory. Existing private legacy files are not a template
+to distribute to new teammates. The module README specifies required directory
+modes and the owner/ACL/symlink/device checks. Do not weaken those checks to make
+an unprovisioned or copied layout start.
+
+Without explicit internal mode the package retains the old external-storage
+branch. The current operational launcher selects internal mode and checks the
+internal storage contract; a bare package install does not install that launcher,
+provision private data or authorize publication. Verify `/api/health`, not
+`/health`, after an explicit service handover. LTX and new video functionality
+remain excluded from this setup.
