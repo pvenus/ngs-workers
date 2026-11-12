@@ -21,6 +21,39 @@ clearance is implied. LTX migration and new video/Wan features remain on hold.
 
 ## Install code only
 
+### Create a new private workspace first
+
+The initializer prepares AudioForge and ImageForge directories and environment
+files together. It does not install packages, create a DB, download weights,
+start listeners or enable consumers. Use a **new** directory outside this Git
+checkout, with an existing owner-writable parent:
+
+```sh
+python3.12 -B scripts/init-workspace.py --root "$HOME/Workspaces/Workers-new"
+python3.12 -B scripts/init-workspace.py --root "$HOME/Workspaces/Workers-new" --apply
+```
+
+The first command only prints a plan. The second exclusively creates the workspace;
+it refuses an existing directory instead of merging or overwriting it. A partial
+failed initialization is retained for inspection, not deleted or retried in place.
+This is for a **new installation**, not a way to migrate the operating workspace.
+
+It creates `config/audioforge.env` and `config/imageforge.env` with owner-only
+permissions, separate data/runtime/log roles, and ImageForge's required internal
+namespace modes. Its empty legacy inventory means no private legacy resources
+were inherited. ACE/review weights, service venvs, identities and NGS bindings
+remain separately provisioned. No model terms are accepted or licenses invented.
+
+Review and source only the applicable environment file before the commands below.
+For example:
+
+```sh
+. "$HOME/Workspaces/Workers-new/config/audioforge.env"
+```
+
+The generated ACE path is a planned location, not evidence of installed models.
+Do not source a new-machine file over an operating service's preserved settings.
+
 The current model adapters target Apple Silicon/macOS. Use Python 3.11+ (the
 validated service environment uses 3.12). From the repository root, set
 `WORKERS_AUDIO_VENV` to a **new absolute path** outside the checkout and `PYTHON`
@@ -102,6 +135,19 @@ weights. Follow the package's [installation instructions](../modules/imageforge/
 with a new venv outside the checkout, on the main SSD. The MCP extra is separate
 from the HTTP service. Do not start a second server beside the existing port 8000
 LaunchAgent.
+
+For a workspace created by the initializer, install code into its **new** venv:
+
+```sh
+. "$HOME/Workspaces/Workers-new/config/imageforge.env"
+python3.12 -m venv "$WORKERS_IMAGE_VENV"
+"$WORKERS_IMAGE_VENV/bin/python" -m pip install -r modules/imageforge/requirements.http.lock.txt
+"$WORKERS_IMAGE_VENV/bin/python" -m pip install --no-deps modules/imageforge
+```
+
+These commands install HTTP code only. The initializer has already provisioned
+the empty internal namespace; no current owner's legacy data is needed or copied.
+Starting the server remains a separate, explicit ownership handoff.
 
 For the internal layout, explicitly set `IMAGEFORGE_STORAGE_MODE=internal` and
 choose `IMAGEFORGE_STORAGE_BASE` outside the checkout. The intended role is
