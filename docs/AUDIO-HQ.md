@@ -69,6 +69,12 @@ on a live queue as an installation test.
 
 NGS instead requires its separate owner-private mode-0600
 `Workers/config/ngs-music-hq.private.json`, schema `private.music-hq-boundary.v1`.
+NGS fixes HQ to `Workers/runtime/acestep-hq/source`; the old
+`Workers/runtime/acestep/source` remains untouched for v1. Use an independently
+installed Python 3.11/3.12 under an owner-trusted path. A group-writable parent of
+the resolved interpreter fails the guard; do not loosen the guard or modify
+global Homebrew permissions to get past it. The separate runtime must preserve
+the original two shared lock roles, not create an independent generation lock.
 It has the same binding keys/lock roles as v1, but a distinct exact 13-file pin set:
 the runner, resolved venv interpreter, pyvenv.cfg, Workers package init, audio
 package init/boundary/legacy_backend/hq_bridge, and AudioForge package
