@@ -58,7 +58,8 @@ For the preferred XL-SFT + LM4B asset bundle, follow [pinned model setup](MODEL-
 Its default dry-run uses no network, and only explicit `--download` obtains
 the official pinned weights/code-sync/notices into a separate new bundle.
 That completes artifact preparation only; full ACE source/dependency installation,
-checkpoint integration, the LM+XL formal worker and activation remain distinct.
+checkpoint integration and activation remain distinct. The [LM+XL formal worker](AUDIO-HQ.md)
+is implemented in source and synthetic-tested, but not activated or model-tested.
 The current Turbo-only service remains unchanged; its smaller no-LM asset bundle
 is an explicit compatibility choice, not completion of the preferred quality target.
 The 0.6B text encoder is shared by both configurations. This does not install review

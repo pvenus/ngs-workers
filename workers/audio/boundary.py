@@ -51,7 +51,8 @@ def validate_lock_fd(fd, pin):
 
 
 def validate_config(config, artifacts):
-    if config.get('schema') != 'private.music-boundary.v1':
+    hq = config.get('schema') == 'private.music-hq-boundary.v1'
+    if not hq and config.get('schema') != 'private.music-boundary.v1':
         raise ValueError('BOUNDARY_CONFIG_SCHEMA')
     paths = {k: canonical_path(config[k]) for k in ('runtime_root', 'artifact_root', 'runner_path')}
     launcher = Path(config['python_path'])
@@ -71,6 +72,16 @@ def validate_config(config, artifacts):
     required = {str(paths['runner_path']), str(target), str(venv_config)}
     required.add(str(Path(__file__).parents[1].joinpath('__init__.py').resolve()))
     required.update(str(Path(__file__).with_name(n).resolve()) for n in ('boundary.py','legacy_backend.py','__init__.py'))
+    if hq:
+        release = canonical_path(config['release_root'])
+        if release != Path(__file__).resolve().parents[2]:
+            raise ValueError('BOUNDARY_HQ_RELEASE_SCOPE')
+        package = release / 'modules/audioforge/audioforge'
+        if paths['runner_path'] != package / 'ace_hq_runner.py':
+            raise ValueError('BOUNDARY_HQ_RUNNER_SCOPE')
+        required.add(str(Path(__file__).with_name('hq_bridge.py').resolve()))
+        required.update(str(package / n) for n in ('__init__.py', 'backends.py',
+            'hq_contract.py', 'hq_backend.py', 'hq_pins.json'))
     pins = config['file_pins']
     if required != set(pins):
         raise ValueError('BOUNDARY_MISSING_CODE_PIN')
@@ -90,8 +101,23 @@ def validate_config(config, artifacts):
     return paths, artifact
 
 
+def hq_available(config):
+    """Metadata-only installation check, not a model load or generation test."""
+    if config.get('schema') != 'private.music-hq-boundary.v1':
+        return False
+    try:
+        paths, _ = validate_config(config, config['artifact_root'])
+        from .hq_bridge import available
+        return available(config, paths)
+    except Exception:
+        return False
+
+
 def generate_music(config, artifacts, prompt, duration, seed, model, output, cancelled, *, timeout=1100, settings=None):
     paths, artifact = validate_config(config, artifacts)
+    hq = config.get('schema') == 'private.music-hq-boundary.v1'
+    if (model == 'acestep-xl-sft-lm4b') != hq:
+        raise ValueError('BOUNDARY_PROFILE_BINDING_MISMATCH')
     if artifact == paths['artifact_root']:
         raise ValueError('BOUNDARY_REQUEST_DIRECTORY_REQUIRED')
     fd = open_existing_lock(config['shared_lock'])
@@ -108,12 +134,30 @@ def generate_music(config, artifacts, prompt, duration, seed, model, output, can
             raise RuntimeError('BOUNDARY_LEGACY_BUSY_NO_RETRY') from exc
         # Recheck after acquiring: stale configuration denies before backend/spawn.
         validate_config(config, artifacts)
-        from .legacy_backend import AceStepBackend
-        backend = AceStepBackend(runtime_root=paths['runtime_root'], artifact_root=artifact,
-            runner_path=paths['runner_path'], python_path=paths['python_path'],
-            shared_lock_fd=fd, shared_lock_pin=config['shared_lock'],
-            legacy_lock_fd=legacy_fd, legacy_lock_pin=config['legacy_lock'], timeout=timeout)
-        return backend.generate(prompt, duration, seed, model, output, cancelled, settings)
+        if hq:
+            from .hq_bridge import make_backend
+            def recheck():
+                validate_config(config, artifacts)
+                validate_lock_fd(fd, config['shared_lock'])
+                validate_lock_fd(legacy_fd, config['legacy_lock'])
+            backend = make_backend(config, paths, artifact, (fd, legacy_fd), recheck, timeout)
+            try:
+                return backend.generate(prompt, duration, seed, model, output, cancelled, settings)
+            except Exception as exc:
+                # The separately pinned AudioForge package has its own exception
+                # class. Translate only that verified class into this boundary's.
+                package = __import__(backend.__class__.__module__, fromlist=['Cancelled'])
+                if isinstance(exc, package.Cancelled):
+                    from . import Cancelled
+                    raise Cancelled() from exc
+                raise
+        else:
+            from .legacy_backend import AceStepBackend
+            backend = AceStepBackend(runtime_root=paths['runtime_root'], artifact_root=artifact,
+                runner_path=paths['runner_path'], python_path=paths['python_path'],
+                shared_lock_fd=fd, shared_lock_pin=config['shared_lock'],
+                legacy_lock_fd=legacy_fd, legacy_lock_pin=config['legacy_lock'], timeout=timeout)
+            return backend.generate(prompt, duration, seed, model, output, cancelled, settings)
     finally:
         # Never LOCK_UN: inherited child holds this open file description too.
         if legacy_fd is not None:

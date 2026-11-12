@@ -239,7 +239,7 @@ def main(argv=None):
     if args.list:
         if args.download or args.resume or args.verify or args.destination:
             parser.error('--list cannot be combined with actions')
-        print(json.dumps({k: {field: v[field] for field in ('status', 'name', 'role', 'preferred', 'currentGenerationAdapterSupported', 'reason') if field in v} for k, v in manifest['profiles'].items()}, indent=2))
+        print(json.dumps({k: {field: v[field] for field in ('status', 'name', 'role', 'preferred', 'currentGenerationAdapterSupported', 'sourceGenerationAdapterImplemented', 'adapterStatus', 'reason') if field in v} for k, v in manifest['profiles'].items()}, indent=2))
         return
     if not args.destination or (args.verify and (args.download or args.resume)) or (args.resume and not args.download):
         parser.error('supply --destination; --verify is separate; --resume requires --download')
@@ -259,6 +259,8 @@ def main(argv=None):
                   'runtimeRevision': value['runtimeRevision'], 'modelRevision': value['modelRevision'],
                   'plannerRevision': value.get('plannerRevision'), 'components': value['components'],
                   'role': value.get('role'), 'currentGenerationAdapterSupported': value.get('currentGenerationAdapterSupported', False),
+                  'sourceGenerationAdapterImplemented': value.get('sourceGenerationAdapterImplemented', False),
+                  'adapterStatus': value.get('adapterStatus'), 'liveGenerationValidated': value.get('liveGenerationValidated', False),
                   'prerequisites': value.get('prerequisites', []),
                   'license': value['license'], 'networkUsed': False, 'filesystemChanged': False,
                   'runtimeInstalled': False, 'activated': False}

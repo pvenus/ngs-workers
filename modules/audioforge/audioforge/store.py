@@ -8,6 +8,11 @@ from pathlib import Path
 from typing import Any
 from .config import DB_PATH, MAX_ATTEMPTS
 
+from .hq_contract import MODEL as HQ_MODEL, canonical, require_enabled, validate_payload
+
+class IdempotencyConflict(ValueError):
+    pass
+
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS jobs (
  id TEXT PRIMARY KEY, idempotency_key TEXT UNIQUE, status TEXT NOT NULL,
@@ -31,12 +36,23 @@ class Store:
     def now(): return datetime.now(timezone.utc).isoformat()
 
     def submit(self, request: dict[str, Any], key: str | None) -> tuple[dict[str, Any], bool]:
+        hq = request.get("model") == HQ_MODEL
+        if hq:
+            validate_payload(request)
         with self.lock, self.connect() as db:
+            db.execute("BEGIN IMMEDIATE")
             if key:
                 row = db.execute("SELECT * FROM jobs WHERE idempotency_key=?", (key,)).fetchone()
-                if row: return self.decode(row), False
+                if row:
+                    existing = self.decode(row)
+                    if hq or existing["request"].get("model") == HQ_MODEL:
+                        if canonical(existing["request"]) != canonical(request):
+                            raise IdempotencyConflict("IDEMPOTENCY_REQUEST_CONFLICT")
+                    return existing, False
+            if hq:
+                require_enabled()
             job_id, now = uuid.uuid4().hex, self.now()
-            db.execute("INSERT INTO jobs(id,idempotency_key,status,request_json,max_attempts,created_at,updated_at) VALUES(?,?,?,?,?,?,?)", (job_id,key,"queued",json.dumps(request),MAX_ATTEMPTS,now,now))
+            db.execute("INSERT INTO jobs(id,idempotency_key,status,request_json,max_attempts,created_at,updated_at) VALUES(?,?,?,?,?,?,?)", (job_id,key,"queued",json.dumps(request),1 if hq else MAX_ATTEMPTS,now,now))
             db.commit(); return self.get(job_id), True
 
     def get(self, job_id: str) -> dict[str, Any]:
@@ -54,7 +70,14 @@ class Store:
 
     def recover_running(self):
         with self.lock, self.connect() as db:
-            db.execute("UPDATE jobs SET status='queued',error='recovered after service restart',updated_at=? WHERE status='running'", (self.now(),))
+            # HQ interrupted execution is uncertain and must never be regenerated automatically.
+            rows = db.execute("SELECT id,request_json FROM jobs WHERE status='running'").fetchall()
+            for row in rows:
+                hq = json.loads(row["request_json"]).get("model") == HQ_MODEL
+                db.execute("UPDATE jobs SET status=?,error=?,updated_at=? WHERE id=?",
+                           ("failed" if hq else "queued",
+                            "HQ_INTERRUPTED_RECONCILIATION_REQUIRED" if hq else "recovered after service restart",
+                            self.now(), row["id"]))
             db.commit()
 
     def request_cancel(self, job_id: str) -> dict[str, Any]:
@@ -68,7 +91,7 @@ class Store:
     def finish(self, job_id: str, artifact_id: str): self._update(job_id, status="completed", artifact_id=artifact_id, error=None)
     def cancel(self, job_id: str): self._update(job_id, status="cancelled")
     def fail_or_retry(self, job_id: str, error: str):
-        job = self.get(job_id); status = "queued" if job["attempts"] < job["max_attempts"] and not job["cancel_requested"] else "failed"
+        job = self.get(job_id); status = "queued" if job["request"].get("model") != HQ_MODEL and job["attempts"] < job["max_attempts"] and not job["cancel_requested"] else "failed"
         self._update(job_id, status=status, error=error)
 
     def _update(self, job_id: str, **values):

@@ -112,14 +112,20 @@ environment variable. Provision/install that separate runtime, reconcile its
 checkpoint directory, and perform the explicit activation handoff before using
 real requests. Do not symlink it over someone else's live data as a shortcut.
 
-The high-quality formal worker is still a real implementation gap: LM planning
-must finish, persist its exact audio-code/metadata provenance and unload before
-the XL renderer consumes those codes through the authorized request path.
-The historical reference used MLX BF16 for the LM, then MPS FP32 XL-SFT with
-50 steps, guidance 7 and shift 3, MLX DiT/VAE disabled, and direct model placement
-to avoid duplicate CPU/MPS residency. Merely changing the existing Turbo config,
-setting `thinking=true`, or downloading these files does not implement that
-contract. No existing request duration, approval or retry limit is expanded here.
+The high-quality formal worker is now implemented in source, **not activated**.
+[HQ request contract](AUDIO-HQ.md) describes the explicit new profile. It persists
+LM audio-code/metadata provenance, waits for that child process to exit, then
+starts XL-SFT in a separate child. MLX BF16 LM and MPS FP32 XL-SFT retain the
+historical 50-step / guidance 7 / shift 3 settings. MLX DiT/VAE are disabled;
+direct model placement avoids deliberate duplicate CPU/MPS residency.
+
+Validation to date is synthetic subprocess, request/queue and pin-boundary tests
+only. No model was loaded, downloaded or used to generate content in this change.
+`currentGenerationAdapterSupported:false` records the **unchanged operating
+binding**, while `sourceGenerationAdapterImplemented:true` records the new code.
+The new profile needs its own explicit activation and runtime integrity check.
+Existing Turbo requests, duration limits, approvals and retries are not upgraded
+implicitly. `thinking=true` or downloading weights does not activate the pipeline.
 
 Official model names describe a 4B-class + 4B-class combination. The pinned HF
 safetensors metadata actually reports **4,987,310,726 F32 XL parameters** and

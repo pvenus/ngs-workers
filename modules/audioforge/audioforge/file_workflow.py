@@ -14,7 +14,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 import httpx
-from pydantic import BaseModel, Field, ConfigDict
+from pydantic import BaseModel, Field, ConfigDict, model_validator
 
 from .config import API_URL, ARTIFACT_DIR, DATA_DIR, DB_PATH
 from .gateway_catalog import Catalog
@@ -27,6 +27,15 @@ REVIEW_DIR = DATA_DIR / "reviews" / "bgm-local-v1"
 
 
 class BgmRequest(BaseModel):
+    @model_validator(mode="before")
+    @classmethod
+    def validate_hq_raw(cls, value):
+        from .hq_contract import MODEL, validate_call
+        if isinstance(value, dict) and value.get("model") == MODEL:
+            validate_call(value.get("prompt"), value.get("duration_seconds"), value.get("seed"),
+                          MODEL, value.get("generation_settings", {}), "music")
+        return value
+
     model_config = ConfigDict(extra="forbid")
     schema_version: int = Field(default=1, ge=1, le=1)
     request_id: str = Field(pattern=r"^[0-9a-f]{32}$")
@@ -161,6 +170,11 @@ class FileWorkflow:
             ready = self.generation.ready()
             if ready.get("backend") == "mock" and not self.allow_mock:
                 raise RuntimeError("generation backend is mock; real BGM queue is paused")
+            from .hq_contract import MODEL as HQ_MODEL
+            hq = ready.get("profiles", {}).get(HQ_MODEL, {}) if item.model == HQ_MODEL else {}
+            if item.model == HQ_MODEL and hq.get("enabled") is not True:
+                state.update(last_error="HQ profile unavailable; submission deferred")
+                return None
             if ready.get("ready") is False:
                 state.update(last_error="generation service is not ready; submission deferred")
                 return None

@@ -534,15 +534,18 @@
           "shift": 3.0,
           "input": "exact stage1 audio_codes, plus the authorized prompt/lyrics"
         },
-        "note": "Historical reference settings only, not an active request contract or guarantee of quality. Current Turbo-only formal adapter must be extended before this pipeline can be selected."
+        "note": "Versioned source adapter ace-xl-sft-lm4b.v1 now implements this sequential plan with synthetic-only validation. Existing live Turbo binding remains unchanged; HQ activation and real inference validation are not performed."
       },
       "prerequisites": [
         "Full ACE source at runtimeRevision, including acestep.models.common and MLX LM runtime dependencies.",
         "Separate Python 3.11/3.12 model environment; LM and renderer execute sequentially to avoid needless residency overlap.",
-        "Formal request/worker support for XL-SFT plus LM4B is not implemented by this asset helper. Existing Turbo-only guards remain unchanged.",
+        "Separate explicit HQ request and owner binding/activation are required. The source adapter is implemented and synthetic-tested, but no operating request is switched and no real model inference is certified.",
         "New pinned bundle verification is not proof of existing installed shard integrity or fresh inference readiness.",
         "Do not replace the active model, request defaults or data while preparing the bundle."
-      ]
+      ],
+      "sourceGenerationAdapterImplemented": true,
+      "adapterStatus": "source-complete-synthetic-tests-only",
+      "liveGenerationValidated": false
     },
     "acestep-turbo": {
       "status": "explicit-download-supported",

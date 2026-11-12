@@ -17,4 +17,4 @@ audioforge-review-api = "audioforge.review_api:main"
 include = ["audioforge*"]
 
 [tool.setuptools.package-data]
-audioforge = ["review_static/*"]
+audioforge = ["review_static/*", "hq_pins.json"]

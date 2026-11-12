@@ -42,6 +42,8 @@ class ModelAssetTests(unittest.TestCase):
         self.assertEqual(result['state'], 'dry-run')
         self.assertEqual(result['profile'], 'acestep-xl-sft-lm4b')
         self.assertFalse(result['currentGenerationAdapterSupported'])
+        self.assertTrue(result['sourceGenerationAdapterImplemented'])
+        self.assertFalse(result['liveGenerationValidated'])
         self.assertFalse(dest.exists())
 
     def test_high_quality_profile_is_distinct_from_compatibility_baseline(self):

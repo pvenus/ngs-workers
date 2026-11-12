@@ -2,12 +2,13 @@ from __future__ import annotations
 import json
 from contextlib import asynccontextmanager
 from pathlib import Path
-from fastapi import FastAPI, Header, HTTPException
+from fastapi import FastAPI, Header, HTTPException, Request
 from fastapi.responses import FileResponse, JSONResponse
 from .config import ARTIFACT_DIR, BACKEND, DB_PATH, MODEL, MODEL_LICENSE, MODEL_VERSION
 from .schemas import GenerateRequest, LoopPostprocessRequest
 from .service import Worker
-from .store import Store
+from .store import Store, IdempotencyConflict
+from .hq_contract import MODEL as HQ_MODEL, PROFILE_VERSION, enabled
 
 def create_app(db_path: Path = DB_PATH, artifact_dir: Path = ARTIFACT_DIR, backend: str = BACKEND) -> FastAPI:
     store=Store(db_path); worker=Worker(store,artifact_dir,backend)
@@ -19,13 +20,37 @@ def create_app(db_path: Path = DB_PATH, artifact_dir: Path = ARTIFACT_DIR, backe
     @app.get("/health")
     def health(): return {"ok":True,"service":"audioforge","queue":"sqlite","concurrency":1}
 
+    def hq_profile():
+        return {"model": HQ_MODEL, "profile_version": PROFILE_VERSION,
+                "enabled": enabled(), "status": "enabled_unverified" if enabled() else "disabled",
+                "runtime_verified": False, "model_loaded": False}
+
     @app.get("/ready")
-    def ready(): return {"ready":True,"backend":backend,"model_loaded":False,"lazy_load":True,"profile":MODEL}
+    def ready(): return {"ready":True,"backend":backend,"model_loaded":False,"lazy_load":True,"profile":MODEL,
+                         "profiles": {HQ_MODEL: hq_profile()}}
 
     @app.post("/v1/jobs",status_code=202)
-    def submit(request: GenerateRequest,idempotency_key: str|None=Header(default=None,alias="Idempotency-Key")):
-        payload=request.model_dump(); key=idempotency_key or payload.pop("idempotency_key",None)
-        job,created=store.submit(payload,key); return JSONResponse({"created":created,**job},status_code=202 if created else 200)
+    async def submit(request: GenerateRequest, raw_request: Request, idempotency_key: str|None=Header(default=None,alias="Idempotency-Key")):
+        payload=request.model_dump()
+        if request.model == HQ_MODEL:
+            # Preserve exact nested types and explicit values for durable replay/conflict checks.
+            payload.update(await raw_request.json())
+        if request.model == HQ_MODEL:
+            body_key=payload.pop("idempotency_key",None)
+            key=idempotency_key or body_key
+        else:
+            key=idempotency_key or payload.pop("idempotency_key",None)
+        try:
+            job,created=store.submit(payload,key)
+        except IdempotencyConflict as exc:
+            raise HTTPException(409,str(exc))
+        except ValueError as exc:
+            raise HTTPException(422,str(exc))
+        except RuntimeError as exc:
+            if str(exc) == "HQ_PROFILE_NOT_ACTIVATED":
+                raise HTTPException(503,str(exc))
+            raise
+        return JSONResponse({"created":created,**job},status_code=202 if created else 200)
 
     @app.get("/v1/jobs/{job_id}")
     def get_job(job_id:str):
@@ -55,7 +80,7 @@ def create_app(db_path: Path = DB_PATH, artifact_dir: Path = ARTIFACT_DIR, backe
 
     @app.get("/v1/profiles")
     def profiles():
-        return {"active":{"provider":"stability-ai","profile":"small-sfx","backend":backend,"model_version":MODEL_VERSION,"license":MODEL_LICENSE},"expandable":[{"profile":"small-music","enabled":False},{"profile":"medium-mlx","enabled":False},{"provider":"ace-step","profile":"2b","enabled":False}],"license_acceptance_performed":False}
+        return {"active":{"provider":"stability-ai","profile":"small-sfx","backend":backend,"model_version":MODEL_VERSION,"license":MODEL_LICENSE},"expandable":[{"profile":"small-music","enabled":False},{"profile":"medium-mlx","enabled":False},{"provider":"ace-step","profile":"2b","enabled":False}],"license_acceptance_performed":False,"hq":hq_profile()}
     return app
 
 app=create_app()
