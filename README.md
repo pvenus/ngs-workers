@@ -17,9 +17,12 @@ consumer. See the [team setup checklist](docs/TEAM-SETUP.md) for installation an
 activation boundaries.
 
 For model assets, [pinned model setup](docs/MODEL-SETUP.md) provides an offline
-plan and an explicit resumable download command for the current ACE Turbo
-bundle, with official revisions, license provenance and per-file hashes.
-It does not install the model Python runtime or activate any worker. ImageForge
+plan and an explicit resumable download command for the preferred **XL-SFT + LM4B**
+high-quality bundle, with official revisions, license provenance and per-file hashes.
+The smaller no-LM Turbo bundle is only a compatibility baseline, not the final
+music target. The 0.6B component is a shared text encoder, not the music generator.
+The high-quality formal adapter remains to be implemented: artifact preparation
+does not install its Python runtime or activate a worker. ImageForge
 needs no model; review-license and legacy/video routes remain separate or held.
 
 `modules/audioforge` now contains the existing operational AudioForge package and isolated tests, not just the original music boundary. New-machine code installation: `sh scripts/setup-audioforge.sh`. See [worker setup and limits](modules/audioforge/README.md) and the [private team setup checklist](docs/TEAM-SETUP.md). This source registration does not change operating launchd services or move data. Video/character workers and model-runtime installation are still separate migration work; this repository is not yet a complete public bootstrap.

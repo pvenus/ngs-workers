@@ -38,8 +38,30 @@ class ModelAssetTests(unittest.TestCase):
         dest = self.root / 'planned'
         with patch.object(m, 'network', side_effect=AssertionError('network forbidden')), contextlib.redirect_stdout(io.StringIO()) as out:
             m.main(['--destination', str(dest)])
-        self.assertEqual(json.loads(out.getvalue())['state'], 'dry-run')
+        result = json.loads(out.getvalue())
+        self.assertEqual(result['state'], 'dry-run')
+        self.assertEqual(result['profile'], 'acestep-xl-sft-lm4b')
+        self.assertFalse(result['currentGenerationAdapterSupported'])
         self.assertFalse(dest.exists())
+
+    def test_high_quality_profile_is_distinct_from_compatibility_baseline(self):
+        manifest, _ = m.load_manifest()
+        hq = m.select(manifest, 'acestep-xl-sft-lm4b')
+        baseline = m.select(manifest, 'acestep-turbo')
+        self.assertTrue(hq['preferred'])
+        self.assertFalse(baseline['preferred'])
+        self.assertIn('acestep-5Hz-lm-4B', hq['components'])
+        self.assertNotIn('acestep-5Hz-lm-4B', baseline['components'])
+        self.assertEqual(hq['artifactTensorMetadata']['acestep-v15-xl-sft']['dtype'], 'F32')
+        sync = [x for x in hq['files'] if x['origin'] == 'official-pinned-runtime-code-sync']
+        self.assertEqual(len(sync), 3)
+        self.assertEqual(len({x['path'] for x in hq['files']}), len(hq['files']))
+        lfs = [x for x in hq['files'] if x.get('integrityBasis') == 'hf-lfs-sha256']
+        self.assertEqual(len(lfs), 9)
+        self.assertTrue(all(x['gitBlobSha1'] is None for x in lfs))
+        lfs[0]['gitBlobSha1'] = lfs[0]['gitLfsPointerBlobSha1']
+        with self.assertRaisesRegex(ValueError, 'LFS_POINTER_IS_NOT_ARTIFACT_CONTENT_HASH'):
+            m.select(manifest, 'acestep-xl-sft-lm4b')
 
     def test_held_profiles_and_unsafe_paths_rejected(self):
         manifest, _ = m.load_manifest()

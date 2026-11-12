@@ -5,6 +5,12 @@ an operating-service migration or a one-command model runtime installer. The
 script is standard-library Python, defaults to an offline plan and never imports
 Torch/MLX, runs generation, changes a service or selects a model for NGS.
 
+**Preferred music target: XL-SFT + 5Hz LM4B, the previously used high-quality
+4B-class + 4B-class pipeline.** The smaller no-LM Turbo profile prepared first
+is only a compatibility baseline, not completion of this quality goal.
+Qwen3-Embedding-0.6B is the shared **text encoder**, not a standalone music
+generator and not a substitute for the separate 4B planning LM.
+
 ## Current model registry
 
 `manifests/model-assets.v1.json` records scope, official sources, immutable
@@ -12,17 +18,18 @@ revisions, artifact sizes, SHA-256 and available Git blob hashes.
 
 | Profile | Setup status |
 | --- | --- |
-| `acestep-turbo` | Explicit pinned download supported: Turbo, Qwen3-Embedding-0.6B, official VAE |
+| `acestep-xl-sft-lm4b` | **Default asset plan**: XL-SFT + LM4B + shared text encoder/VAE; formal generation adapter not yet implemented |
+| `acestep-turbo` | Explicit compatibility baseline: smaller Turbo + text encoder/VAE, no planning LM; not the preferred final music target |
 | `imageforge-http` | No model download: current HTTP image operations use Pillow/NumPy |
 | `qwen25-omni-review` | Held: existing GGUF review code records conflicting license metadata/provenance |
 | `stable-audio-legacy` | Held: independent runtime and license/eligibility need review |
 | `video` | Excluded: LTX migration and new video/Wan features remain on hold |
 
 This manifest is installation metadata, not the operational model/request
-registry and not an authorization grant. It does not enable extra ACE LM/XL
-profiles or make unsupported requests valid. The current instrument-only adapter
-uses Turbo with thinking disabled; this bundle intentionally excludes LM 1.7B,
-LM 4B and XL checkpoints. ImageForge is not an image-generation model installer.
+registry and not an authorization grant. Download support does not enable LM/XL
+requests in the operating service. The current instrument-only adapter still
+allows only Turbo with thinking disabled. Its limits and guards are unchanged.
+ImageForge is not an image-generation model installer.
 
 ## Plan first, then explicitly download
 
@@ -32,22 +39,22 @@ whose parent exists. Do not point at an operating model directory.
 ```sh
 python3.12 -B scripts/model-assets.py --list
 python3.12 -B scripts/model-assets.py \
-  --profile acestep-turbo \
-  --destination "$HOME/Workspaces/Workers-new/runtime/ace-turbo-bundle"
+  --profile acestep-xl-sft-lm4b \
+  --destination "$HOME/Workspaces/Workers-new/runtime/ace-hq-bundle"
 ```
 
 The default prints the exact model/code pins, licenses, size and destination.
-It creates nothing and uses no network. The selected bundle has **21 files,
-6,336,813,493 download bytes** (about 5.90 GiB), including notices and two code-sync
-files. Allow at least another 512 MiB free for this transfer. Python dependencies,
+It creates nothing and uses no network. The default high-quality bundle has
+**44 files, 29,924,538,685 download bytes** (about 27.87 GiB), including notices
+and three code-sync files. Allow at least another 512 MiB free for this transfer. Python dependencies,
 the full source checkout, model cache and inference memory are additional.
 
 Only after reviewing the plan and license notes, explicitly request the download:
 
 ```sh
 python3.12 -B scripts/model-assets.py \
-  --profile acestep-turbo \
-  --destination "$HOME/Workspaces/Workers-new/runtime/ace-turbo-bundle" \
+  --profile acestep-xl-sft-lm4b \
+  --destination "$HOME/Workspaces/Workers-new/runtime/ace-hq-bundle" \
   --download
 ```
 
@@ -70,8 +77,8 @@ To verify an existing bundle without network or changing configuration:
 
 ```sh
 python3.12 -B scripts/model-assets.py \
-  --profile acestep-turbo \
-  --destination "$HOME/Workspaces/Workers-new/runtime/ace-turbo-bundle" \
+  --profile acestep-xl-sft-lm4b \
+  --destination "$HOME/Workspaces/Workers-new/runtime/ace-hq-bundle" \
   --verify
 ```
 
@@ -80,14 +87,18 @@ not a model-load, inference, content-acceptance or operational-readiness result.
 
 ## Runtime compatibility, not activation
 
-The bundle preserves the current installation's two independent pins:
+The preferred bundle preserves the model pins found in prior successful use:
 
-- Model repository `ACE-Step/Ace-Step1.5` revision
+- Renderer `ACE-Step/acestep-v15-xl-sft` revision
+  `d06de46b4622f781cf07f4a013a67d591ca52819`.
+- Planner `ACE-Step/acestep-5Hz-lm-4B` revision
+  `0a3ec94b557aea7d508da38b31cfe7341f6ff737`.
+- Shared text encoder/VAE from `ACE-Step/Ace-Step1.5` revision
   `19671f406d603126926c1b7e2adc169acbcade22`.
 - ACE runtime source revision `ca1e85fe9430179831e6bc6be790c332190a3866`.
 
 The original HF Python files are preserved under `upstream-original/`. Under
-`checkpoints/acestep-v15-turbo`, the two corresponding files come from the pinned
+`checkpoints/acestep-v15-xl-sft`, three corresponding files come from the pinned
 official runtime source instead. This matches the upstream downloader's model
 code sync and the observed existing installation, rather than silently treating
 HF-only files as identical. Both versions are hashed and attributable.
@@ -100,6 +111,49 @@ command never copies there, replaces an existing checkpoint or modifies that
 environment variable. Provision/install that separate runtime, reconcile its
 checkpoint directory, and perform the explicit activation handoff before using
 real requests. Do not symlink it over someone else's live data as a shortcut.
+
+The high-quality formal worker is still a real implementation gap: LM planning
+must finish, persist its exact audio-code/metadata provenance and unload before
+the XL renderer consumes those codes through the authorized request path.
+The historical reference used MLX BF16 for the LM, then MPS FP32 XL-SFT with
+50 steps, guidance 7 and shift 3, MLX DiT/VAE disabled, and direct model placement
+to avoid duplicate CPU/MPS residency. Merely changing the existing Turbo config,
+setting `thinking=true`, or downloading these files does not implement that
+contract. No existing request duration, approval or retry limit is expanded here.
+
+Official model names describe a 4B-class + 4B-class combination. The pinned HF
+safetensors metadata actually reports **4,987,310,726 F32 XL parameters** and
+**4,189,554,176 BF16 LM parameters**. XL's README labels a size row “bf16”; do not
+mistake that wording for a BF16 artifact. The manifest records the actual dtype.
+
+### Historical execution and memory limits
+
+Retained settings/audio-code hashes and existing WAV headers identify 18 successful
+XL-SFT+LM4B pairs, including 14 FP32 renderer runs. A separate XL-Turbo+LM4B
+comparison and two LM1.7B comparisons are not counted as that target. For example:
+
+| Output duration | Separate LM time | XL-SFT time | Sampled swap increase |
+| --- | ---: | ---: | ---: |
+| 40 seconds | 26.19 s | 36.24 s | 0 MiB |
+| 72 seconds | 28.20 s | 62.48 s | 0 MiB |
+| 192 seconds | 38.26 s | 171.27 s | 0 MiB |
+
+These are historical local measurements, not fresh load tests or speed promises.
+Representative LM peak RSS was about 8.94–8.95 GiB; this is **not total unified/GPU
+memory**. The lowest sampled free+inactive+speculative estimate in those FP32
+runs was 24.19 GiB, also not a reliable total model-allocation measure. Sequential
+loading, actual memory pressure and swap monitoring remain required. A 96GB
+machine's installed RAM alone does not certify readiness or safe concurrency.
+Existing weights were not rehashed in this review; one SFT shard lacks its local
+cache metadata, so installed-file integrity is not asserted from size alone.
+
+### Compatibility baseline, explicitly selected
+
+`--profile acestep-turbo` still plans/downloads the prior **21-file,
+6,336,813,493-byte** smaller Turbo bundle into its own new destination. It has no
+4B planning LM and is not the preferred quality target. This keeps the currently
+implemented Turbo adapter reproducible without presenting it as final music setup.
+Do not install both bundles by default; their shared encoder/VAE would be duplicated.
 
 No runtime installation or real download was performed when implementing this
 helper. Its transfer/resume/hash behavior was tested with small synthetic bytes;
@@ -119,8 +173,16 @@ installation evidence, without re-reading the large weights.
   upstream attribution/notice requirements rather than relicense the encoder
   solely from ACE's aggregate MIT tag. Exact upstream-versus-bundled weight
   equivalence was not independently established.
+- [Pinned XL-SFT](https://huggingface.co/ACE-Step/acestep-v15-xl-sft/blob/d06de46b4622f781cf07f4a013a67d591ca52819/README.md)
+  and [LM4B](https://huggingface.co/ACE-Step/acestep-5Hz-lm-4B/blob/0a3ec94b557aea7d508da38b31cfe7341f6ff737/README.md)
+  cards declare MIT; neither tree has a separate LICENSE. Their pinned READMEs
+  are retained with the checkpoint files.
+- LM4B identifies Qwen3-4B as its base. Its [upstream Apache-2.0 LICENSE](https://huggingface.co/Qwen/Qwen3-4B/blob/1cfa9a7208912126459214e8b04321603b3df60c/LICENSE)
+  and README are retained separately. These are pinned upstream notices, not
+  proof of the exact base revision used to train the ACE LM.
 
-These three pinned documents are included in `notices/` by the explicit download.
+The three shared notices plus Qwen3-4B README/LICENSE are included in `notices/`
+for the high-quality bundle, in addition to its two checkpoint READMEs.
 The manifest does not certify all weights' provenance, grant blanket commercial
 rights, or clear the Workers repository/public redistribution. Model licensing
 also does not guarantee that a particular generated piece avoids third-party

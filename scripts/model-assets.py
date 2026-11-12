@@ -64,6 +64,8 @@ def select(manifest, profile):
         seen.add(name)
         if file.get('gitBlobSha1') and not re.fullmatch('[a-f0-9]{40}', file['gitBlobSha1']):
             raise ValueError('INVALID_GIT_BLOB_HASH')
+        if file.get('integrityBasis') == 'hf-lfs-sha256' and file.get('gitBlobSha1'):
+            raise ValueError('LFS_POINTER_IS_NOT_ARTIFACT_CONTENT_HASH')
         allowed_url(file['url'])
     return value
 
@@ -228,7 +230,7 @@ def main(argv=None):
     manifest, manifest_sha = load_manifest()
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--list', action='store_true')
-    parser.add_argument('--profile', default='acestep-turbo')
+    parser.add_argument('--profile', default=manifest.get('defaultProfile', 'acestep-turbo'))
     parser.add_argument('--destination')
     parser.add_argument('--download', action='store_true', help='Explicitly fetch pinned official artifacts into a NEW bundle')
     parser.add_argument('--resume', action='store_true', help='With --download only; resume this exact owned bundle, never truncate partials')
@@ -237,7 +239,7 @@ def main(argv=None):
     if args.list:
         if args.download or args.resume or args.verify or args.destination:
             parser.error('--list cannot be combined with actions')
-        print(json.dumps({k: {field: v[field] for field in ('status', 'reason') if field in v} for k, v in manifest['profiles'].items()}, indent=2))
+        print(json.dumps({k: {field: v[field] for field in ('status', 'name', 'role', 'preferred', 'currentGenerationAdapterSupported', 'reason') if field in v} for k, v in manifest['profiles'].items()}, indent=2))
         return
     if not args.destination or (args.verify and (args.download or args.resume)) or (args.resume and not args.download):
         parser.error('supply --destination; --verify is separate; --resume requires --download')
@@ -255,6 +257,9 @@ def main(argv=None):
         result = {'state': 'dry-run', 'profile': args.profile, 'destination': str(root),
                   'fileCount': len(value['files']), 'downloadBytes': sum(r['size'] for r in value['files']),
                   'runtimeRevision': value['runtimeRevision'], 'modelRevision': value['modelRevision'],
+                  'plannerRevision': value.get('plannerRevision'), 'components': value['components'],
+                  'role': value.get('role'), 'currentGenerationAdapterSupported': value.get('currentGenerationAdapterSupported', False),
+                  'prerequisites': value.get('prerequisites', []),
                   'license': value['license'], 'networkUsed': False, 'filesystemChanged': False,
                   'runtimeInstalled': False, 'activated': False}
     print(json.dumps(result, indent=2))
