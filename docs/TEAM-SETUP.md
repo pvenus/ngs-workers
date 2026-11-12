@@ -1,0 +1,95 @@
+# Team setup: one Workers repository, separate runtime and data
+
+This is the private unified Workers repository. AudioForge's generation API,
+catalog API, review API and file consumer use one package in `modules/audioforge`
+and one launcher. `workers/audio` is the separate pinned NGS music boundary;
+installing AudioForge does not configure that boundary or grant NGS permissions.
+Use the team's approved private clone/revision. No public release or model-license
+clearance is implied. LTX migration and new video/Wan features remain on hold.
+
+## Keep four things separate
+
+- **Git checkout:** source only, no credentials, queues, DBs or weights.
+- **Service environment:** a private Python venv outside the checkout, on the main
+  SSD for always-on operation. This contains lightweight API dependencies, not models.
+- **Audio data directory:** dedicated, outside the checkout. It owns `queue.sqlite3`,
+  `artifacts`, `bgm-requests`, `bgm-request-state` and `reviews`. Preserve the entire
+  existing directory when relocating, including request IDs and recovery history.
+- **Model environments/weights:** separately provisioned and licensed. ACE's model
+  Python is distinct from the service Python. Do not copy another owner's private
+  operational data or credentials as a new-machine template.
+
+## Install code only
+
+The current model adapters target Apple Silicon/macOS. Use Python 3.11+ (the
+validated service environment uses 3.12). From the repository root, set
+`WORKERS_AUDIO_VENV` to a **new absolute path** outside the checkout and `PYTHON`
+to the intended Python interpreter, then run:
+
+```sh
+sh scripts/setup-audioforge.sh
+```
+
+Export those variables first so the script receives them. The installer creates
+a venv, installs `requirements.lock.txt` and the local module, then imports the
+file worker. It does not start services, download models or consume requests.
+It needs official package-registry access or populated cache. Inspect any existing
+venv before reuse; the setup script is not a no-overwrite migration tool.
+
+## Configure without starting
+
+Copy `config/audioforge.env.example` to an owner-private location outside Git and
+restrict access. Set `WORKERS_DATA_ROOT` and `ACE_RUNTIME_ROOT` to your actual
+absolute directories; neither contains an inherited teammate path. Source the
+private copy only after reviewing it. It explicitly selects ACE, not mock.
+Preserve any existing DB/artifact overrides instead of applying defaults over them.
+
+With `WORKERS_AUDIO_VENV` still exported, run from the repository root:
+
+```sh
+"$WORKERS_AUDIO_VENV/bin/python" scripts/run-audioforge.py generation --check
+"$WORKERS_AUDIO_VENV/bin/python" scripts/run-audioforge.py catalog --check
+"$WORKERS_AUDIO_VENV/bin/python" scripts/run-audioforge.py review --check
+"$WORKERS_AUDIO_VENV/bin/python" scripts/run-audioforge.py file-worker --check
+```
+
+These commands inspect source/config only. A passing check does **not** prove
+model readiness, licenses, DB compatibility, free ports or authorization. The
+launcher forces the same Git package into review subprocesses. Do not run from
+an unreviewed or concurrently edited checkout for persistent operation.
+
+## Prerequisites before enabling consumption
+
+- **ACE:** an approved existing runtime with `source/.venv/bin/python`, its pinned
+  ACE source/checkpoints and offline cache. The adapter expects these under
+  `AUDIOFORGE_ACESTEP_ROOT`; service pip installation does not supply them.
+  Preserve model pins/licenses and native memory protection. Do not download or
+  accept model terms implicitly during startup.
+- **Review:** the current evaluator uses the Homebrew-installed `llama-mtmd-cli`
+  at its code-defined location and macOS memory tools. It requires
+  `models/qwen25-omni-7b-q4/Qwen2.5-Omni-7B-Q4_K_M.gguf` and
+  `models/qwen25-omni-7b-q4/mmproj-Qwen2.5-Omni-7B-Q8_0.gguf` under the audio data
+  directory. This layout is currently fixed: relocating those review weights
+  independently requires a service change, not an invented environment variable.
+- **Legacy Stable Audio:** if preserving this existing route, keep its separately
+  approved MLX directory/executable, weights and bindings. ACE selection alone
+  is not proof that every historical model request is supported.
+- Review the existing configuration, formal request admission and upstream NGS
+  identity/approval wiring. Keep unsupported/invalid requests blocked. Do not
+  requeue uncertain work, change retry authorization, or fabricate trial requests
+  in a production queue just to prove setup works.
+
+## Activation handoff
+
+The roles remain local-only: generation **8765**, review **8766**, catalog **8767**;
+file-worker polls the configured generation API. Before an operator starts them,
+confirm the ports are unused or perform an explicit handover, and stop/drain the
+old consumer. Run **one consumer per queue**. Do not run a foreground consumer
+beside an existing LaunchAgent. Preserve DB/artifact paths, request/state files,
+model directories, environment and poll interval during a code/venv switch.
+The launcher supports `--interval` but not custom request/state CLI overrides.
+
+Actual start commands and isolated tests are in
+[AudioForge README](../modules/audioforge/README.md). Do not remove `--check`
+from the commands above until the intended operator has completed this handoff.
+No LaunchAgent, request, DB or running service is created by this document.
