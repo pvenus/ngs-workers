@@ -16,6 +16,12 @@ This refuses existing directories and creates no DB, model runtime or active
 consumer. See the [team setup checklist](docs/TEAM-SETUP.md) for installation and
 activation boundaries.
 
+For model assets, [pinned model setup](docs/MODEL-SETUP.md) provides an offline
+plan and an explicit resumable download command for the current ACE Turbo
+bundle, with official revisions, license provenance and per-file hashes.
+It does not install the model Python runtime or activate any worker. ImageForge
+needs no model; review-license and legacy/video routes remain separate or held.
+
 `modules/audioforge` now contains the existing operational AudioForge package and isolated tests, not just the original music boundary. New-machine code installation: `sh scripts/setup-audioforge.sh`. See [worker setup and limits](modules/audioforge/README.md) and the [private team setup checklist](docs/TEAM-SETUP.md). This source registration does not change operating launchd services or move data. Video/character workers and model-runtime installation are still separate migration work; this repository is not yet a complete public bootstrap.
 
 ## Git-backed AudioForge operation

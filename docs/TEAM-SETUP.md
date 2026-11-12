@@ -54,6 +54,13 @@ For example:
 The generated ACE path is a planned location, not evidence of installed models.
 Do not source a new-machine file over an operating service's preserved settings.
 
+For the current Turbo asset bundle, follow [pinned model setup](MODEL-SETUP.md).
+Its default dry-run uses no network, and only explicit `--download` obtains
+the official pinned weights/code-sync/notices into a separate new bundle.
+That completes artifact preparation only; full ACE source/dependency installation,
+checkpoint integration and activation remain distinct. It does not install review
+GGUFs, legacy Stable Audio or any video model.
+
 The current model adapters target Apple Silicon/macOS. Use Python 3.11+ (the
 validated service environment uses 3.12). From the repository root, set
 `WORKERS_AUDIO_VENV` to a **new absolute path** outside the checkout and `PYTHON`
