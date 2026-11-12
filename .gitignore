@@ -13,3 +13,7 @@ outputs/
 *.wav
 *.sqlite*
 *.log
+.venvs/
+build/
+*.egg-info/
+dist/
