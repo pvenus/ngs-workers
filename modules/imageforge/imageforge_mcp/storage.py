@@ -23,8 +23,9 @@ from typing import Any
 PROJECT_ROOT = Path(os.environ.get("IMAGEFORGE_LEGACY_ROOT", Path(__file__).resolve().parents[1])).expanduser().resolve()
 LEGACY_DOWNLOADS = PROJECT_ROOT / "imageforge-downloads"
 LEGACY_GENERATED = PROJECT_ROOT / "generated_image"
-MOUNT = Path("/Volumes/무제")
-DEFAULT_ROOT = MOUNT / "MCP/resources/v1"
+INTERNAL_STORAGE = os.environ.get("IMAGEFORGE_STORAGE_MODE") == "internal"
+MOUNT = Path(os.environ.get("IMAGEFORGE_STORAGE_BASE", str(Path.home() / "Workspaces/Workers/data/imageforge"))) if INTERNAL_STORAGE else Path("/Volumes/무제")
+DEFAULT_ROOT = MOUNT / ("resources/v1" if INTERNAL_STORAGE else "MCP/resources/v1")
 SERVICE = "imageforge"
 LEGACY_INVENTORY = json.loads(Path(os.environ.get("IMAGEFORGE_LEGACY_INVENTORY", Path(__file__).with_name("legacy_inventory.json"))).read_text(encoding="utf-8"))
 
@@ -38,11 +39,12 @@ class StorageConflict(RuntimeError):
 
 
 def shared_root() -> Path:
-    value = os.environ.get("IMAGEFORGE_RESOURCE_ROOT", str(MOUNT / "MCP/resources/v1"))
+    expected_root = MOUNT / ("resources/v1" if INTERNAL_STORAGE else "MCP/resources/v1")
+    value = os.environ.get("IMAGEFORGE_RESOURCE_ROOT", str(expected_root))
     root = Path(value)
     if not root.is_absolute():
         raise StorageUnavailable("IMAGEFORGE_RESOURCE_ROOT must be absolute")
-    if root != MOUNT / "MCP/resources/v1":
+    if root != expected_root:
         raise StorageUnavailable("ImageForge root must match the provisioned namespace contract")
     return root
 
@@ -91,7 +93,7 @@ def _has_acl(path: Path) -> bool:
         raise StorageUnavailable("Cannot verify ImageForge directory ACL") from exc
     lines = result.stdout.splitlines()
     fields = lines[0].split() if lines else []
-    if not fields or len(fields[0]) < 11:
+    if not fields or len(fields[0]) < 10:
         raise StorageUnavailable("Cannot parse ImageForge directory ACL")
     return fields[0].endswith("+") or any(re.match(r"^\s*\d+:", line)
                                           for line in lines[1:])
@@ -110,6 +112,20 @@ def _directory_contract(path: Path, *, uid: int, gid: int, mode: int, device: in
 
 def guard_volume() -> None:
     """Require a mounted, writable, owned external volume before any mkdir/write."""
+    if INTERNAL_STORAGE:
+        # Explicit provisioned internal root; preserve no-symlink and same-device boundaries.
+        if not MOUNT.is_absolute() or MOUNT.resolve(strict=True) != MOUNT:
+            raise StorageUnavailable("Internal storage root must be canonical")
+        info = MOUNT.lstat()
+        if not stat.S_ISDIR(info.st_mode) or info.st_uid != os.getuid() or info.st_mode & 0o022:
+            raise StorageUnavailable("Internal storage root ownership/mode mismatch")
+        if os.statvfs(MOUNT).f_flag & getattr(os, "ST_RDONLY", 1):
+            raise StorageUnavailable("Internal storage is read only")
+        _check_existing(service_root(), device=info.st_dev)
+        for path in (MOUNT / "resources", shared_root()):
+            _directory_contract(path, uid=os.getuid(), gid=os.getgid(), mode=0o755, device=info.st_dev)
+        _directory_contract(service_root(), uid=os.getuid(), gid=os.getgid(), mode=0o700, device=info.st_dev)
+        return
     expected_uuid = os.environ.get("IMAGEFORGE_VOLUME_UUID", "").lower()
     expected_device = os.environ.get("IMAGEFORGE_DEVICE_IDENTIFIER", "")
     expected_store = os.environ.get("IMAGEFORGE_PHYSICAL_STORE", "")
