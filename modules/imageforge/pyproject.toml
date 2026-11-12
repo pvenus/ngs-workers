@@ -1,0 +1,31 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "imageforge-mcp"
+version = "1.2.0"
+description = "HTTP image background removal, object extraction, and sprite-frame editing for MCP workflows"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+  "Pillow>=10.0",
+  "numpy>=1.24",
+  "tkinterdnd2>=0.4.2",
+  "fastapi>=0.115",
+  "uvicorn[standard]>=0.30",
+  "python-multipart>=0.0.9",
+]
+
+[project.optional-dependencies]
+mcp = ["mcp>=2.1,<3"]
+
+[project.scripts]
+imageforge = "imageforge_mcp.cli:main"
+imageforge-mcp = "imageforge_mcp.mcp_server:main"
+
+[tool.setuptools]
+packages = ["imageforge_mcp"]
+
+[tool.setuptools.package-data]
+imageforge_mcp = ["legacy_inventory.json", "web/*"]
