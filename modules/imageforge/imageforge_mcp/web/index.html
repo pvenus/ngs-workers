@@ -1,0 +1,404 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>ImageForge MCP</title>
+  <style>
+    :root { color-scheme: dark; font-family: system-ui, sans-serif; }
+    * { box-sizing: border-box; }
+    body { margin: 0; background: #16181d; color: #f5f6f8; }
+    header { min-height: 58px; display: flex; align-items: center; gap: 10px; padding: 9px 16px; background: #202329; border-bottom: 1px solid #363a43; }
+    header strong { margin-right: auto; }
+    button, .file-button { border: 1px solid #4a4f5a; background: #30343c; color: white; border-radius: 7px; padding: 8px 12px; cursor: pointer; font-size: 14px; }
+    button:hover, .file-button:hover { background: #3b404a; }
+    button.active { background: #087e9c; border-color: #22c9ee; }
+    input[type=file] { display: none; }
+    main { height: calc(100vh - 92px); display: grid; grid-template-columns: 250px 1fr 210px; }
+    .app-view[hidden] { display:none; }
+    .top-tabs { display:flex; gap:6px; }
+    #manualControls { display:none; gap:8px; align-items:center; flex-wrap:wrap; }
+    body[data-view="manual"] #manualControls { display:flex; }
+    .tool-view { height:calc(100vh - 92px); display:grid; grid-template-columns:280px 1fr 280px; }
+    .tool-panel { padding:18px; background:#202329; border-right:1px solid #363a43; overflow:auto; }
+    .tool-result { padding:18px; background:#202329; border-left:1px solid #363a43; overflow:auto; }
+    .tool-stage { position:relative; display:grid; place-items:center; padding:24px; overflow:auto; background:#303239; }
+    .drop-card { width:min(620px,92%); min-height:280px; border:2px dashed #5b6370; border-radius:14px; display:grid; place-items:center; text-align:center; padding:28px; color:#abb1bd; }
+    .drop-card.drag { border-color:#22c9ee; background:#16303a; }
+    .drop-card img { max-width:100%; max-height:58vh; object-fit:contain; }
+    .field { display:block; margin:15px 0; font-size:13px; color:#d8dce3; }
+    .field input, .field select { width:100%; margin-top:6px; padding:8px; border:1px solid #454a55; border-radius:6px; background:#17191e; color:white; }
+    .primary { width:100%; background:#087e9c; border-color:#22c9ee; }
+    .result-item { padding:9px; margin:7px 0; background:#2b2f36; border-radius:7px; font-size:12px; overflow-wrap:anywhere; }
+    #transformCanvas { cursor:move; background:#242830; max-width:100%; max-height:60vh; }
+    .transform-player { display:flex; flex-direction:column; align-items:center; gap:10px; width:100%; }
+    .frame-strip { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:7px; }
+    .frame-thumb { padding:5px; border:1px solid #444b56; border-radius:7px; background:#292d34; cursor:pointer; }
+    .frame-thumb.active { border-color:#22c9ee; }
+    .frame-thumb img { width:100%; height:80px; object-fit:contain; background:#ddd; }
+    aside { padding: 18px; border-right: 1px solid #363a43; background: #202329; overflow-y: auto; }
+    aside h2 { margin: 0 0 6px; font-size: 19px; }
+    aside p { color: #abb1bd; font-size: 13px; line-height: 1.5; }
+    label.control { display: block; margin-top: 20px; font-size: 13px; }
+    input[type=range] { width: 100%; }
+    input[type=number] { width: 100%; margin-top: 6px; padding: 7px; background: #17191e; color: white; border: 1px solid #454a55; border-radius: 6px; }
+    .check { display: flex; align-items: center; gap: 8px; margin-top: 18px; font-size: 13px; }
+    #workspace { position: relative; overflow: hidden; display: grid; place-items: center; background: #303239; }
+    #workspace.drag { outline: 4px solid #42d3ff; outline-offset: -8px; }
+    canvas { max-width: calc(100% - 40px); max-height: calc(100% - 40px); cursor: crosshair; box-shadow: 0 8px 30px #0008; }
+    #empty { position: absolute; text-align: center; color: #c4c8d0; pointer-events: none; }
+    #empty b { display: block; font-size: 20px; margin-bottom: 7px; }
+    footer { height: 34px; padding: 7px 12px; background: #202329; border-top: 1px solid #363a43; font-size: 13px; color: #bcc2cd; }
+    #layers { border-left: 1px solid #363a43; background:#202329; padding:14px; overflow:auto; }
+    #layers h2 { margin:0 0 12px; font-size:17px; }
+    .layer { display:flex; align-items:center; gap:8px; padding:8px; margin-bottom:6px; background:#2b2f36; border-radius:6px; font-size:13px; }
+    .layer span { flex:1; }
+    .object-row { padding:8px; margin-bottom:7px; background:#2b2f36; border-radius:6px; font-size:12px; }
+    .arrows { display:grid; grid-template-columns:repeat(4,1fr); gap:3px; margin-top:6px; }
+    .arrows button { padding:4px; }
+    dialog { border:1px solid #555b67; border-radius:12px; background:#202329; color:white; padding:14px; width:min(760px,92vw); }
+    dialog::backdrop { background:#000a; }
+    #playerCanvas { display:block; max-width:100%; max-height:65vh; margin:auto; cursor:move; background:#fff; }
+    .player-controls { display:flex; align-items:center; justify-content:center; gap:8px; margin-top:12px; }
+    #frameLabel { min-width:90px; text-align:center; }
+  </style>
+</head>
+<body>
+  <header>
+    <strong>ImageForge MCP</strong>
+    <nav class="top-tabs"><button data-view="extract" class="active">① 배경 제거 · 프레임 분리</button><button data-view="transform">② 위치 · 크기 변환</button><button data-view="background">③ 단일 프레임 배경 수정</button><button data-view="manual">세부 편집</button></nav>
+    <div id="manualControls"><label class="file-button">이미지 열기<input id="file" type="file" accept="image/*"></label><button id="toolRemove" class="active">배경 제거</button><button id="toolSelect">자동 선택 → 새 레이어</button><button id="undo">실행 취소</button><button id="save">결과 PNG 저장</button><button id="detect">개체 찾기</button><button id="saveAll">개체 모두 저장</button></div>
+  </header>
+  <section id="extractView" class="app-view tool-view">
+    <aside class="tool-panel">
+      <h2>배경 제거 · 프레임 분리</h2><p>PNG와 기대 개체 수를 입력하면 유사도와 알파 임계값을 자동 탐색합니다.</p>
+      <label class="file-button" style="display:block;text-align:center">PNG 선택<input id="extractFile" type="file" accept="image/png"></label>
+      <label class="field">기대 개체 수<input id="expectedCount" type="number" min="1" value="4"></label>
+      <label class="field">에셋 이름<input id="extractAsset" value=""></label>
+      <label class="field">액션 이름<input id="extractAction" value="Frames"></label>
+      <label class="field">좌우 여백(px, 각 방향)<input id="horizontalPadding" type="number" min="0" value="20"></label>
+      <label class="field">출력 방식<select id="extractMode"><option value="save">generated_image에 저장</option><option value="direct">저장하지 않고 ZIP 받기</option></select></label>
+      <button id="runExtract" class="primary">배경 제거 후 프레임 분리</button>
+    </aside>
+    <div class="tool-stage"><div id="extractDrop" class="drop-card"><div id="extractEmpty"><b>PNG를 끌어다 놓으세요</b><br>분리 결과는 source grid 크기의 동일 캔버스로 생성됩니다.</div><img id="extractPreview" hidden></div></div>
+    <section class="tool-result"><h2>분리 결과</h2><div id="extractResult"><p>아직 실행하지 않았습니다.</p></div></section>
+  </section>
+  <section id="transformView" class="app-view tool-view" hidden>
+    <aside class="tool-panel">
+      <h2>프레임 위치 · 크기 변환</h2><p>배경 제거 없이 이미 분리된 PNG에만 변환을 적용합니다.</p>
+      <label class="file-button" style="display:block;text-align:center">프레임 PNG 여러 개 선택<input id="transformFiles" type="file" accept="image/png" multiple></label>
+      <hr style="border-color:#3b3f48;margin:20px 0">
+      <h3>generated_image에서 열기</h3>
+      <label class="field">에셋 폴더<select id="generatedAsset"><option value="">폴더를 불러오는 중…</option></select></label>
+      <label class="field">액션 폴더<select id="generatedAction"><option value="">액션 선택</option></select></label>
+      <div style="display:flex;gap:7px"><button id="refreshGenerated" style="flex:1">목록 새로고침</button><button id="openGenerated" style="flex:1">선택 폴더 열기</button></div>
+      <hr style="border-color:#3b3f48;margin:20px 0">
+      <label class="field">캔버스 너비<input id="canvasWidth" type="number" min="1" value="627"></label>
+      <label class="field">캔버스 높이<input id="canvasHeight" type="number" min="1" value="627"></label>
+      <label class="field">현재 프레임 X<input id="transformX" type="number" value="0"></label>
+      <label class="field">현재 프레임 Y<input id="transformY" type="number" value="0"></label>
+      <label class="field">현재 프레임 크기 <output id="transformScaleOut">100%</output><input id="transformScale" type="range" min="5" max="200" value="100"></label>
+      <label class="field">에셋 이름<input id="transformAsset" value="frames"></label>
+      <label class="field">액션 이름<input id="transformAction" value="Frames"></label>
+      <label class="field">재생 간격(ms)<input id="transformDuration" type="number" min="20" value="140"></label>
+      <label class="field">출력 방식<select id="transformMode"><option value="overwrite">원본을 보존하고 새 버전 저장</option><option value="save">새 공유 패키지에 저장</option><option value="direct">저장하지 않고 ZIP 받기</option></select></label>
+      <button id="runTransform" class="primary">전체 프레임 저장</button>
+    </aside>
+    <div class="tool-stage"><div class="transform-player"><canvas id="transformCanvas" width="627" height="627"></canvas><div class="player-controls"><button id="transformPrev">◀ 이전</button><button id="transformPlay">▶ 재생</button><span id="transformFrameLabel">0 / 0</span><button id="transformNext">다음 ▶</button></div></div></div>
+    <section class="tool-result"><h2>프레임 목록</h2><div id="transformFrames" class="frame-strip"></div><h2>변환 결과</h2><div id="transformResult"><p>프레임을 선택하세요.</p></div></section>
+  </section>
+  <section id="backgroundView" class="app-view tool-view" hidden>
+    <aside class="tool-panel">
+      <h2>단일 프레임 배경 수정</h2><p>generated_image에서 프레임 하나를 열어 배경만 제거하고 같은 PNG에 덮어씁니다.</p>
+      <label class="field">에셋 폴더<select id="backgroundAsset"><option value="">폴더를 불러오는 중…</option></select></label>
+      <label class="field">액션 폴더<select id="backgroundAction"><option value="">액션 선택</option></select></label>
+      <button id="refreshBackground" style="width:100%">목록 새로고침</button>
+      <label class="field">색상 유사도 <output id="backgroundToleranceOut">5</output><input id="backgroundTolerance" type="range" min="0" max="100" value="5"></label>
+      <label class="field">가장자리 부드러움 <output id="backgroundFeatherOut">1</output>px<input id="backgroundFeather" type="range" min="0" max="10" value="1"></label>
+      <label class="check"><input id="backgroundContiguous" type="checkbox" checked> 클릭 지점과 연결된 영역만</label>
+      <button id="backgroundAutoCorners" style="width:100%;margin-top:16px">네 모서리 배경 자동 제거</button>
+      <button id="backgroundUndo" style="width:100%;margin-top:8px">마지막 제거 취소</button>
+      <button id="backgroundOverwrite" class="primary" style="margin-top:20px;background:#9a3b32;border-color:#ef7468">새 버전으로 저장</button>
+    </aside>
+    <div class="tool-stage"><div id="backgroundEmpty" class="drop-card"><div><b>오른쪽에서 프레임을 선택하세요</b><br>이미지에서 제거할 배경 색상을 클릭할 수 있습니다.</div></div><canvas id="backgroundCanvas" hidden></canvas></div>
+    <section class="tool-result"><h2>생성 프레임 목록</h2><div id="backgroundFrames" class="frame-strip"></div><h2>현재 대상</h2><div id="backgroundTarget"><p>프레임을 선택하세요.</p></div></section>
+  </section>
+  <main id="manualView" class="app-view" hidden>
+    <aside>
+      <h2>배경 제거</h2>
+      <p>이미지를 끌어다 놓고 투명하게 만들 배경을 클릭하세요.</p>
+      <label class="control">색상 유사도: <output id="tolOut">5</output><input id="tolerance" type="range" min="0" max="100" value="5"></label>
+      <label class="check"><input id="autoCorners" type="checkbox" checked> 불러올 때 네 모서리 배경 자동 제거</label>
+      <label class="check"><input id="contiguous" type="checkbox" checked> 클릭 지점과 연결된 영역만</label>
+      <label class="control">가장자리 부드러움: <output id="featherOut">1</output>px<input id="feather" type="range" min="0" max="10" value="1"></label>
+      <hr style="border-color:#3b3f48;margin:24px 0">
+      <h2>개체 분리</h2>
+      <label class="control">선택 알파 임계값: <output id="alphaOut">120</output><input id="alphaThreshold" type="range" min="1" max="255" value="120"></label>
+      <label class="control">최소 픽셀 수<input id="minPixels" type="number" min="1" value="2000"></label>
+      <p>감지된 개체는 청록색 박스로 표시됩니다.</p>
+      <hr style="border-color:#3b3f48;margin:24px 0">
+      <h2>프레임 플레이어</h2>
+      <label class="control">고정 프레임 높이<input id="frameHeight" type="number" min="16" value="340"></label>
+      <label class="control">재생 간격(ms)<input id="duration" type="number" min="20" value="140"></label>
+      <button id="openPlayer" style="width:100%;margin-top:12px">프레임 플레이어 열기</button>
+    </aside>
+    <section id="workspace">
+      <div id="empty"><b>이미지를 여기에 끌어다 놓으세요</b>PNG, JPG, WebP, BMP · 최대 50MB</div>
+      <canvas id="canvas"></canvas>
+    </section>
+    <section id="layers"><h2>분리 개체 위치</h2><div id="objectList"><p style="color:#888;font-size:13px">개체 찾기를 실행하세요.</p></div><h2 style="margin-top:20px">레이어</h2><div id="layerList"><p style="color:#888;font-size:13px">선택된 레이어가 없습니다.</p></div></section>
+  </main>
+  <footer id="status">서버에 연결되었습니다.</footer>
+  <dialog id="playerDialog">
+    <div style="display:flex;align-items:center"><b style="flex:1">프레임 위치 조정</b><button id="closePlayer">닫기</button></div>
+    <p style="font-size:12px;color:#abb1bd">개체를 직접 드래그하세요. 방향키는 1px, Shift+방향키는 5px 이동합니다.</p>
+    <canvas id="playerCanvas"></canvas>
+    <div style="display:flex;align-items:center;gap:10px;margin-top:12px"><label for="frameScale">현재 프레임 축소</label><input id="frameScale" type="range" min="10" max="100" value="100" style="flex:1"><output id="frameScaleOut">100%</output></div>
+    <div class="player-controls"><button id="prevFrame">◀ 이전</button><button id="playFrames">▶ 재생</button><span id="frameLabel">0 / 0</span><button id="nextFrame">다음 ▶</button><button id="deleteFrame" style="background:#722">현재 프레임 제거</button></div>
+  </dialog>
+  <script>
+    const $ = id => document.getElementById(id);
+    const canvas = $('canvas'), ctx = canvas.getContext('2d');
+    const workspace = $('workspace');
+    let sessionId = null, image = null, components = [], componentPreviews = [], layers = [], tool = 'remove';
+    let frameIndex=0, playTimer=null, dragStart=null;
+    let extractInput=null, transformItems=[], transformIndex=0, transformDrag=null, transformPlayTimer=null, transformSource=null;
+    let backgroundCatalog=[], backgroundSession=null, backgroundSelection=null, backgroundImage=null;
+
+    function switchView(view) {
+      document.body.dataset.view=view;
+      document.querySelectorAll('.app-view').forEach(panel=>panel.hidden=panel.id!==`${view}View`);
+      document.querySelectorAll('.top-tabs button').forEach(button=>button.classList.toggle('active',button.dataset.view===view));
+      status(view==='extract'?'PNG와 기대 개체 수를 입력하세요.':view==='transform'?'분리된 프레임 PNG를 선택하세요.':'세부 수동 편집 모드입니다.');
+      if(view==='transform'){drawTransform();loadGeneratedFolders();}
+      if(view==='background')loadBackgroundFolders();
+    }
+    document.querySelectorAll('.top-tabs button').forEach(button=>button.onclick=()=>switchView(button.dataset.view));
+
+    function downloadBlob(blob, filename) {
+      const url=URL.createObjectURL(blob),anchor=document.createElement('a');anchor.href=url;anchor.download=filename;anchor.click();setTimeout(()=>URL.revokeObjectURL(url),1000);
+    }
+    function setExtractFile(file) {
+      if(!file)return;if(file.type!=='image/png'&&!file.name.toLowerCase().endsWith('.png'))return status('PNG 파일만 사용할 수 있습니다.');
+      extractInput=file;$('extractAsset').value||=file.name.replace(/\.png$/i,'');
+      const preview=$('extractPreview');preview.src=URL.createObjectURL(file);preview.hidden=false;$('extractEmpty').hidden=true;status(`${file.name} 선택 완료`);
+    }
+    $('extractFile').onchange=e=>setExtractFile(e.target.files[0]);
+    ['dragenter','dragover'].forEach(name=>$('extractDrop').addEventListener(name,e=>{e.preventDefault();$('extractDrop').classList.add('drag');}));
+    ['dragleave','drop'].forEach(name=>$('extractDrop').addEventListener(name,e=>{e.preventDefault();$('extractDrop').classList.remove('drag');}));
+    $('extractDrop').addEventListener('drop',e=>setExtractFile(e.dataTransfer.files[0]));
+    $('runExtract').onclick=async()=>{
+      if(!extractInput)return status('분리할 PNG를 먼저 선택하세요.');
+      const body=new FormData();body.append('file',extractInput);body.append('expected_object_count',$('expectedCount').value);body.append('output_mode',$('extractMode').value);body.append('asset_name',$('extractAsset').value);body.append('action_name',$('extractAction').value);body.append('horizontal_padding',$('horizontalPadding').value);
+      status('배경 유사도와 알파 임계값을 탐색하는 중…');$('runExtract').disabled=true;
+      try {
+        const response=await fetch('/api/external/extract-frames',{method:'POST',body});
+        if(!response.ok){const error=await response.json();$('extractResult').innerHTML=`<div class="result-item">실패: ${error.error||error.detail}<br>시도 ${error.attempts?.length||0}회</div>`;return status('기대 개체 수를 찾지 못했습니다.');}
+        if($('extractMode').value==='direct') { downloadBlob(await response.blob(),`${$('extractAsset').value||'frames'}.zip`);$('extractResult').innerHTML='<div class="result-item">메모리 ZIP 전달 완료 · 서버 저장 없음</div>';return status('ZIP 다운로드를 시작했습니다.'); }
+        const data=await response.json();$('extractResult').innerHTML=`<div class="result-item"><b>${data.object_count}개 분리 완료</b><br>캔버스 ${data.png_list[0]?.width||0} × ${data.layout.frame_height}<br>유사도 ${data.selected_settings.background_tolerance} · 임계값 ${data.selected_settings.alpha_threshold}</div><div class="result-item">${data.output_directory}</div>`+data.png_list.map(item=>`<div class="result-item">${item.filename} · ${item.width} × ${item.height}</div>`).join('');status(`공유 루트 저장 완료 · ${data.object_count}개`);
+      } finally {$('runExtract').disabled=false;}
+    };
+
+    async function setTransformFiles(files) {
+      stopTransformPlayback();transformSource=null;
+      transformItems.forEach(item=>URL.revokeObjectURL(item.url));
+      transformItems=[...files].sort((a,b)=>a.name.localeCompare(b.name,undefined,{numeric:true})).map(file=>({file,url:URL.createObjectURL(file),image:null,x:0,y:0,scale:1}));transformIndex=0;
+      await Promise.all(transformItems.map(item=>new Promise(resolve=>{const image=new Image();image.onload=()=>{item.image=image;resolve();};image.src=item.url;})));renderTransformFrames();loadTransformControls();drawTransform();status(`${transformItems.length}개 프레임을 불러왔습니다.`);
+    }
+    $('transformFiles').onchange=e=>setTransformFiles(e.target.files);
+    let generatedCatalog=[];
+    async function loadGeneratedFolders(){
+      const response=await fetch('/api/external/generated-images');if(!response.ok)return status('generated_image 목록을 불러오지 못했습니다.');const data=await response.json();generatedCatalog=data.assets||[];const select=$('generatedAsset'),previous=select.value;select.innerHTML=generatedCatalog.length?'':'<option value="">프레임 폴더 없음</option>';generatedCatalog.forEach(asset=>{const option=document.createElement('option');option.value=asset.name;option.textContent=asset.name;select.appendChild(option);});if(generatedCatalog.some(asset=>asset.name===previous))select.value=previous;renderGeneratedActions();
+    }
+    function renderGeneratedActions(){const asset=generatedCatalog.find(item=>item.name===$('generatedAsset').value),select=$('generatedAction');select.innerHTML='';(asset?.actions||[]).forEach(action=>{const option=document.createElement('option');option.value=action.action;option.textContent=`${action.action} (${action.frame_count})`;select.appendChild(option);});}
+    $('generatedAsset').onchange=renderGeneratedActions;$('refreshGenerated').onclick=loadGeneratedFolders;
+    $('openGenerated').onclick=async()=>{const asset=generatedCatalog.find(item=>item.name===$('generatedAsset').value),action=asset?.actions.find(item=>item.action===$('generatedAction').value);if(!action)return status('열 프레임 폴더를 선택하세요.');status(`${asset.name}/${action.action} 프레임을 불러오는 중…`);const files=await Promise.all(action.frames.map(async entry=>new File([await (await fetch(`${entry.url}?v=${Date.now()}`)).blob()],entry.filename,{type:'image/png'})));await setTransformFiles(files);transformSource={asset:asset.name,action:action.action,filenames:action.frames.map(entry=>entry.filename)};$('transformMode').value='overwrite';$('transformAsset').value=asset.name.replace(/_[0-9a-f]{8}$/,'');$('transformAction').value=action.action;if(action.canvas?.length===2){$('canvasWidth').value=action.canvas[0];$('canvasHeight').value=action.canvas[1];}if(Array.isArray(action.transforms)){action.transforms.forEach((spec,index)=>{if(!transformItems[index])return;transformItems[index].x=spec.x||0;transformItems[index].y=spec.y||0;transformItems[index].scale=spec.scale||1;});}transformIndex=0;renderTransformFrames();loadTransformControls();drawTransform();status(`${asset.name}/${action.action} · ${files.length}개 프레임 열기 완료`);};
+    function renderTransformFrames(){const root=$('transformFrames');root.innerHTML='';transformItems.forEach((item,index)=>{const card=document.createElement('div');card.className=`frame-thumb${index===transformIndex?' active':''}`;card.innerHTML=`<img src="${item.url}"><small>${item.file.name}</small>`;card.onclick=()=>showTransformFrame(index);root.appendChild(card);});$('transformFrameLabel').textContent=transformItems.length?`${transformIndex+1} / ${transformItems.length}`:'0 / 0';}
+    function loadTransformControls(){const item=transformItems[transformIndex];if(!item)return;$('transformX').value=item.x;$('transformY').value=item.y;$('transformScale').value=Math.round(item.scale*100);$('transformScaleOut').value=`${Math.round(item.scale*100)}%`;}
+    function saveTransformControls(){const item=transformItems[transformIndex];if(!item)return;item.x=+$('transformX').value;item.y=+$('transformY').value;item.scale=+$('transformScale').value/100;}
+    function drawTransform(){const tc=$('transformCanvas'),tctx=tc.getContext('2d'),width=Math.max(1,+$('canvasWidth').value),height=Math.max(1,+$('canvasHeight').value);tc.width=width;tc.height=height;tctx.fillStyle='#242830';tctx.fillRect(0,0,width,height);tctx.strokeStyle='rgba(100,190,220,.25)';tctx.lineWidth=1;for(let x=.5;x<width;x+=10){tctx.beginPath();tctx.moveTo(x,0);tctx.lineTo(x,height);tctx.stroke();}for(let y=.5;y<height;y+=10){tctx.beginPath();tctx.moveTo(0,y);tctx.lineTo(width,y);tctx.stroke();}tctx.strokeStyle='#00e5ff';tctx.lineWidth=3;tctx.beginPath();tctx.moveTo(width/2,0);tctx.lineTo(width/2,height);tctx.moveTo(0,height/2);tctx.lineTo(width,height/2);tctx.stroke();const item=transformItems[transformIndex];$('transformFrameLabel').textContent=transformItems.length?`${transformIndex+1} / ${transformItems.length}`:'0 / 0';if(!item?.image)return;const w=item.image.naturalWidth*item.scale,h=item.image.naturalHeight*item.scale;tctx.drawImage(item.image,(width-w)/2+item.x,(height-h)/2+item.y,w,h);}
+    function showTransformFrame(index){if(!transformItems.length)return;saveTransformControls();transformIndex=(index+transformItems.length)%transformItems.length;renderTransformFrames();loadTransformControls();drawTransform();}
+    function stopTransformPlayback(){if(transformPlayTimer)clearInterval(transformPlayTimer);transformPlayTimer=null;if($('transformPlay'))$('transformPlay').textContent='▶ 재생';}
+    $('transformPrev').onclick=()=>showTransformFrame(transformIndex-1);$('transformNext').onclick=()=>showTransformFrame(transformIndex+1);
+    $('transformPlay').onclick=()=>{if(transformPlayTimer)return stopTransformPlayback();if(!transformItems.length)return status('재생할 프레임을 먼저 여세요.');transformPlayTimer=setInterval(()=>showTransformFrame(transformIndex+1),Math.max(20,+$('transformDuration').value));$('transformPlay').textContent='⏸ 정지';};
+    ['transformX','transformY','canvasWidth','canvasHeight'].forEach(id=>$(id).oninput=()=>{saveTransformControls();drawTransform();});
+    $('transformScale').oninput=e=>{saveTransformControls();$('transformScaleOut').value=`${e.target.value}%`;drawTransform();};
+    $('transformCanvas').onpointerdown=e=>{const item=transformItems[transformIndex];if(!item)return;transformDrag={clientX:e.clientX,clientY:e.clientY,x:item.x,y:item.y};$('transformCanvas').setPointerCapture(e.pointerId);};
+    $('transformCanvas').onpointermove=e=>{if(!transformDrag)return;const item=transformItems[transformIndex],rect=$('transformCanvas').getBoundingClientRect();item.x=Math.round(transformDrag.x+(e.clientX-transformDrag.clientX)*$('transformCanvas').width/rect.width);item.y=Math.round(transformDrag.y+(e.clientY-transformDrag.clientY)*$('transformCanvas').height/rect.height);loadTransformControls();drawTransform();};
+    $('transformCanvas').onpointerup=()=>{transformDrag=null;};
+    $('runTransform').onclick=async()=>{
+      if(!transformItems.length)return status('변환할 PNG 프레임을 먼저 선택하세요.');saveTransformControls();stopTransformPlayback();const mode=$('transformMode').value;if(mode==='overwrite'&&!transformSource)return status('새 버전 저장은 목록에서 연 프레임 폴더만 가능합니다.');if(mode==='overwrite'&&!confirm(`${transformItems.length}개 프레임을 새 버전으로 저장할까요?`))return;const body=new FormData();transformItems.forEach(item=>body.append('files',item.file));body.append('canvas_width',$('canvasWidth').value);body.append('canvas_height',$('canvasHeight').value);body.append('output_mode',mode);body.append('asset_name',$('transformAsset').value);body.append('action_name',$('transformAction').value);body.append('transforms',JSON.stringify(transformItems.map(item=>({x:item.x,y:item.y,scale:item.scale}))));if(mode==='overwrite'){body.append('overwrite_asset',transformSource.asset);body.append('overwrite_action',transformSource.action);body.append('source_filenames',JSON.stringify(transformSource.filenames));}status(`${transformItems.length}개 전체 프레임을 저장하는 중…`);$('runTransform').disabled=true;
+      try{const response=await fetch('/api/external/transform-frames',{method:'POST',body});if(!response.ok){const error=await response.json();return status(`변환 실패: ${error.detail}`);}if(mode==='direct'){downloadBlob(await response.blob(),`${$('transformAsset').value||'frames'}-transformed.zip`);$('transformResult').innerHTML='<div class="result-item">메모리 ZIP 전달 완료 · 서버 저장 없음</div>';return status('변환 ZIP 다운로드를 시작했습니다.');}const data=await response.json();$('transformResult').innerHTML=`<div class="result-item"><b>${data.frames.length}개 전체 저장 완료</b><br>캔버스 ${data.canvas[0]} × ${data.canvas[1]}${mode==='overwrite'?'<br>원본은 보존했습니다.':''}</div><div class="result-item">${data.output_directory}</div>`;status(mode==='overwrite'?`원본을 보존하고 ${data.frames.length}개 새 버전 저장 완료`:'새 공유 패키지 저장 완료');if(mode==='overwrite'){const parts=data.output_directory.split('/');await loadGeneratedFolders();$('generatedAsset').value=parts.at(-2);renderGeneratedActions();$('generatedAction').value=parts.at(-1);await $('openGenerated').onclick();}}finally{$('runTransform').disabled=false;}
+    };
+
+    async function loadBackgroundFolders(){const response=await fetch('/api/external/generated-images');if(!response.ok)return status('generated_image 목록을 불러오지 못했습니다.');const data=await response.json();backgroundCatalog=data.assets||[];const select=$('backgroundAsset'),previous=select.value;select.innerHTML=backgroundCatalog.length?'':'<option value="">프레임 폴더 없음</option>';backgroundCatalog.forEach(asset=>{const option=document.createElement('option');option.value=asset.name;option.textContent=asset.name;select.appendChild(option);});if(backgroundCatalog.some(asset=>asset.name===previous))select.value=previous;renderBackgroundActions();}
+    function renderBackgroundActions(){const asset=backgroundCatalog.find(item=>item.name===$('backgroundAsset').value),select=$('backgroundAction');select.innerHTML='';(asset?.actions||[]).forEach(action=>{const option=document.createElement('option');option.value=action.action;option.textContent=`${action.action} (${action.frame_count})`;select.appendChild(option);});renderBackgroundFrames();}
+    function renderBackgroundFrames(){const asset=backgroundCatalog.find(item=>item.name===$('backgroundAsset').value),action=asset?.actions.find(item=>item.action===$('backgroundAction').value),root=$('backgroundFrames');root.innerHTML='';(action?.frames||[]).forEach(entry=>{const card=document.createElement('div');card.className=`frame-thumb${backgroundSelection?.filename===entry.filename?' active':''}`;card.innerHTML=`<img src="${entry.url}?v=${Date.now()}"><small>${entry.filename}</small>`;card.onclick=()=>openBackgroundFrame(asset.name,action.action,entry);root.appendChild(card);});}
+    async function openBackgroundFrame(asset,action,entry){const response=await fetch('/api/external/background-editor/open',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({asset,action,filename:entry.filename})});const data=await response.json();if(!response.ok)return status(`프레임 열기 실패: ${data.detail}`);backgroundSession=data.session_id;backgroundSelection={asset,action,filename:entry.filename,url:entry.url,target:data.target_path};await loadBackgroundPreview();renderBackgroundFrames();$('backgroundTarget').innerHTML=`<div class="result-item"><b>${asset}/${action}/${entry.filename}</b><br>${data.width} × ${data.height}<br>${data.target_path}</div>`;status(`${entry.filename} 배경 편집 준비 완료`);}
+    async function loadBackgroundPreview(){if(!backgroundSession)return;const next=new Image();await new Promise((resolve,reject)=>{next.onload=resolve;next.onerror=reject;next.src=`/api/images/${backgroundSession}?v=${Date.now()}`;});backgroundImage=next;$('backgroundCanvas').hidden=false;$('backgroundEmpty').hidden=true;drawBackgroundPreview();}
+    function drawBackgroundPreview(){if(!backgroundImage)return;const bc=$('backgroundCanvas'),bctx=bc.getContext('2d');bc.width=backgroundImage.naturalWidth;bc.height=backgroundImage.naturalHeight;const tile=16;for(let y=0;y<bc.height;y+=tile)for(let x=0;x<bc.width;x+=tile){bctx.fillStyle=((x/tile+y/tile)%2)?'#bbb':'#eee';bctx.fillRect(x,y,tile,tile);}bctx.drawImage(backgroundImage,0,0);}
+    $('backgroundAsset').onchange=renderBackgroundActions;$('backgroundAction').onchange=renderBackgroundFrames;$('refreshBackground').onclick=loadBackgroundFolders;
+    $('backgroundTolerance').oninput=e=>$('backgroundToleranceOut').value=e.target.value;$('backgroundFeather').oninput=e=>$('backgroundFeatherOut').value=e.target.value;
+    $('backgroundCanvas').onclick=async e=>{if(!backgroundSession)return;const rect=e.currentTarget.getBoundingClientRect(),x=Math.floor((e.clientX-rect.left)*e.currentTarget.width/rect.width),y=Math.floor((e.clientY-rect.top)*e.currentTarget.height/rect.height);status(`(${x}, ${y}) 연결 배경 제거 중…`);const response=await fetch(`/api/images/${backgroundSession}/remove-background`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({x,y,tolerance:+$('backgroundTolerance').value,contiguous:$('backgroundContiguous').checked,feather:+$('backgroundFeather').value})});const data=await response.json();if(!response.ok)return status(`배경 제거 실패: ${data.detail}`);await loadBackgroundPreview();status('미리보기에서 배경을 제거했습니다. 저장해도 원본은 유지됩니다.');};
+    $('backgroundAutoCorners').onclick=async()=>{if(!backgroundSession)return status('프레임을 먼저 선택하세요.');const response=await fetch(`/api/images/${backgroundSession}/auto-remove-background`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({tolerance:+$('backgroundTolerance').value,feather:+$('backgroundFeather').value,sample_radius:2})});const data=await response.json();if(!response.ok)return status(`자동 제거 실패: ${data.detail}`);await loadBackgroundPreview();status('네 모서리 배경 제거 미리보기를 적용했습니다.');};
+    $('backgroundUndo').onclick=async()=>{if(!backgroundSession)return;const response=await fetch(`/api/images/${backgroundSession}/undo`,{method:'POST'}),data=await response.json();if(data.ok)await loadBackgroundPreview();status(data.ok?'마지막 배경 제거를 취소했습니다.':data.detail);};
+    $('backgroundOverwrite').onclick=async()=>{if(!backgroundSession||!backgroundSelection)return status('편집할 프레임을 선택하세요.');if(!confirm(`${backgroundSelection.filename} 편집 결과를 새 버전으로 저장할까요?`))return;const response=await fetch(`/api/external/background-editor/${backgroundSession}/overwrite`,{method:'POST'}),data=await response.json();if(!response.ok)return status(`새 버전 저장 실패: ${data.detail}`);const parts=data.path.split('/');await loadBackgroundFolders();$('backgroundAsset').value=parts.at(-3);renderBackgroundActions();$('backgroundAction').value=parts.at(-2);renderBackgroundFrames();$('backgroundTarget').innerHTML=`<div class="result-item"><b>새 버전 저장 완료</b><br>${data.path}</div>`;status(`${backgroundSelection.filename} 새 버전 저장 완료`);};
+
+    function status(text) { $('status').textContent = text; }
+    function setTool(next) {
+      tool = next;
+      $('toolRemove').classList.toggle('active', tool === 'remove');
+      $('toolSelect').classList.toggle('active', tool === 'select');
+      status(tool === 'remove' ? '배경을 클릭하면 유사색을 투명하게 만듭니다.' : '개체를 클릭하면 실제 픽셀만 새 레이어로 복사합니다.');
+    }
+    $('toolRemove').onclick = () => setTool('remove');
+    $('toolSelect').onclick = () => setTool('select');
+    function renderLayers() {
+      const list=$('layerList'); list.innerHTML='';
+      if(!layers.length){ list.innerHTML='<p style="color:#888;font-size:13px">선택된 레이어가 없습니다.</p>'; return; }
+      layers.forEach(layer => {
+        const row=document.createElement('div'); row.className='layer';
+        row.innerHTML=`<span>${layer.name}<br><small>${layer.width} × ${layer.height}</small></span><button>저장</button>`;
+        row.querySelector('button').onclick=async()=>{ const r=await fetch(`/api/images/${sessionId}/layers/${layer.layer_id}/save`,{method:'POST'}); const d=await r.json(); status(r.ok?`저장 완료: ${d.relative_path}`:`저장 실패: ${d.detail}`); };
+        list.appendChild(row);
+      });
+    }
+    function drawPlayer() {
+      if(!componentPreviews.length)return;
+      const pc=$('playerCanvas'),pctx=pc.getContext('2d'),height=+$('frameHeight').value,padding=20;
+      const width=Math.max(...componentPreviews.map((entry,i)=>entry.image.naturalWidth*(components[i].scale||1)))+240;
+      pc.width=width;pc.height=height;
+      pctx.fillStyle='#242830';pctx.fillRect(0,0,width,height);
+      // 1px minor dotted grid.
+      pctx.save();pctx.strokeStyle='rgba(255,255,255,.055)';pctx.lineWidth=1;pctx.setLineDash([1,3]);pctx.beginPath();
+      for(let x=.5;x<width;x+=1){pctx.moveTo(x,0);pctx.lineTo(x,height);}
+      for(let y=.5;y<height;y+=1){pctx.moveTo(0,y);pctx.lineTo(width,y);}pctx.stroke();pctx.restore();
+      // 10px major grid.
+      pctx.save();pctx.strokeStyle='rgba(102,190,220,.34)';pctx.lineWidth=1.25;pctx.beginPath();
+      for(let x=.5;x<width;x+=10){pctx.moveTo(x,0);pctx.lineTo(x,height);}
+      for(let y=.5;y<height;y+=10){pctx.moveTo(0,y);pctx.lineTo(width,y);}pctx.stroke();pctx.restore();
+      // Strong horizontal and vertical center guides.
+      pctx.save();pctx.strokeStyle='rgba(0,229,255,.92)';pctx.lineWidth=3;pctx.beginPath();pctx.moveTo(width/2,0);pctx.lineTo(width/2,height);pctx.moveTo(0,height/2);pctx.lineTo(width,height/2);pctx.stroke();pctx.restore();
+      const entry=componentPreviews[frameIndex],component=components[frameIndex],scale=component.scale||1;
+      const objectWidth=entry.image.naturalWidth*scale,objectHeight=entry.image.naturalHeight*scale;
+      const x=(width-objectWidth)/2+(component.offset_x||0),y=height-padding-objectHeight+(component.offset_y||0);
+      pctx.drawImage(entry.image,x,y,objectWidth,objectHeight);$('frameLabel').textContent=`${frameIndex+1} / ${components.length}`;
+      $('frameScale').value=Math.round(scale*100);$('frameScaleOut').value=`${Math.round(scale*100)}%`;
+    }
+    function showFrame(index){frameIndex=(index+components.length)%components.length;drawPlayer();}
+    async function moveFrame(dx,dy){
+      if(!components.length)return;const component=components[frameIndex];component.offset_x=(component.offset_x||0)+dx;component.offset_y=(component.offset_y||0)+dy;drawPlayer();renderObjects();
+      const r=await fetch(`/api/images/${sessionId}/animation/objects/${frameIndex}/move`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({dx,dy})});if(!r.ok)status('위치 저장에 실패했습니다.');
+    }
+    function renderObjects() {
+      const list=$('objectList'); list.innerHTML='';
+      if(!components.length){list.innerHTML='<p style="color:#888;font-size:13px">개체 찾기를 실행하세요.</p>';return;}
+      components.forEach((component,index)=>{
+        component.offset_x ??= 0; component.offset_y ??= 0; component.scale ??= 1;
+        const row=document.createElement('div'); row.className='object-row';
+        row.innerHTML=`<b>개체 ${index+1}</b> <span class="position">(${component.offset_x}, ${component.offset_y})</span><div class="arrows"><button data-dx="-5">←</button><button data-dy="-5">↑</button><button data-dy="5">↓</button><button data-dx="5">→</button></div>`;
+        row.querySelectorAll('button').forEach(button=>button.onclick=async()=>{
+          const dx=+(button.dataset.dx||0),dy=+(button.dataset.dy||0);
+          const r=await fetch(`/api/images/${sessionId}/animation/objects/${index}/move`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({dx,dy})}); const d=await r.json();
+          if(r.ok){component.offset_x=d.offset_x;component.offset_y=d.offset_y;row.querySelector('.position').textContent=`(${d.offset_x}, ${d.offset_y})`;if(frameIndex===index&&$('playerDialog').open)drawPlayer();status(`개체 ${index+1} 위치: ${d.offset_x}, ${d.offset_y}`);}
+        });
+        list.appendChild(row);
+      });
+    }
+    function draw() {
+      if (!image) return;
+      canvas.width = image.naturalWidth; canvas.height = image.naturalHeight;
+      const tile = 16;
+      for (let y=0; y<canvas.height; y+=tile) for (let x=0; x<canvas.width; x+=tile) {
+        ctx.fillStyle = ((x/tile + y/tile) % 2) ? '#ddd' : '#fff'; ctx.fillRect(x,y,tile,tile);
+      }
+      ctx.drawImage(image, 0, 0);
+      ctx.font = `${Math.max(16, canvas.width/70)}px sans-serif`; ctx.fillStyle = '#00b8d4';
+      componentPreviews.forEach((entry,i) => {
+        const off=document.createElement('canvas'); off.width=entry.image.naturalWidth; off.height=entry.image.naturalHeight;
+        const oc=off.getContext('2d'); oc.drawImage(entry.image,0,0); oc.globalCompositeOperation='source-in'; oc.fillStyle='#00e5ff'; oc.fillRect(0,0,off.width,off.height);
+        ctx.save(); ctx.globalAlpha=.38; ctx.drawImage(off,entry.component.x,entry.component.y); ctx.restore();
+        ctx.fillText(String(i+1),entry.component.x+4,entry.component.y+18);
+      });
+    }
+    async function loadResult() {
+      const next = new Image();
+      next.onload = () => { image = next; $('empty').hidden = true; draw(); };
+      next.src = `/api/images/${sessionId}?v=${Date.now()}`;
+    }
+    async function upload(file) {
+      if (!file) return;
+      status('이미지를 업로드하는 중…');
+      const body = new FormData(); body.append('file', file);
+      const response = await fetch('/api/images', {method:'POST', body});
+      if (!response.ok) return status(`열기 실패: ${(await response.json()).detail}`);
+      const data = await response.json(); sessionId = data.session_id; components = []; componentPreviews=[]; layers=[]; renderLayers(); renderObjects();
+      if ($('autoCorners').checked) {
+        status('네 모서리 색상을 분석해 배경을 자동 제거하는 중…');
+        const autoResponse = await fetch(`/api/images/${sessionId}/auto-remove-background`, {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({tolerance:+$('tolerance').value,feather:+$('feather').value,sample_radius:2})});
+        if (!autoResponse.ok) return status(`자동 배경 제거 실패: ${(await autoResponse.json()).detail}`);
+      await loadResult(); status(`${data.filename} · 자동 배경 제거 완료 · 저장 폴더: ${data.output_directory}`);
+      } else {
+        await loadResult(); status(`${data.filename} · ${data.width} × ${data.height} · 저장 폴더: ${data.output_directory}`);
+      }
+    }
+    $('file').onchange = e => upload(e.target.files[0]);
+    ['dragenter','dragover'].forEach(name => workspace.addEventListener(name, e => { e.preventDefault(); workspace.classList.add('drag'); }));
+    ['dragleave','drop'].forEach(name => workspace.addEventListener(name, e => { e.preventDefault(); workspace.classList.remove('drag'); }));
+    workspace.addEventListener('drop', e => upload(e.dataTransfer.files[0]));
+    $('tolerance').oninput = e => $('tolOut').value = e.target.value;
+    $('feather').oninput = e => $('featherOut').value = e.target.value;
+    $('alphaThreshold').oninput = e => $('alphaOut').value = e.target.value;
+    canvas.onclick = async e => {
+      if (!sessionId || !image) return;
+      const rect = canvas.getBoundingClientRect();
+      const x = Math.floor((e.clientX-rect.left) * canvas.width/rect.width);
+      const y = Math.floor((e.clientY-rect.top) * canvas.height/rect.height);
+      if(tool === 'select') {
+        status(`(${x}, ${y}) 개체를 선택해 새 레이어로 복사하는 중…`);
+        const response=await fetch(`/api/images/${sessionId}/layers/auto-select`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({x,y,alpha_threshold:+$('alphaThreshold').value})});
+        const data=await response.json();
+        if(!response.ok) return status(`자동 선택 실패: ${data.detail}`);
+        layers.push(data); renderLayers(); status(`${data.name} 생성 완료 · ${data.pixels.toLocaleString()} 픽셀 선택`); return;
+      }
+      status(`(${x}, ${y}) 기준으로 배경을 제거하는 중…`);
+      const response = await fetch(`/api/images/${sessionId}/remove-background`, {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({x,y,tolerance:+$('tolerance').value,contiguous:$('contiguous').checked,feather:+$('feather').value})});
+      if (!response.ok) return status(`배경 제거 실패: ${(await response.json()).detail}`);
+      components=[]; componentPreviews=[]; await loadResult(); status(`배경 제거 완료 · 유사도 ${$('tolerance').value}`);
+    };
+    $('undo').onclick = async () => { if (!sessionId) return; const r=await fetch(`/api/images/${sessionId}/undo`,{method:'POST'}); const d=await r.json(); components=[]; componentPreviews=[]; if(d.ok) await loadResult(); status(d.ok?'마지막 작업을 취소했습니다.':d.detail); };
+    $('detect').onclick = async () => {
+      if(!sessionId)return; status('알파 마스크로 개체를 찾는 중…');
+      const r=await fetch(`/api/images/${sessionId}/components`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({alpha_threshold:+$('alphaThreshold').value,min_pixels:+$('minPixels').value})});
+      const d=await r.json(); components=d.components;
+      componentPreviews=await Promise.all(components.map(component=>new Promise(resolve=>{const preview=new Image(); preview.onload=()=>resolve({component,image:preview}); preview.src=`${component.url}?v=${Date.now()}`;})));
+      renderObjects(); draw(); status(`개체 ${d.count}개를 실제 알파 마스크로 분리했습니다.`);
+    };
+    $('save').onclick = async () => { if(!sessionId)return; const r=await fetch(`/api/images/${sessionId}/save`,{method:'POST'}); const d=await r.json(); status(r.ok?`저장 완료: ${d.relative_path}`:`저장 실패: ${d.detail}`); };
+    $('saveAll').onclick = async () => {
+      if(!sessionId)return;if(!components.length)await $('detect').onclick();if(!components.length)return;
+      const r=await fetch(`/api/images/${sessionId}/save-components`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({frame_height:+$('frameHeight').value,horizontal_margin:120,bottom_padding:20})});
+      const d=await r.json();status(r.ok?`고정 크기 ${d.frame_width} × ${d.frame_height} 프레임 ${d.count}개 저장: ${d.directory}`:`저장 실패: ${d.detail}`);
+    };
+    $('openPlayer').onclick=()=>{if(!components.length)return status('먼저 개체 찾기를 실행하세요.');frameIndex=0;drawPlayer();$('playerDialog').showModal();};
+    $('closePlayer').onclick=()=>{$('playerDialog').close();clearInterval(playTimer);playTimer=null;$('playFrames').textContent='▶ 재생';};
+    $('prevFrame').onclick=()=>showFrame(frameIndex-1);$('nextFrame').onclick=()=>showFrame(frameIndex+1);
+    $('deleteFrame').onclick=async()=>{
+      if(!components.length||!confirm(`프레임 ${frameIndex+1}을 제거할까요?`))return;
+      const deleting=frameIndex,r=await fetch(`/api/images/${sessionId}/animation/objects/${deleting}`,{method:'DELETE'}),d=await r.json();
+      if(!r.ok)return status(`프레임 제거 실패: ${d.detail}`);
+      components.splice(deleting,1);componentPreviews.splice(deleting,1);frameIndex=Math.min(deleting,components.length-1);renderObjects();
+      if(!components.length){clearInterval(playTimer);playTimer=null;$('playerDialog').close();status('모든 프레임이 제거되었습니다.');return;}
+      drawPlayer();status(`프레임 ${deleting+1} 제거 완료 · ${d.remaining}개 남음`);
+    };
+    $('playFrames').onclick=()=>{if(playTimer){clearInterval(playTimer);playTimer=null;$('playFrames').textContent='▶ 재생';}else{playTimer=setInterval(()=>showFrame(frameIndex+1),Math.max(20,+$('duration').value));$('playFrames').textContent='⏸ 정지';}};
+    $('frameHeight').onchange=()=>{if($('playerDialog').open)drawPlayer();};
+    $('frameScale').oninput=e=>{if(!components.length)return;components[frameIndex].scale=+e.target.value/100;$('frameScaleOut').value=`${e.target.value}%`;drawPlayer();};
+    $('frameScale').onchange=async e=>{if(!components.length)return;const scale=+e.target.value/100;const r=await fetch(`/api/images/${sessionId}/animation/objects/${frameIndex}/scale`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({scale})});status(r.ok?`개체 ${frameIndex+1} 크기: ${e.target.value}%`:'크기 저장에 실패했습니다.');};
+    const pc=$('playerCanvas');pc.onpointerdown=e=>{const r=pc.getBoundingClientRect(),c=components[frameIndex];dragStart={x:e.clientX,y:e.clientY,scaleX:pc.width/r.width,scaleY:pc.height/r.height,baseX:c.offset_x||0,baseY:c.offset_y||0,index:frameIndex};pc.setPointerCapture(e.pointerId);};
+    pc.onpointermove=e=>{if(!dragStart||dragStart.index!==frameIndex)return;const c=components[frameIndex];c.offset_x=dragStart.baseX+Math.round((e.clientX-dragStart.x)*dragStart.scaleX);c.offset_y=dragStart.baseY+Math.round((e.clientY-dragStart.y)*dragStart.scaleY);drawPlayer();};
+    pc.onpointerup=async e=>{if(!dragStart)return;const saved=dragStart,c=components[saved.index],dx=(c.offset_x||0)-saved.baseX,dy=(c.offset_y||0)-saved.baseY;dragStart=null;renderObjects();const r=await fetch(`/api/images/${sessionId}/animation/objects/${saved.index}/move`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({dx,dy})});status(r.ok?`개체 ${saved.index+1} 위치 저장: ${c.offset_x}, ${c.offset_y}`:'위치 저장에 실패했습니다.');};
+    window.addEventListener('keydown',e=>{if(!$('playerDialog').open||!['ArrowLeft','ArrowRight','ArrowUp','ArrowDown'].includes(e.key))return;e.preventDefault();const n=e.shiftKey?5:1;moveFrame(e.key==='ArrowLeft'?-n:e.key==='ArrowRight'?n:0,e.key==='ArrowUp'?-n:e.key==='ArrowDown'?n:0);});
+  </script>
+</body>
+</html>
