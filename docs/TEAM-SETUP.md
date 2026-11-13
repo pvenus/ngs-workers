@@ -4,7 +4,7 @@ This is the private unified Workers repository. AudioForge's generation API,
 catalog API, review API and file consumer use one package in `modules/audioforge`
 and one launcher. `workers/audio` is the separate pinned NGS music boundary;
 installing AudioForge does not configure that boundary or grant NGS permissions.
-Use the reviewed public source at https://github.com/pvenus/forge-workers and select an approved revision. No public release or model-license
+Use the reviewed public source at https://github.com/pvenus/ngs-workers and select an approved revision. No public release or model-license
 clearance is implied. LTX migration and new video/Wan features remain on hold.
 
 ## Keep four things separate
