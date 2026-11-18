@@ -67,7 +67,7 @@ class ModelAssetTests(unittest.TestCase):
 
     def test_held_profiles_and_unsafe_paths_rejected(self):
         manifest, _ = m.load_manifest()
-        for name in ['video', 'qwen25-omni-review', 'stable-audio-legacy', 'imageforge-http']:
+        for name in ['video', 'qwen25-omni-review', 'stable-audio-legacy']:
             with self.assertRaisesRegex(ValueError, 'PROFILE_NOT_DOWNLOADABLE'):
                 m.select(manifest, name)
         for path in ['/outside', '../outside', 'a/../outside']:

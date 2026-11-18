@@ -4,7 +4,7 @@ This is the private unified Workers repository. AudioForge's generation API,
 catalog API, review API and file consumer use one package in `modules/audioforge`
 and one launcher. `workers/audio` is the separate pinned NGS music boundary;
 installing AudioForge does not configure that boundary or grant NGS permissions.
-Use the reviewed public source at https://github.com/pvenus/ngs-workers and select an approved revision. No public release or model-license
+Use https://github.com/pvenus/ngs-workers and select an approved revision. No public release or model-license
 clearance is implied. LTX migration and new video/Wan features remain on hold.
 
 ## Keep four things separate
@@ -23,7 +23,7 @@ clearance is implied. LTX migration and new video/Wan features remain on hold.
 
 ### Create a new private workspace first
 
-The initializer prepares AudioForge and ImageForge directories and environment
+The initializer prepares AudioForge directories and environment
 files together. It does not install packages, create a DB, download weights,
 start listeners or enable consumers. Use a **new** directory outside this Git
 checkout, with an existing owner-writable parent:
@@ -38,11 +38,7 @@ it refuses an existing directory instead of merging or overwriting it. A partial
 failed initialization is retained for inspection, not deleted or retried in place.
 This is for a **new installation**, not a way to migrate the operating workspace.
 
-It creates `config/audioforge.env` and `config/imageforge.env` with owner-only
-permissions, separate data/runtime/log roles, and ImageForge's required internal
-namespace modes. Its empty legacy inventory means no private legacy resources
-were inherited. ACE/review weights, service venvs, identities and NGS bindings
-remain separately provisioned. No model terms are accepted or licenses invented.
+It creates `config/audioforge.env` with owner-only permissions and separate data/runtime/log roles. Model weights, service environments, identities and NGS bindings remain separately provisioned. The retired image editor is not provisioned.
 
 Review and source only the applicable environment file before the commands below.
 For example:
@@ -138,41 +134,6 @@ Actual start commands and isolated tests are in
 from the commands above until the intended operator has completed this handoff.
 No LaunchAgent, request, DB or running service is created by this document.
 
-## ImageForge is a separate lightweight service
+## Image processing
 
-ImageForge is included in this same repository but uses a separate service venv
-and data namespace. Its HTTP operations require Pillow/NumPy, not generation
-weights. Follow the package's [installation instructions](../modules/imageforge/README.md)
-with a new venv outside the checkout, on the main SSD. The MCP extra is separate
-from the HTTP service. Do not start a second server beside the existing port 8000
-LaunchAgent.
-
-For a workspace created by the initializer, install code into its **new** venv:
-
-```sh
-. "$HOME/Workspaces/Workers-new/config/imageforge.env"
-python3.12 -m venv "$WORKERS_IMAGE_VENV"
-"$WORKERS_IMAGE_VENV/bin/python" -m pip install -r modules/imageforge/requirements.http.lock.txt
-"$WORKERS_IMAGE_VENV/bin/python" -m pip install --no-deps modules/imageforge
-```
-
-These commands install HTTP code only. The initializer has already provisioned
-the empty internal namespace; no current owner's legacy data is needed or copied.
-Starting the server remains a separate, explicit ownership handoff.
-
-For the internal layout, explicitly set `IMAGEFORGE_STORAGE_MODE=internal` and
-choose `IMAGEFORGE_STORAGE_BASE` outside the checkout. The intended role is
-`$HOME/Workspaces/Workers/data/imageforge`; its shared namespace is
-`resources/v1/imageforge`. Set `IMAGEFORGE_LEGACY_ROOT` and
-`IMAGEFORGE_LEGACY_INVENTORY` only to the intended owner's reviewed internal
-legacy directory and inventory. Existing private legacy files are not a template
-to distribute to new teammates. The module README specifies required directory
-modes and the owner/ACL/symlink/device checks. Do not weaken those checks to make
-an unprovisioned or copied layout start.
-
-Without explicit internal mode the package retains the old external-storage
-branch. The current operational launcher selects internal mode and checks the
-internal storage contract; a bare package install does not install that launcher,
-provision private data or authorize publication. Verify `/api/health`, not
-`/health`, after an explicit service handover. LTX and new video functionality
-remain excluded from this setup.
+The retired standalone ImageForge service is not installed. Resident native image generation uses its trusted native provider; full-frame processing uses its separate BiRefNet/SAM2 environment. Tests require an explicitly selected Python with Pillow, not an ImageForge installation.

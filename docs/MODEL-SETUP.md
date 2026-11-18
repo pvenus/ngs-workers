@@ -20,7 +20,6 @@ revisions, artifact sizes, SHA-256 and available Git blob hashes.
 | --- | --- |
 | `acestep-xl-sft-lm4b` | **Default asset plan**: XL-SFT + LM4B + shared text encoder/VAE; formal generation adapter not yet implemented |
 | `acestep-turbo` | Explicit compatibility baseline: smaller Turbo + text encoder/VAE, no planning LM; not the preferred final music target |
-| `imageforge-http` | No model download: current HTTP image operations use Pillow/NumPy |
 | `qwen25-omni-review` | Held: existing GGUF review code records conflicting license metadata/provenance |
 | `stable-audio-legacy` | Held: independent runtime and license/eligibility need review |
 | `video` | Excluded: LTX migration and new video/Wan features remain on hold |
@@ -29,7 +28,6 @@ This manifest is installation metadata, not the operational model/request
 registry and not an authorization grant. Download support does not enable LM/XL
 requests in the operating service. The current instrument-only adapter still
 allows only Turbo with thinking disabled. Its limits and guards are unchanged.
-ImageForge is not an image-generation model installer.
 
 ## Plan first, then explicitly download
 

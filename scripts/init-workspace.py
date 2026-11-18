@@ -33,13 +33,9 @@ def layout(root):
         'config': 0o700, 'runtime': 0o700, 'data': 0o700, 'logs': 0o700,
         'data/audioforge': 0o700, 'data/audioforge/artifacts': 0o700,
         'data/audioforge/bgm-requests': 0o700, 'data/audioforge/bgm-request-state': 0o700,
-        'data/audioforge/reviews': 0o700, 'data/imageforge': 0o700,
-        'data/imageforge/resources': 0o755, 'data/imageforge/resources/v1': 0o755,
-        'data/imageforge/resources/v1/imageforge': 0o700,
-        'data/imageforge/legacy': 0o700,
+        'data/audioforge/reviews': 0o700,
     }
     audio = root / 'data/audioforge'
-    image = root / 'data/imageforge'
     audio_env = {
         'WORKERS_AUDIO_VENV': str(root / 'runtime/audioforge-service/.venv'),
         'WORKERS_DATA_ROOT': str(audio),
@@ -53,17 +49,7 @@ def layout(root):
         'AUDIOFORGE_BACKEND': 'ace-step',
         'AUDIOFORGE_MODEL': 'acestep-v15-turbo',
     }
-    image_env = {
-        'WORKERS_IMAGE_VENV': str(root / 'runtime/imageforge-service/.venv'),
-        'IMAGEFORGE_STORAGE_MODE': 'internal',
-        'IMAGEFORGE_STORAGE_BASE': str(image),
-        'IMAGEFORGE_RESOURCE_ROOT': str(image / 'resources/v1'),
-        'IMAGEFORGE_LEGACY_ROOT': str(image / 'legacy'),
-        'IMAGEFORGE_LEGACY_INVENTORY': str(image / 'legacy/legacy_inventory.json'),
-        'IMAGEFORGE_HOST': '127.0.0.1',
-        'IMAGEFORGE_PORT': '8000',
-    }
-    return directories, audio_env, image_env
+    return directories, audio_env
 
 
 def env_text(values):
@@ -81,13 +67,13 @@ def write_new(path, content):
 
 def initialize(root, apply=False):
     root = new_root(root)
-    directories, audio, image = layout(root)
+    directories, audio = layout(root)
     result = {
         'schemaVersion': 'workers.workspace.v1',
         'state': 'created-not-activated' if apply else 'plan-only',
         'workspace': str(root),
         'directories': {name: oct(mode) for name, mode in directories.items()},
-        'environmentFiles': ['config/audioforge.env', 'config/imageforge.env'],
+        'environmentFiles': ['config/audioforge.env'],
         'installsDependencies': False, 'createsDatabase': False,
         'downloadsModels': False, 'startsServices': False, 'enablesConsumer': False,
         'readyForGeneration': False,
@@ -103,11 +89,8 @@ def initialize(root, apply=False):
     for name, mode in directories.items():
         path = root / name
         path.mkdir(mode=mode)
-        path.chmod(mode)  # Required ImageForge namespace modes, independent of umask.
+        path.chmod(mode)  # Explicit namespace modes, independent of umask.
     write_new(root / 'config/audioforge.env', env_text(audio))
-    write_new(root / 'config/imageforge.env', env_text(image))
-    # Empty means this NEW machine has no inherited private legacy resources.
-    write_new(root / 'data/imageforge/legacy/legacy_inventory.json', '{}\n')
     write_new(root / 'config/workspace.json', json.dumps(result, indent=2) + '\n')
     return result
 

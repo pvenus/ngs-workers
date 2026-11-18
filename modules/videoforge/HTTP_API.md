@@ -63,26 +63,12 @@ Errors use `{"error":{"code":"..."}}` with stable codes:
 | 415 | `mp4_required`, `invalid_mp4_content` |
 | 422 | `invalid_video`, `extraction_failed` |
 
-## ImageForge frontend connection
+## Independent frontend
 
-The existing ImageForge HTTP app is documented at `http://127.0.0.1:8000`.
-Its health endpoint is `GET /api/health`, its API remains under `/api/*`, its
-static browser UI is mounted at `/web/*`, and `/` serves its entry page. The
-frontend proxy may route its own `/imageforge/api/*` calls to the same
-`/api/*` paths on port 8000 and `/videoforge/api/*` calls to port 8001.
-The existing ImageForge UI calls root-absolute `/api/*` URLs, so embedding
-that UI requires `/web/*` and `/api/*` on the same browser origin, both
-proxied to port 8000, or an explicit URL rewrite. Forward methods, multipart
-bodies, query strings, content types, and download response headers unchanged.
-Do not rewrite ImageForge session or asset URLs without preserving their
-`/api/*` destination. The ImageForge routes
-remain implemented by its existing `server.py`; this HTTP addition edits none
-of those files. At implementation time, neither port 8000 nor 8001 was
-listening, so live health was unavailable. No service was started or restarted.
+The former ImageForge frontend integration is retired. This module does not depend on port 8000 or the removed editor.
 
 ## Rollback
 
 Stop `videoforge-http` if it was started, remove this new HTTP module, its
 entry point and optional dependencies from `pyproject.toml`, and remove the
-frontend proxy route for port 8001. Existing MCP extraction outputs, jobs,
-and ImageForge files do not need migration or rollback.
+frontend proxy route for port 8001. Existing MCP extraction outputs and jobs are unchanged.

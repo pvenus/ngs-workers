@@ -6,7 +6,7 @@
 
 기존 `Workers/source` Git 저장소를 재사용한다. 초기 기준 commit `b8a392e`.
 이번 브랜치는 `dev/resident-services-20261118`이며 별도 worktree에서 작업한다.
-기존 AudioForge/ImageForge/legacy VideoForge와 운영 release/binding/DB/model은 수정하지 않는다.
+기존 AudioForge/legacy VideoForge와 운영 release/binding/DB/model은 수정하지 않는다.
 다섯 서비스는 한 저장소의 공통 코드로 개발하되 개별 프로세스와 모델 환경을 사용한다.
 새 Git 저장소, 기존 서비스 복제, launchd 등록, 모델 다운로드는 하지 않았다.
 
@@ -181,7 +181,7 @@ resource 반납은 검증된 종료 후 tombstone으로 기록해 재전송에 �
 운영 등록과 real PDS frame publication은 여전히 미완료다.
 
 CPU backend vertical 검증 명령은 위 명령의 Python을 기존 Pillow 환경
-`Workers/runtime/imageforge-venv/bin/python`으로 지정한다. 이 테스트는 공식 FrameRequests
+`Workers/runtime/frame-alpha/.venv/bin/python`으로 지정한다. 이 테스트는 공식 FrameRequests
 accept와 HTTP pull, 실제 이관된 Pillow 처리 코드를 사용하지만 PDS stage/publication은 합성
 fixture다. 8방향×2프레임에 공통 32색·50%·binary alpha와 실제 임시 디렉터리 제거를 확인했다.
 `frame_processing.py` 원본 SHA-256:

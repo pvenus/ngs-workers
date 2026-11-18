@@ -795,10 +795,6 @@
         "The user-selected quality goal is XL-SFT plus 5Hz LM4B, not this no-LM Turbo baseline."
       ]
     },
-    "imageforge-http": {
-      "status": "no-model-required",
-      "reason": "Current ImageForge HTTP operations use Pillow/NumPy. No generation weights or image-generation engine are installed by this service."
-    },
     "qwen25-omni-review": {
       "status": "blocked",
       "reason": "Existing GGUF review adapter records conflicting upstream Apache-2.0 versus quantization qwen-research metadata. Reconcile exact conversion provenance and terms before distributing or automating it."

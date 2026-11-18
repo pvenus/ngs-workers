@@ -40,8 +40,9 @@ class WorkspaceTests(unittest.TestCase):
         for name in result['environmentFiles']:
             self.assertEqual(stat.S_IMODE((self.root / name).stat().st_mode), 0o600)
         files = {p.relative_to(self.root).as_posix() for p in self.root.rglob('*') if p.is_file()}
-        self.assertEqual(files, {'config/audioforge.env', 'config/imageforge.env',
-                                'config/workspace.json', 'data/imageforge/legacy/legacy_inventory.json'})
+        self.assertEqual(files, {'config/audioforge.env', 'config/workspace.json'})
+        self.assertFalse((self.root / 'data/imageforge').exists())
+        self.assertFalse((self.root / 'config/imageforge.env').exists())
         self.assertFalse((self.root / 'runtime/acestep').exists())
         self.assertFalse((self.root / 'data/audioforge/queue.sqlite3').exists())
 

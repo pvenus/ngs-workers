@@ -1,15 +1,15 @@
 # NGS Workers
 
-Unified worker source for NGS. This repository contains AudioForge (music generation/review/catalog), ImageForge (image processing), shared audio adapters, setup scripts, tests and official model manifests. Workers are modules in this single repository, not separate repositories.
+Unified worker source for NGS. This repository contains AudioForge (music generation/review/catalog), shared audio adapters, setup scripts, tests and official model manifests. Workers are modules in this single repository, not separate repositories.
 
 ## Quick start
 
 1. Clone `https://github.com/pvenus/ngs-workers.git`.
 2. Install Python 3.12 and read [team setup](docs/TEAM-SETUP.md).
 3. Run `python3.12 scripts/init-workspace.py --root /absolute/new/workspace` to inspect the layout; add `--apply` for a new empty workspace.
-4. Install AudioForge with `sh scripts/setup-audioforge.sh`; see [AudioForge](modules/audioforge/README.md) and [ImageForge](modules/imageforge/README.md).
+4. Install AudioForge with `sh scripts/setup-audioforge.sh`; see [AudioForge](modules/audioforge/README.md).
 5. Review [model setup](docs/MODEL-SETUP.md) before explicit downloads. The preferred music bundle is XL-SFT 4B + LM4B. Model weights are downloaded separately, not committed.
-6. Configure private paths outside this checkout. For ImageForge use `IMAGEFORGE_STORAGE_MODE=internal` explicitly.
+6. Configure private paths outside this checkout.
 
 ## Publication scope
 
@@ -27,3 +27,7 @@ role composition, model-memory admission and automatic reconciliation are covere
 by isolated contract tests. See [deployment prerequisites](docs/RESIDENT-DEPLOYMENT-CANDIDATE.md):
 example configurations remain inactive until real service bindings and trusted
 process proofs are supplied. Existing operating services and queues are unchanged.
+
+## Removed standalone image editor
+
+The standalone ImageForge implementation and installer are removed. Resident image generation and frame postprocessing remain independent and are preserved. Historical source remains recoverable from Git history.

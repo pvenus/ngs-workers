@@ -4,7 +4,7 @@ Validated on 2026-11-18 in the isolated `dev/resident-services-20261118` worktre
 
 - **230 tests passed, zero skipped**: 191 resident/service tests plus 39 media/full-frame tests, each top-level media test file isolated to prevent old/candidate PDS module-cache contamination.
 - Source contracts: NGS `runtime-space-0597802`, existing PDS `backend-f3e61b1`, media PDS candidate `music-pds-publish-20261118`.
-- Test interpreter: existing Workers ImageForge environment with Pillow. No dependency installation was required.
+- Test interpreter: explicitly selected Python environment with Pillow. No dependency installation was required.
 - `git diff --check` passed. No operating database, original content, service, launchd entry or credential was changed.
 
 Coverage includes canonical claims, response-loss idempotency, fence/owner checks, original intake-pinned guards, atomic publication reservations, server-verified receipt checkpoints before cleanup, full-frame extraction and mandatory half-size pixel processing, temporary ownership/cleanup, model memory admission, independent worker composition, single-candidate parent auto-apply boundaries, and automatic evidence-based reconciliation.
