@@ -1,0 +1,40 @@
+{
+  "schemaVersion": "resident-deployment.v1",
+  "role": "postprocess",
+  "workerId": "resident-postprocess",
+  "capabilities": [
+    "image.process",
+    "frames.extract"
+  ],
+  "activationApproved": false,
+  "factoryPath": "/REVIEW/release/workers/resident/deployment/operator_factory.py",
+  "factorySha256": "REPLACE_WITH_REVIEWED_FACTORY_SHA256",
+  "settings": {
+    "requestUrl": {
+      "env": "RESIDENT_REQUEST_URL"
+    },
+    "requestToken": {
+      "env": "RESIDENT_POSTPROCESS_TOKEN"
+    },
+    "pdsUrl": {
+      "env": "RESIDENT_PDS_URL"
+    },
+    "bindingsPath": {
+      "env": "RESIDENT_BINDINGS_PATH"
+    },
+    "bindingsSha256": {
+      "env": "RESIDENT_BINDINGS_SHA256"
+    },
+    "workerId": "resident-postprocess",
+    "claimJournal": "/REVIEW/claims/postprocess.json",
+    "scratchRoot": "/REVIEW/scratch/postprocess",
+    "modelUrl": {
+      "env": "RESIDENT_MODEL_URL"
+    },
+    "modelToken": {
+      "env": "RESIDENT_POSTPROCESS_MODEL_TOKEN"
+    },
+    "modelJournal": "/REVIEW/models/postprocess.json",
+    "modelResidencyRoot": "/REVIEW/model-residency"
+  }
+}

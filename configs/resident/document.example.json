@@ -1,0 +1,38 @@
+{
+  "schemaVersion": "resident-deployment.v1",
+  "role": "document",
+  "workerId": "resident-document",
+  "capabilities": [
+    "document.edit",
+    "document.create"
+  ],
+  "activationApproved": false,
+  "factoryPath": "/REVIEW/release/workers/resident/deployment/operator_factory.py",
+  "factorySha256": "REPLACE_WITH_REVIEWED_FACTORY_SHA256",
+  "settings": {
+    "requestUrl": {
+      "env": "RESIDENT_REQUEST_URL"
+    },
+    "requestToken": {
+      "env": "RESIDENT_DOCUMENT_TOKEN"
+    },
+    "pdsUrl": {
+      "env": "RESIDENT_PDS_URL"
+    },
+    "bindingsPath": {
+      "env": "RESIDENT_BINDINGS_PATH"
+    },
+    "bindingsSha256": {
+      "env": "RESIDENT_BINDINGS_SHA256"
+    },
+    "workerId": "resident-document",
+    "claimJournal": "/REVIEW/claims/document.json",
+    "scratchRoot": "/REVIEW/scratch/document",
+    "codexBinary": {
+      "env": "RESIDENT_CODEX_BINARY"
+    },
+    "codexSha256": {
+      "env": "RESIDENT_CODEX_SHA256"
+    }
+  }
+}

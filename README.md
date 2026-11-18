@@ -13,6 +13,17 @@ Unified worker source for NGS. This repository contains AudioForge (music genera
 
 ## Publication scope
 
-Initial source snapshot, not a copy of operational state or private Git history. No generated images/audio/video, databases, credentials, models, caches or operational binding files are included. Legacy LTX VideoForge is excluded. Wan-Animate/video preset integration is not included in this initial snapshot. Setup does not automatically enable production consumers or provide existing production data. The HQ adapter exists; runtime provisioning and deployment remain separate steps.
+Source repository, not a copy of operational state. No generated images/audio/video, databases, credentials, models, caches or operational binding files are included. Legacy LTX VideoForge source is retained for compatibility and provenance, without activation. Resident animation integration is a development candidate, not an enabled production service. Setup does not automatically enable production consumers or provide existing production data. The HQ adapter exists; runtime provisioning and deployment remain separate steps.
 
 Upstream dependencies and downloaded models retain their own licenses. See the manifest and model setup for provenance. No new license grant is implied for project-owned code. Review-model and legacy-model restrictions are documented separately.
+
+## Resident worker development (not activated)
+
+The new [resident worker contracts and runtime](docs/RESIDENT-WORKERS.md) develop
+five independently pulling roles in this same repository: document/Codex, image,
+animation, image postprocessing, and music. This is an isolated development
+candidate, not an operational migration. Formal Request/PDS adapters, independent
+role composition, model-memory admission and automatic reconciliation are covered
+by isolated contract tests. See [deployment prerequisites](docs/RESIDENT-DEPLOYMENT-CANDIDATE.md):
+example configurations remain inactive until real service bindings and trusted
+process proofs are supplied. Existing operating services and queues are unchanged.

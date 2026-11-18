@@ -1,0 +1,41 @@
+{
+  "schemaVersion": "resident-deployment.v1",
+  "role": "image",
+  "workerId": "resident-image",
+  "capabilities": [
+    "image.generate",
+    "image.edit"
+  ],
+  "activationApproved": false,
+  "factoryPath": "/REVIEW/release/workers/resident/deployment/operator_factory.py",
+  "factorySha256": "REPLACE_WITH_REVIEWED_FACTORY_SHA256",
+  "settings": {
+    "requestUrl": {
+      "env": "RESIDENT_REQUEST_URL"
+    },
+    "requestToken": {
+      "env": "RESIDENT_IMAGE_TOKEN"
+    },
+    "pdsUrl": {
+      "env": "RESIDENT_PDS_URL"
+    },
+    "bindingsPath": {
+      "env": "RESIDENT_BINDINGS_PATH"
+    },
+    "bindingsSha256": {
+      "env": "RESIDENT_BINDINGS_SHA256"
+    },
+    "workerId": "resident-image",
+    "claimJournal": "/REVIEW/claims/image.json",
+    "scratchRoot": "/REVIEW/scratch/image",
+    "codexBinary": {
+      "env": "RESIDENT_CODEX_BINARY"
+    },
+    "codexSha256": {
+      "env": "RESIDENT_CODEX_SHA256"
+    },
+    "pdsToken": {
+      "env": "RESIDENT_PDS_TOKEN"
+    }
+  }
+}

@@ -1,0 +1,26 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "videoforge-mcp"
+version = "0.1.0"
+description = "Asynchronous local text-to-video MCP for Apple Silicon"
+requires-python = ">=3.10"
+dependencies = ["mcp>=1.9,<2", "pydantic>=2"]
+
+[project.optional-dependencies]
+inference = ["torch>=2.4", "diffusers>=0.35", "transformers>=4.45", "accelerate>=1.0", "safetensors>=0.4", "imageio>=2.35", "imageio-ffmpeg>=0.5"]
+http = ["starlette>=0.46", "uvicorn>=0.34", "python-multipart>=0.0.20", "imageio>=2.35", "imageio-ffmpeg>=0.5"]
+alpha = ["torch>=2.5", "torchvision>=0.20", "transformers>=4.45", "pillow>=10", "opencv-python>=4.10", "numpy>=1.26", "imageio>=2.35", "imageio-ffmpeg>=0.5"]
+alpha-sam2 = ["sam-2 @ git+https://github.com/facebookresearch/sam2.git"]
+
+[project.scripts]
+videoforge-mcp = "videoforge_mcp.server:main"
+videoforge-worker = "videoforge_mcp.worker:main"
+videoforge-i2v-worker = "videoforge_mcp.worker_loop:main"
+videoforge-http = "videoforge_mcp.http:main"
+videoforge-alpha = "videoforge_mcp.alpha_cli:main"
+
+[tool.setuptools.packages.find]
+include = ["videoforge_mcp*"]

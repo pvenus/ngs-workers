@@ -1,0 +1,15 @@
+"""Site-owned reviewed bindings template. NOT an executable deployment.
+
+Copy to the immutable candidate release, implement from the original service
+contracts, test, then pin its SHA256 in RESIDENT_BINDINGS_SHA256. Do not fill
+callbacks with True/empty fixtures. Never put secrets or request DTOs here.
+"""
+def build_bindings(role, settings):
+    # document: {} is sufficient after Request parent bridge/guard is installed.
+    # animation: animation_config (reviewed AnimationBackend config).
+    # postprocess: full_frame_config is REQUIRED for full extraction; omission
+    #              only supports existing half postprocessing, not full requests.
+    # image: native_runner_builder, source_reader, cleanup.
+    # music: music_config, source_reader, cleanup.
+    # ownership_guard defaults to authenticated Request /ownership-guard.
+    raise RuntimeError('SITE_ORIGINAL_AUTHORITY_BINDINGS_NOT_IMPLEMENTED')

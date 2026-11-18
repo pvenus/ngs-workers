@@ -1,0 +1,42 @@
+{
+  "schemaVersion": "resident-deployment.v1",
+  "role": "music",
+  "workerId": "resident-music",
+  "capabilities": [
+    "music.generate"
+  ],
+  "activationApproved": false,
+  "factoryPath": "/REVIEW/release/workers/resident/deployment/operator_factory.py",
+  "factorySha256": "REPLACE_WITH_REVIEWED_FACTORY_SHA256",
+  "settings": {
+    "requestUrl": {
+      "env": "RESIDENT_REQUEST_URL"
+    },
+    "requestToken": {
+      "env": "RESIDENT_MUSIC_TOKEN"
+    },
+    "pdsUrl": {
+      "env": "RESIDENT_PDS_URL"
+    },
+    "bindingsPath": {
+      "env": "RESIDENT_BINDINGS_PATH"
+    },
+    "bindingsSha256": {
+      "env": "RESIDENT_BINDINGS_SHA256"
+    },
+    "workerId": "resident-music",
+    "claimJournal": "/REVIEW/claims/music.json",
+    "scratchRoot": "/REVIEW/scratch/music",
+    "modelUrl": {
+      "env": "RESIDENT_MODEL_URL"
+    },
+    "modelToken": {
+      "env": "RESIDENT_MUSIC_MODEL_TOKEN"
+    },
+    "modelJournal": "/REVIEW/models/music.json",
+    "modelResidencyRoot": "/REVIEW/model-residency",
+    "pdsToken": {
+      "env": "RESIDENT_PDS_TOKEN"
+    }
+  }
+}
