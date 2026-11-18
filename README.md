@@ -36,3 +36,14 @@ The four existing AudioForge roles have a single explicit launcher: `scripts/run
 ## Git-backed ImageForge operation
 
 The current ImageForge HTTP package, service environment, shared resources and preserved legacy reads operate internally. Select the documented `IMAGEFORGE_STORAGE_MODE=internal` contract explicitly; omitting it retains the legacy external-storage mode, not a portable default. See [ImageForge setup](modules/imageforge/README.md) and [team prerequisites](docs/TEAM-SETUP.md). Existing external originals are rollback/archive material, not a source to overwrite newer internal state. The current health endpoint is `/api/health` on port 8000. Health checks are not end-to-end content acceptance tests.
+
+## Resident worker development (not activated)
+
+The new [resident worker contracts and runtime](docs/RESIDENT-WORKERS.md) develop
+five independently pulling roles in this same repository: document/Codex, image,
+animation, image postprocessing, and music. This is an isolated development
+candidate, not an operational migration. Formal Request/PDS adapters, independent
+role composition, model-memory admission and automatic reconciliation are covered
+by isolated contract tests. See [deployment prerequisites](docs/RESIDENT-DEPLOYMENT-CANDIDATE.md):
+example configurations remain inactive until real service bindings and trusted
+process proofs are supplied. Existing operating services and queues are unchanged.
