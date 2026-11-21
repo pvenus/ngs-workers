@@ -1,0 +1,32 @@
+{
+  "components": {
+    "animation": {
+      "entrypoint": "animation-cli.mjs",
+      "priorRelease": "workflow-native-animation-124175b-warm-49e0eff07d"
+    },
+    "audio": {
+      "entrypoint": "audio-cli.mjs",
+      "priorRelease": "workflow-bgm-codex-caption-0ff5e51"
+    },
+    "document": {
+      "entrypoint": "cli.mjs",
+      "priorRelease": "workflow-document-npc-add-93d2eff"
+    },
+    "file": {
+      "entrypoint": "cli.mjs",
+      "priorRelease": "workflow-file-worker-40c766b/workflow-file-single-target"
+    },
+    "image": {
+      "entrypoint": "image-cli.mjs",
+      "priorRelease": "workflow-image-npc-planning-md-6e30f6c"
+    },
+    "postprocess": {
+      "entrypoint": "postprocess-cli.mjs",
+      "priorRelease": "workflow-postprocess-b469c2c"
+    }
+  },
+  "privateBindings": "externally managed; never part of source",
+  "candidates": {
+    "audioResident": "separate optional release; requires selecting the matching pinned native audio provider"
+  }
+}

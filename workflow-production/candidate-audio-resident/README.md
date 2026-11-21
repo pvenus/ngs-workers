@@ -1,0 +1,64 @@
+# Formal one-result BGM worker
+
+The only audio model configured for this worker is ACE-Step 1.5 XL-SFT + LM 4B HQ. No Turbo, effect, or TTS fallback. Accepts
+one official `audio.generate` / `audio_generate` / `audio` task, acknowledged by
+Request Service and bound to the exact Planner payload, whose only accepted
+kind is `bgm`. Fixed duration is 10–30 seconds; `durationSeconds: null`
+activates the HQ model’s own duration plan, with optional `text` for humming.
+The model’s output must fit the bounded 10–120s WAV contract; no clamp or fixed
+input is sent for auto length. Exact Planner audio envelope from `e5db988`.
+
+The CLI accepts explicit owner-managed paths and config:
+`audio-cli.mjs --run --db <private workflow sqlite> --adapter-module <trusted absolute module> --adapter-config <trusted absolute binding>`.
+Trusted adapter module is `adapters/load.mjs`, with a 0600 config of exact shape `{"schemaVersion":"workflow.bgm-adapter-binding.v1","hqBinding":"<absolute verified HQ file>"}`. HQ auto provider: `workers-hq-auto-2a29687f0724`. Verify the separate installed binding with model capability preflight before configuring a resident process. Fixed requests keep the existing instrumental default; only auto requests may supply a BGM vocal cue.
+
+## Workflow capability: BGM caption preparation
+The existing audio worker still owns one `audio_generate` task and one final
+WAV. It receives the approved brief and the active sound Master Concept from
+PDS. Before starting ACE-Step, it invokes the installed Codex CLI in read-only,
+ephemeral mode, using only the concept title/body and the request title/brief,
+duration choice, and existing vocal mode. Prompt authoring rules are maintained
+in `bgm-caption.mjs`: one English narrative paragraph, melody and instrumental
+roles, arrangement and dynamics, musical arc and resolution or loop, and
+limited compatible additions where the brief leaves room. The output schema
+accepts only a caption, at most 2,000 characters. Source Markdown is never
+sent directly to ACE-Step, including on timeout or invalid output.
+
+The caption is shared by the composer and renderer. Approved lyrics/humming
+and duration are forwarded unchanged, and this capability does not infer or
+change structured model settings. A CLI failure is reported as
+`AUDIO_CAPTION_FAILED` (phase `caption`) and uses the common task retry path.
+No new task type, queue, RS/Planner schema, or PDS storage contract is needed.
+
+## PDS / Filex contract
+
+- GET loopback PDS port 8030 `/v1/audio/ownership/workflow-generate` receives
+  `{enabled:true,schemaVersion:"workflow.audio-generate-write.v1"}`.
+- POST `/read` under that path receives exact `{claim}`, with claim
+  `{officialRequestId,taskId,projectId,payloadSha256,claimStamp}`. PDS independently
+  checks the running row and the authoritative active category in Master Concept
+  `group.sound`, returns `{conceptId,sectionSha256,title,content}` (content max
+  256 KiB). No archived or alternative category may substitute.
+- The adapter returns exact `{wav,bpm,bpmBasis}`. A model BPM is integral 30–300
+  verified as a same-job generation condition before forwarding; it is **not**
+  independently measured from the WAV. Without trustworthy BPM use
+  `{bpm:null,bpmBasis:"unavailable"}`. No guessing from prompt, title, or filenames.
+- POST base `{claim,source:{conceptId,sectionSha256},artifact:{mimeType:"audio/wav",sha256,bytes,base64,bpm}}`.
+  PDS/Filex independently verify exact claim, source and single PCM16 RIFF format/data.
+  Filex stores `audio.wav` and `metadata.json` under
+  `canonical-files/binari/audio/<officialRequestId>/`, deriving true duration from
+  WAV samples and `bpmBasis` from the verified reporter value. Worker neither
+  touches Filex directly nor writes to NGS. Only exact
+  `{ok:true,resultRef:"canonical-files/binari/audio/<officialRequestId>/metadata.json"}`
+  completes the claimed task.
+- Only explicit HTTP 422 `{error:"WORKFLOW_AUDIO_REJECTED_BEFORE_WRITE"}` is a
+  definite post-send failure. An unknown outcome keeps the task running for
+  reconciliation and doesn't generate a replacement. Definite failures follow
+  shared retry rules: 10 minutes, cap 3, increment only on successful exact claim.
+  Do not reuse the old media reservation/receipt workflow.
+
+## Model-free verification
+
+`node --test` uses temporary independent Planner DBs and fixture WAVs. It never
+loads production data or starts a model. This is not confirmation of readiness,
+deployment, actual generation, or sonic quality.

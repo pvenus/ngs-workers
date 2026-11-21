@@ -1,0 +1,256 @@
+{
+  "prompt": {
+    "1": {
+      "class_type": "UNETLoader",
+      "inputs": {
+        "unet_name": "wan_animate_2_distill_bf16.safetensors",
+        "weight_dtype": "default"
+      }
+    },
+    "3": {
+      "class_type": "CLIPVisionLoader",
+      "inputs": {
+        "clip_name": "clip_vision_h.safetensors"
+      }
+    },
+    "4": {
+      "class_type": "VAELoader",
+      "inputs": {
+        "vae_name": "Wan2_1_VAE_bf16.safetensors"
+      }
+    },
+    "5": {
+      "class_type": "ConditioningLoader",
+      "inputs": {
+        "conditioning_name": "__REQUEST_CONDITIONING__"
+      }
+    },
+    "6": {
+      "class_type": "ConditioningLoader",
+      "inputs": {
+        "conditioning_name": "__REQUEST_CONDITIONING__"
+      }
+    },
+    "7": {
+      "class_type": "ConditioningLoader",
+      "inputs": {
+        "conditioning_name": "__REQUEST_CONDITIONING__"
+      }
+    },
+    "8": {
+      "class_type": "LoadImage",
+      "inputs": {
+        "image": "__REQUEST_REFERENCE__"
+      }
+    },
+    "9": {
+      "class_type": "ImageScale",
+      "inputs": {
+        "image": [
+          "8",
+          0
+        ],
+        "upscale_method": "nearest-exact",
+        "width": 768,
+        "height": 432,
+        "crop": "disabled"
+      }
+    },
+    "10": {
+      "class_type": "LoadVideo",
+      "inputs": {
+        "file": "__REQUEST_MOTION__"
+      }
+    },
+    "11": {
+      "class_type": "GetVideoComponents",
+      "inputs": {
+        "video": [
+          "10",
+          0
+        ]
+      }
+    },
+    "12": {
+      "class_type": "ImageScale",
+      "inputs": {
+        "image": [
+          "11",
+          0
+        ],
+        "upscale_method": "area",
+        "width": 768,
+        "height": 432,
+        "crop": "disabled"
+      }
+    },
+    "13": {
+      "class_type": "ImageFromBatch",
+      "inputs": {
+        "image": [
+          "12",
+          0
+        ],
+        "batch_index": 0,
+        "length": 1
+      }
+    },
+    "14": {
+      "class_type": "CLIPVisionEncode",
+      "inputs": {
+        "clip_vision": [
+          "3",
+          0
+        ],
+        "image": [
+          "9",
+          0
+        ],
+        "crop": "none"
+      }
+    },
+    "15": {
+      "class_type": "CLIPVisionEncode",
+      "inputs": {
+        "clip_vision": [
+          "3",
+          0
+        ],
+        "image": [
+          "13",
+          0
+        ],
+        "crop": "none"
+      }
+    },
+    "16": {
+      "class_type": "WanAnimate2ToVideo",
+      "inputs": {
+        "positive": [
+          "5",
+          0
+        ],
+        "negative": [
+          "6",
+          0
+        ],
+        "vae": [
+          "4",
+          0
+        ],
+        "width": 768,
+        "height": 432,
+        "length": 1,
+        "batch_size": 1,
+        "video_frame_offset": 0,
+        "pose_strength": 1.0,
+        "pose_start_percent": 0.0,
+        "pose_end_percent": 1.0,
+        "reference_image_strength": 1.2,
+        "reference_image": [
+          "9",
+          0
+        ],
+        "pose_video": [
+          "12",
+          0
+        ],
+        "clip_vision_output": [
+          "14",
+          0
+        ],
+        "positive_pose": [
+          "7",
+          0
+        ],
+        "clip_vision_output_pose": [
+          "15",
+          0
+        ]
+      }
+    },
+    "18": {
+      "class_type": "ModelSamplingSD3",
+      "inputs": {
+        "model": [
+          "1",
+          0
+        ],
+        "shift": 5.0
+      }
+    },
+    "19": {
+      "class_type": "BasicScheduler",
+      "inputs": {
+        "model": [
+          "1",
+          0
+        ],
+        "scheduler": "simple",
+        "steps": 16,
+        "denoise": 1.0
+      }
+    },
+    "20": {
+      "class_type": "KSamplerSelect",
+      "inputs": {
+        "sampler_name": "lcm"
+      }
+    },
+    "21": {
+      "class_type": "SamplerCustom",
+      "inputs": {
+        "model": [
+          "18",
+          0
+        ],
+        "add_noise": true,
+        "noise_seed": 0,
+        "cfg": 1,
+        "positive": [
+          "16",
+          0
+        ],
+        "negative": [
+          "16",
+          1
+        ],
+        "sampler": [
+          "20",
+          0
+        ],
+        "sigmas": [
+          "19",
+          0
+        ],
+        "latent_image": [
+          "16",
+          2
+        ]
+      }
+    },
+    "22": {
+      "class_type": "TrimVideoLatent",
+      "inputs": {
+        "samples": [
+          "21",
+          0
+        ],
+        "trim_amount": [
+          "16",
+          3
+        ]
+      }
+    },
+    "25": {
+      "class_type": "SaveLatent",
+      "inputs": {
+        "samples": [
+          "22",
+          0
+        ],
+        "filename_prefix": "__REQUEST_OUTPUT__"
+      }
+    }
+  }
+}

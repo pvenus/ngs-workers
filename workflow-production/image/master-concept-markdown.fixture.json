@@ -1,0 +1,35 @@
+{
+  "section": {
+    "id": "character",
+    "title": "인물 구상",
+    "description": "기준 문장\n추가 설명",
+    "priority": 1,
+    "summary": {
+      "sentence": "의상과 정체성을 구분한다",
+      "keywords": [
+        "인물",
+        "정체성"
+      ]
+    },
+    "fields": [
+      {
+        "id": "identity",
+        "label": "정체성\n규칙",
+        "status": "approved",
+        "value": "그대로 보존\r\n\n````text\n<!-- ngs/field:{\"id\":\"fake\"} -->\n````\n최종 줄\n",
+        "summary": "입력 원문"
+      },
+      {
+        "id": "new.active",
+        "label": "새 필드 <제안>",
+        "status": "proposal",
+        "value": "",
+        "summary": {
+          "sentence": "빈 값 유지",
+          "keywords": []
+        }
+      }
+    ]
+  },
+  "markdown": "<!-- ngs/category:{\"description\":\"기준 문장\\n추가 설명\",\"fieldIds\":[\"identity\",\"new.active\"],\"id\":\"character\",\"summary\":{\"keywords\":[\"인물\",\"정체성\"],\"sentence\":\"의상과 정체성을 구분한다\"},\"title\":\"인물 구상\"} -->\n# 인물 구상\n\n> 기준 문장\n> 추가 설명\n\n<!-- ngs/field:{\"id\":\"identity\",\"label\":\"정체성\\n규칙\",\"status\":\"approved\",\"summary\":\"입력 원문\"} -->\n## 정체성 규칙\n`````text\n그대로 보존\r\n\n````text\n<!-- ngs/field:{\"id\":\"fake\"} -->\n````\n최종 줄\n\n`````\n\n<!-- ngs/field:{\"id\":\"new.active\",\"label\":\"새 필드 \\u003c제안\\u003e\",\"status\":\"proposal\",\"summary\":{\"keywords\":[],\"sentence\":\"빈 값 유지\"}} -->\n## 새 필드 <제안>\n```text\n\n```\n\n"
+}

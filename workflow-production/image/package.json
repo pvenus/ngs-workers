@@ -1,0 +1,1 @@
+{"name":"vinus-workflow-document-preset-worker","version":"0.1.0","private":true,"type":"module","engines":{"node":">=24"},"exports":"./worker.mjs","scripts":{"test":"node --test"}}

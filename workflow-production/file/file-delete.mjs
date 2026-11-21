@@ -1,0 +1,62 @@
+// Machine-only execution boundary. One workflow claim can authorize one target.
+import {exact} from './vendor/planner-f24d23a/planner.mjs';
+
+const categoryId=/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
+const npcId=/^(?:npc|character)\.[A-Za-z0-9][A-Za-z0-9._-]*$/;
+export const conceptDelete='concept.category-delete';
+export const npcDelete='npc.delete-folder';
+export const audioDelete='audio.delete';
+export const audioDeleteSchema='ngs.audio-delete.v1';
+export const audioDeleteKey='audio_delete';
+export const audioResultId=/^request\.official\.[a-f0-9]{64}$/;
+export const audioDeleteRoot='canonical-files/binari/audio';
+
+export function exactDeleteTarget(command){
+ const targets=command?.targets;
+ if(!exact(command,['operation','targets'])||command.operation!=='file.delete'||
+    !Array.isArray(targets)||targets.length!==1||!exact(targets[0],['kind','id']))
+  throw Error('WORKFLOW_DELETE_TARGET_INVALID');
+ const target=targets[0];
+ const pattern=target.kind==='concept-category'?categoryId:target.kind==='npc-directory'?npcId:target.kind==='audio-directory'?audioResultId:null;
+ if(!pattern||typeof target.id!=='string'||target.id.length>200||!pattern.test(target.id)||/[\s/\\]/u.test(target.id))
+  throw Error('WORKFLOW_DELETE_TARGET_INVALID');
+ return target;
+}
+
+// Only call after the stored file task has matched its reconstructed official plan.
+// Both historical planner task types and IDs stay intact in SQLite.
+export function deleteCommandFromPlannedTask(task){
+ if(task?.workerType!=='file')throw Error('WORKFLOW_DELETE_TARGET_INVALID');
+ let target;
+ if(task.type===conceptDelete&&task.key==='category_delete'&&exact(task.input,['categoryId']))
+  target={kind:'concept-category',id:task.input.categoryId};
+ else if(task.type===npcDelete&&task.key==='delete'&&
+         exact(task.input,['npcId','scope','preserveRequestHistory','noOldDataReuse'])&&
+         task.input.scope==='exact-npc-folder'&&task.input.preserveRequestHistory===true&&task.input.noOldDataReuse===true)
+  target={kind:'npc-directory',id:task.input.npcId};
+ else if(task.type===audioDelete&&task.key===audioDeleteKey&&exact(task.input,['officialRequestId','target'])&&
+         typeof task.input.officialRequestId==='string'&&audioResultId.test(task.input.officialRequestId)&&
+         exact(task.input.target,['type','path'])&&task.input.target.type==='directory'&&
+         task.input.target.path===audioDeleteRoot+'/'+task.input.officialRequestId)
+  target={kind:'audio-directory',id:task.input.officialRequestId};
+ else throw Error('WORKFLOW_DELETE_TARGET_INVALID');
+ const command=Object.freeze({operation:'file.delete',targets:Object.freeze([Object.freeze(target)])});
+ exactDeleteTarget(command);
+ return command;
+}
+
+export const singleTargetDeleteSchema='workflow.single-target-delete.v1';
+export const conceptDeleteRoot='canonical-files/binari/concept';
+export const npcDeleteRoot='canonical-files/binari/npcs';
+
+// Scope coordinates are root-relative identifiers, never mount paths.
+export function workflowDeleteFolder(command){
+ const target=exactDeleteTarget(command);
+ const concept=target.kind==='concept-category';
+ return Object.freeze({root:concept?conceptDeleteRoot:target.kind==='audio-directory'?audioDeleteRoot:npcDeleteRoot,
+  path:concept?'sections/'+target.id:target.id,kind:'directory'});
+}
+export function verifiedSingleTargetDelete(ack,taskId){
+ return exact(ack,['ok','operationId','targetAbsent','recoveryId'])&&ack.ok===true&&ack.operationId===taskId&&
+  ack.targetAbsent===true&&typeof ack.recoveryId==='string'&&ack.recoveryId.length===64&&/^[a-f0-9]+$/.test(ack.recoveryId);
+}

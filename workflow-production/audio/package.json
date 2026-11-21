@@ -1,0 +1,1 @@
+{"name":"vinus-workflow-audio-worker","private":true,"type":"module","engines":{"node":">=24"},"scripts":{"test":"node --test"}}
