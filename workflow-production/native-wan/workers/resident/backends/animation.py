@@ -46,7 +46,7 @@ class OwnedComfy:
   else:raise ValueError('ANIMATION_COMFY_PORT_BUSY')
   for p in (self.input_root,self.output_root,self.root/'engine-temp'):p.mkdir(parents=True,exist_ok=True)
   self.log=(self.root/'server.log').open('ab')
-  args=[str(self.binding['python']),'-B',str(self.binding['bootstrap']),'--listen','127.0.0.1','--port','8192','--disable-all-custom-nodes','--offline','--reserve-vram','20','--cache-classic' if self.retain_main_model else '--cache-none','--preview-method','none','--bf16-unet','--input-directory',str(self.input_root),'--output-directory',str(self.output_root),'--temp-directory',str(self.root/'engine-temp')]
+  args=[str(self.binding['python']),'-B',str(self.binding['bootstrap']),'--listen','127.0.0.1','--port','8192','--disable-all-custom-nodes','--offline','--reserve-vram','20','--cache-classic' if self.retain_main_model else '--cache-none','--preview-method','none','--bf16-unet','--use-pytorch-cross-attention','--input-directory',str(self.input_root),'--output-directory',str(self.output_root),'--temp-directory',str(self.root/'engine-temp')]
   try:self.process=subprocess.Popen(args,cwd=self.binding['comfyRoot'],env={**os.environ,'NGS_WAN_COMFY_ROOT':str(self.binding['comfyRoot']),'NGS_WAN_EMBEDDINGS_ROOT':str(self.root/'embeddings')},stdout=self.log,stderr=subprocess.STDOUT,start_new_session=True)
   except BaseException:self.log.close();self.log=None;raise
   import psutil
