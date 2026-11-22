@@ -9,7 +9,7 @@ import {setTimeout as delay} from 'node:timers/promises';
 import {fileURLToPath} from 'node:url';
 import {createWarmAnimation,spawnAnimationChannel} from './animation-warm.mjs';
 import {choosePresetFrames,executePresetFrames,presetFramePorts} from './preset-frame-worker.mjs';
-import {isSelectionSchema,selectedMotionBranch,matchesMotionTask} from './vendor/npc-motion-selection-v1/media-branch.mjs';
+import {isSelectedMediaRun,isRegenerateRun,regenerateType,regenerateSchema,selectedMotionBranch,matchesMotionTask} from './vendor/npc-motion-selection-v1/media-branch.mjs';
 import {assertDatabasePath,protectSchema,nextWorkflowTaskFromPath,markWorkflowTaskFailed,workflowTaskEligibleSql,workflowTaskRetrySetSql} from './workflow-ready.mjs';
 
 const path='/v1/npcs/ownership/workflow-animation',type='npc.animation-native-png';
@@ -57,16 +57,18 @@ function chooseSelected(dbPath){
   if(!['request_type','schema_version','reason'].every(k=>cols.has(k)))return;
   const row=db.prepare(`SELECT r.*,t.task_id,t.task_key
    FROM workflow_tasks t JOIN workflow_runs r USING(official_request_id)
-   JOIN workflow_tasks p ON p.task_id=t.depends_on_task_id AND p.official_request_id=t.official_request_id
-   WHERE r.state='planned' AND r.reason IS NULL AND r.request_type='npc.workflow' AND r.project_id='binari'
-   AND r.schema_version IN ('ngs.npc-one-stop.selection.v1','ngs.npc-one-stop.selection.replace.v1')
+   LEFT JOIN workflow_tasks p ON p.task_id=t.depends_on_task_id AND p.official_request_id=t.official_request_id
+   WHERE r.state='planned' AND r.reason IS NULL AND r.project_id='binari'
    AND ${workflowTaskEligibleSql('t')} AND t.result_ref IS NULL AND t.worker_type='animation' AND t.task_type=?
-   AND t.task_key GLOB 'animation_motion_*' AND p.status='completed' AND p.worker_type='image'
-   ORDER BY r.registered_at,r.official_request_id,t.task_key LIMIT 1`).get(type);
+   AND t.task_key GLOB 'animation_motion_*' AND (
+    (r.request_type='npc.workflow' AND r.schema_version IN ('ngs.npc-one-stop.selection.v1','ngs.npc-one-stop.selection.replace.v1')
+      AND p.status='completed' AND p.worker_type='image')
+    OR (r.request_type=? AND r.schema_version=? AND t.depends_on_task_id IS NULL))
+   ORDER BY r.registered_at,r.official_request_id,t.task_key LIMIT 1`).get(type,regenerateType,regenerateSchema);
   if(!row)return;
   const {target,parent}=selectedMotionBranch(row,row.task_key);
   insist(target.id===row.task_id,'ANIMATION_DB_TARGET');
-  return {taskId:row.task_id,officialRequestId:row.official_request_id,key:target.key,parent:parent.key,
+  return {taskId:row.task_id,officialRequestId:row.official_request_id,key:target.key,parent:parent?.key??null,
    motion:target.input.motion,direction:target.input.direction};
  }finally{db.close();}
 }
@@ -84,22 +86,28 @@ function claim(db,t){
   't.updated_at,t.status,t.task_input,r.project_id,r.payload_sha256,r.payload';
  const s=db.prepare(`SELECT ${fields}
   FROM workflow_tasks t JOIN workflow_runs r USING(official_request_id)
-  JOIN workflow_tasks p ON p.task_id=t.depends_on_task_id AND p.official_request_id=t.official_request_id
+  ${selected?'LEFT ':''}JOIN workflow_tasks p ON p.task_id=t.depends_on_task_id AND p.official_request_id=t.official_request_id
   WHERE r.state='planned' AND ${workflowTaskEligibleSql('t')} AND t.result_ref IS NULL AND t.worker_type='animation'
-   AND t.task_type=? AND t.task_id=? AND t.official_request_id=? AND t.task_key=? AND p.task_key=? AND p.status='completed'`);
+   AND t.task_type=? AND t.task_id=? AND t.official_request_id=? AND t.task_key=? AND
+   ${selected?"((? IS NULL AND r.request_type=? AND r.schema_version=? AND t.depends_on_task_id IS NULL) OR (p.task_key=? AND p.status='completed'))":
+     "(p.task_key=? AND p.status='completed')"}`);
  return transaction(db,()=>{
-  const r=s.get(type,t.taskId,t.officialRequestId,t.key,t.parent);
+  const args=selected?[t.parent,regenerateType,regenerateSchema,t.parent]:[t.parent];
+  const r=s.get(type,t.taskId,t.officialRequestId,t.key,...args);
   if(!r)return null;
   const params=JSON.parse(r.task_input), intent=JSON.parse(r.payload);
+  const regenerate=selected&&isRegenerateRun(r.request_type,r.schema_version);
   insist(params.motion===t.motion&&params.direction===t.direction&&params.output==='native-png'&&
-    params.npcId===intent.character.npcId,'ANIMATION_DB_TARGET');
+    params.npcId===(regenerate?intent.npcId:intent.character?.npcId),'ANIMATION_DB_TARGET');
   if(selected){
-   insist(isSelectionSchema(r.schema_version),'ANIMATION_DB_SELECTED_TARGET');
+   insist(isSelectedMediaRun(r.request_type,r.schema_version),'ANIMATION_DB_SELECTED_TARGET');
    const {target,parent}=selectedMotionBranch(r,t.key);
-   const source=db.prepare('SELECT * FROM workflow_tasks WHERE task_id=? AND official_request_id=?')
-    .get(target.dependsOn,t.officialRequestId);
-   insist(matchesMotionTask(r,target)&&matchesMotionTask(source,parent)&&source.status==='completed',
-    'ANIMATION_DB_SELECTED_TARGET');
+   insist(matchesMotionTask(r,target)&&(parent?.key??null)===t.parent,'ANIMATION_DB_SELECTED_TARGET');
+   if(parent){
+    const source=db.prepare('SELECT * FROM workflow_tasks WHERE task_id=? AND official_request_id=?')
+     .get(target.dependsOn,t.officialRequestId);
+    insist(matchesMotionTask(source,parent)&&source.status==='completed','ANIMATION_DB_SELECTED_TARGET');
+   }
   }else insist(motions.includes(t.motion)&&t.key==='animation_'+t.motion+'_'+t.direction&&t.parent==='portrait_'+t.direction,
    'ANIMATION_DB_TARGET');
   const claimStamp=Math.max(Date.now(),r.updated_at+1);
@@ -110,7 +118,7 @@ function claim(db,t){
    .run(claimStamp,t.taskId,t.officialRequestId,type,t.key,r.status,r.updated_at);
   if(claimed.changes!==1)return null;
   return {dto:{taskId:t.taskId,officialRequestId:t.officialRequestId,projectId:r.project_id,npcId:params.npcId,
-   payloadSha256:r.payload_sha256,claimStamp},intent,...(selected?{selection:params}:{})};
+   payloadSha256:r.payload_sha256,claimStamp},intent,...(selected?{selection:params,regenerate}:{})};
  });
 }
 function markFailed(db,{taskId,officialRequestId,claimStamp}){
@@ -166,10 +174,12 @@ async function readStopDiagnostic(dir){
   return value;
  }catch{return null;}finally{await file?.close().catch(()=>{});}
 }
-function validateSelectedBasis(selection,settings,reference){
+function validateSelectedBasis(selection,settings,reference,{regenerate=false}={}){
  const sha64=s=>typeof s==='string'&&/^[a-f0-9]{64}$/.test(s)&&s.length===64;
  const exact=ok=>settings&&typeof settings==='object'&&!Array.isArray(settings)&&Object.keys(settings).sort().join(',')===ok;
- insist(exact('assetSetSha256,direction,motion,portraitAssetId,posePreset,referencePresetHash,referenceSha256')&&
+ const fields='assetSetSha256,direction,'+(regenerate?'generationId,':'')+'motion,portraitAssetId,posePreset,referencePresetHash,referenceSha256'+(regenerate?',resultBasisSha256':'');
+ insist(exact(fields)&&(!regenerate||typeof settings.generationId==='string'&&settings.generationId.length===48&&
+  /^[a-f0-9]{48}$/.test(settings.generationId)&&sha64(settings.resultBasisSha256))&&
   settings.posePreset===selection.posePreset&&settings.assetSetSha256===selection.assetSetSha256&&
   sha64(settings.referenceSha256)&&sha64(settings.referencePresetHash),'ANIMATION_PDS_SELECTED_BASIS');
  if(reference!==undefined)insist(reference.posePreset===selection.posePreset&&reference.sha256===settings.referenceSha256&&
@@ -177,7 +187,7 @@ function validateSelectedBasis(selection,settings,reference){
 }
 async function execute(db,t,signal,warm=null,{transport=local,native=runNative}={}){
  const current=claim(db,t);if(!current)return;
- const {dto,intent,selection}=current;
+ const {dto,intent,selection,regenerate}=current;
  const logPhase=phase=>console.log(JSON.stringify({phase,taskId:t.taskId}));
  logPhase('claimed');
  let dir,stage='read';
@@ -186,12 +196,12 @@ async function execute(db,t,signal,warm=null,{transport=local,native=runNative}=
   dir=warm?await warm.jobDir():await mkdtemp(join(tmpdir(),'workflow-wan-'));
   const settings=await transport(path+'/read',{body:{claim:dto},signal});
   insist(settings.direction===t.direction&&settings.motion===t.motion&&/^[a-f0-9]{64}\.png$/.test(settings.portraitAssetId),'ANIMATION_PDS_TARGET');
-  if(selection)validateSelectedBasis(selection,settings);
+  if(selection)validateSelectedBasis(selection,settings,undefined,{regenerate});
   const [portrait,reference]=await Promise.all([
    transport(path+'/asset',{body:{claim:dto,assetId:settings.portraitAssetId},binary:true,signal}),
    transport('/v1/motion-presets/'+encodeURIComponent(t.motion)+'/'+t.direction,{signal,...(selection?{maxJsonBytes:88*1024*1024}:{})})
   ]);
-  if(selection)validateSelectedBasis(selection,settings,reference);
+  if(selection)validateSelectedBasis(selection,settings,reference,{regenerate});
   const source=Buffer.from(reference.base64,'base64');
   insist(sha(portrait)+'.png'===settings.portraitAssetId&&source.length===reference.bytes&&sha(source)===reference.sha256&&
    sha(source)+'.mp4'===reference.assetId&&reference.direction===t.direction&&reference.presetId===t.motion,'ANIMATION_SOURCE_HASH');
@@ -211,7 +221,8 @@ async function execute(db,t,signal,warm=null,{transport=local,native=runNative}=
   }));
   signal.throwIfAborted(); // An already-cancelled claim has not sent a publish request.
   stage='publish';logPhase(stage);
-  const ack=await transport(path,{body:{claim:dto,artifact:{fps:out.fps,width:out.width,height:out.height,frames}},signal,timeout:180000});
+  const ack=await transport(path,{body:{claim:dto,artifact:{fps:out.fps,width:out.width,height:out.height,frames,
+   ...(regenerate?{source:{generationId:settings.generationId,portraitAssetId:settings.portraitAssetId,resultBasisSha256:settings.resultBasisSha256}}:{})}},signal,timeout:180000});
   insist(Object.keys(ack).length===1&&ack.ok===true,'ANIMATION_PUBLICATION_UNCONFIRMED');
   stage='commit';
   const done=db.prepare("UPDATE workflow_tasks SET status='completed',updated_at=? WHERE task_id=? AND official_request_id=? AND status='running' AND updated_at=?")

@@ -1,0 +1,513 @@
+{
+  "row": {
+    "officialRequestId": "request.official.4b5b7b2373ee91803cca4795fe64a2f195fce64653ded2e19857d1f3716542ec",
+    "projectId": "binari",
+    "requestType": "npc.animation.regenerate",
+    "schemaVersion": "ngs.npc-animation.regenerate.v1",
+    "status": "registered",
+    "registeredAt": 1795370000000,
+    "payload": {
+      "schemaVersion": "ngs.npc-animation.regenerate.v1",
+      "projectId": "binari",
+      "npcId": "npc.motion-fixture",
+      "motionSelection": [
+        {
+          "presetId": "run-2d",
+          "posePreset": "idle",
+          "assetSetSha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        },
+        {
+          "presetId": "sword-attack-flat",
+          "posePreset": "combat",
+          "assetSetSha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        }
+      ]
+    },
+    "payloadSha256": "1456be6962a4f8a60f7ebcc3a21bb8057f24eabd57d94dd28c58cc41b61323db"
+  },
+  "plan": {
+    "payload": "{\"motionSelection\":[{\"assetSetSha256\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"posePreset\":\"idle\",\"presetId\":\"run-2d\"},{\"assetSetSha256\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"posePreset\":\"combat\",\"presetId\":\"sword-attack-flat\"}],\"npcId\":\"npc.motion-fixture\",\"projectId\":\"binari\",\"schemaVersion\":\"ngs.npc-animation.regenerate.v1\"}",
+    "tasks": [
+      {
+        "id": "workflow.task.8f267fcd69b72fd59e66a215f965ba89dff1adefe8316d881b0ee72250dcf6e2",
+        "key": "animation_motion_fdfef59ab5ac1dff_n",
+        "type": "npc.animation-native-png",
+        "workerType": "animation",
+        "dependsOn": null,
+        "input": {
+          "npcId": "npc.motion-fixture",
+          "direction": "n",
+          "motion": "run-2d",
+          "posePreset": "idle",
+          "assetSetSha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "output": "native-png"
+        }
+      },
+      {
+        "id": "workflow.task.f1ac834953d96864f9affdd52fd6b0a51d3602eff00a59804c544821492f6cbb",
+        "key": "frames_motion_fdfef59ab5ac1dff_n",
+        "type": "npc.frames-postprocess",
+        "workerType": "postprocess",
+        "dependsOn": "workflow.task.8f267fcd69b72fd59e66a215f965ba89dff1adefe8316d881b0ee72250dcf6e2",
+        "input": {
+          "npcId": "npc.motion-fixture",
+          "direction": "n",
+          "motion": "run-2d",
+          "posePreset": "idle",
+          "assetSetSha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "input": "native-png"
+        }
+      },
+      {
+        "id": "workflow.task.85ef74a2a0b02ca0bb78ac6d0a363160c0877231ef1ea5044b8f51a0755c6761",
+        "key": "animation_motion_fdfef59ab5ac1dff_ne",
+        "type": "npc.animation-native-png",
+        "workerType": "animation",
+        "dependsOn": null,
+        "input": {
+          "npcId": "npc.motion-fixture",
+          "direction": "ne",
+          "motion": "run-2d",
+          "posePreset": "idle",
+          "assetSetSha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "output": "native-png"
+        }
+      },
+      {
+        "id": "workflow.task.88e77f3dd800d5e85699fe1b48621114c0460574a689aa3852efd2feeace728b",
+        "key": "frames_motion_fdfef59ab5ac1dff_ne",
+        "type": "npc.frames-postprocess",
+        "workerType": "postprocess",
+        "dependsOn": "workflow.task.85ef74a2a0b02ca0bb78ac6d0a363160c0877231ef1ea5044b8f51a0755c6761",
+        "input": {
+          "npcId": "npc.motion-fixture",
+          "direction": "ne",
+          "motion": "run-2d",
+          "posePreset": "idle",
+          "assetSetSha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "input": "native-png"
+        }
+      },
+      {
+        "id": "workflow.task.d2dd8f80e5f47b0603c18e9b228560f8f0483e0dad27f73007ea9be212b27823",
+        "key": "animation_motion_fdfef59ab5ac1dff_e",
+        "type": "npc.animation-native-png",
+        "workerType": "animation",
+        "dependsOn": null,
+        "input": {
+          "npcId": "npc.motion-fixture",
+          "direction": "e",
+          "motion": "run-2d",
+          "posePreset": "idle",
+          "assetSetSha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "output": "native-png"
+        }
+      },
+      {
+        "id": "workflow.task.c73decc1209ac2486573d82aba35ce2d92c6cc14852ffdbf2bc4b8578d131f8f",
+        "key": "frames_motion_fdfef59ab5ac1dff_e",
+        "type": "npc.frames-postprocess",
+        "workerType": "postprocess",
+        "dependsOn": "workflow.task.d2dd8f80e5f47b0603c18e9b228560f8f0483e0dad27f73007ea9be212b27823",
+        "input": {
+          "npcId": "npc.motion-fixture",
+          "direction": "e",
+          "motion": "run-2d",
+          "posePreset": "idle",
+          "assetSetSha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "input": "native-png"
+        }
+      },
+      {
+        "id": "workflow.task.b94b7ba9f49017e451d90794b90e87e6e1bc4a820ba9ff1518c8bd61299620a2",
+        "key": "animation_motion_fdfef59ab5ac1dff_se",
+        "type": "npc.animation-native-png",
+        "workerType": "animation",
+        "dependsOn": null,
+        "input": {
+          "npcId": "npc.motion-fixture",
+          "direction": "se",
+          "motion": "run-2d",
+          "posePreset": "idle",
+          "assetSetSha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "output": "native-png"
+        }
+      },
+      {
+        "id": "workflow.task.0407ed8dc117f9cc34726de55636d7d7215eb7676884a5a4c5c625bcfd48727a",
+        "key": "frames_motion_fdfef59ab5ac1dff_se",
+        "type": "npc.frames-postprocess",
+        "workerType": "postprocess",
+        "dependsOn": "workflow.task.b94b7ba9f49017e451d90794b90e87e6e1bc4a820ba9ff1518c8bd61299620a2",
+        "input": {
+          "npcId": "npc.motion-fixture",
+          "direction": "se",
+          "motion": "run-2d",
+          "posePreset": "idle",
+          "assetSetSha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "input": "native-png"
+        }
+      },
+      {
+        "id": "workflow.task.03901746714ffc2011514df158689712519b244b1241d58668df9c42dc7f62e0",
+        "key": "animation_motion_fdfef59ab5ac1dff_s",
+        "type": "npc.animation-native-png",
+        "workerType": "animation",
+        "dependsOn": null,
+        "input": {
+          "npcId": "npc.motion-fixture",
+          "direction": "s",
+          "motion": "run-2d",
+          "posePreset": "idle",
+          "assetSetSha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "output": "native-png"
+        }
+      },
+      {
+        "id": "workflow.task.664d6d2a4cb5c36c8e6345a07ec1c22e3fe0c122d808b41a0c8248a215e2a3b7",
+        "key": "frames_motion_fdfef59ab5ac1dff_s",
+        "type": "npc.frames-postprocess",
+        "workerType": "postprocess",
+        "dependsOn": "workflow.task.03901746714ffc2011514df158689712519b244b1241d58668df9c42dc7f62e0",
+        "input": {
+          "npcId": "npc.motion-fixture",
+          "direction": "s",
+          "motion": "run-2d",
+          "posePreset": "idle",
+          "assetSetSha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "input": "native-png"
+        }
+      },
+      {
+        "id": "workflow.task.8547f1fe9be47005aace6a9a1072fc7f41484770b61889bd6c2488f8cf5ce6b8",
+        "key": "animation_motion_fdfef59ab5ac1dff_sw",
+        "type": "npc.animation-native-png",
+        "workerType": "animation",
+        "dependsOn": null,
+        "input": {
+          "npcId": "npc.motion-fixture",
+          "direction": "sw",
+          "motion": "run-2d",
+          "posePreset": "idle",
+          "assetSetSha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "output": "native-png"
+        }
+      },
+      {
+        "id": "workflow.task.479f77f2284c4bee9fc2e05586ad7a229473e600dd56804f3cc411575ca16f1c",
+        "key": "frames_motion_fdfef59ab5ac1dff_sw",
+        "type": "npc.frames-postprocess",
+        "workerType": "postprocess",
+        "dependsOn": "workflow.task.8547f1fe9be47005aace6a9a1072fc7f41484770b61889bd6c2488f8cf5ce6b8",
+        "input": {
+          "npcId": "npc.motion-fixture",
+          "direction": "sw",
+          "motion": "run-2d",
+          "posePreset": "idle",
+          "assetSetSha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "input": "native-png"
+        }
+      },
+      {
+        "id": "workflow.task.afc10d9b02dc7b07e4509d5fa46a110ee135268c803ca798034d3667cd680770",
+        "key": "animation_motion_fdfef59ab5ac1dff_w",
+        "type": "npc.animation-native-png",
+        "workerType": "animation",
+        "dependsOn": null,
+        "input": {
+          "npcId": "npc.motion-fixture",
+          "direction": "w",
+          "motion": "run-2d",
+          "posePreset": "idle",
+          "assetSetSha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "output": "native-png"
+        }
+      },
+      {
+        "id": "workflow.task.6e7a966e7ad2353ceafabce19c8554b0b26e3c70729a550b0563ebabed0dfc8a",
+        "key": "frames_motion_fdfef59ab5ac1dff_w",
+        "type": "npc.frames-postprocess",
+        "workerType": "postprocess",
+        "dependsOn": "workflow.task.afc10d9b02dc7b07e4509d5fa46a110ee135268c803ca798034d3667cd680770",
+        "input": {
+          "npcId": "npc.motion-fixture",
+          "direction": "w",
+          "motion": "run-2d",
+          "posePreset": "idle",
+          "assetSetSha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "input": "native-png"
+        }
+      },
+      {
+        "id": "workflow.task.d99f6580acbfd1e1f68d16677d13f47af092ecbc7c82c688cf6f3192f881a84a",
+        "key": "animation_motion_fdfef59ab5ac1dff_nw",
+        "type": "npc.animation-native-png",
+        "workerType": "animation",
+        "dependsOn": null,
+        "input": {
+          "npcId": "npc.motion-fixture",
+          "direction": "nw",
+          "motion": "run-2d",
+          "posePreset": "idle",
+          "assetSetSha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "output": "native-png"
+        }
+      },
+      {
+        "id": "workflow.task.433cc8aaa0749606a51cf73f0409954120722ceb64c0a951d9968ff88ce182a4",
+        "key": "frames_motion_fdfef59ab5ac1dff_nw",
+        "type": "npc.frames-postprocess",
+        "workerType": "postprocess",
+        "dependsOn": "workflow.task.d99f6580acbfd1e1f68d16677d13f47af092ecbc7c82c688cf6f3192f881a84a",
+        "input": {
+          "npcId": "npc.motion-fixture",
+          "direction": "nw",
+          "motion": "run-2d",
+          "posePreset": "idle",
+          "assetSetSha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "input": "native-png"
+        }
+      },
+      {
+        "id": "workflow.task.d5bc509eb6e7a7dbb3c48db547885349db9dc564ff64edc83e7668470ffe9f7a",
+        "key": "animation_motion_38941de56aea0ca4_n",
+        "type": "npc.animation-native-png",
+        "workerType": "animation",
+        "dependsOn": null,
+        "input": {
+          "npcId": "npc.motion-fixture",
+          "direction": "n",
+          "motion": "sword-attack-flat",
+          "posePreset": "combat",
+          "assetSetSha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "output": "native-png"
+        }
+      },
+      {
+        "id": "workflow.task.4d81442bf67748be35f745b2bcb240e74bde28d1ae929340dc28fb2dffc8fdc4",
+        "key": "frames_motion_38941de56aea0ca4_n",
+        "type": "npc.frames-postprocess",
+        "workerType": "postprocess",
+        "dependsOn": "workflow.task.d5bc509eb6e7a7dbb3c48db547885349db9dc564ff64edc83e7668470ffe9f7a",
+        "input": {
+          "npcId": "npc.motion-fixture",
+          "direction": "n",
+          "motion": "sword-attack-flat",
+          "posePreset": "combat",
+          "assetSetSha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "input": "native-png"
+        }
+      },
+      {
+        "id": "workflow.task.083d3914362005158c17c1b7f06a3dd775c6f698cb1dbfc4b3335f57d42c73c3",
+        "key": "animation_motion_38941de56aea0ca4_ne",
+        "type": "npc.animation-native-png",
+        "workerType": "animation",
+        "dependsOn": null,
+        "input": {
+          "npcId": "npc.motion-fixture",
+          "direction": "ne",
+          "motion": "sword-attack-flat",
+          "posePreset": "combat",
+          "assetSetSha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "output": "native-png"
+        }
+      },
+      {
+        "id": "workflow.task.69f88c8c8fe4f1bb02ae05027bed71995ed23792e29f4d6e4b85c10999d33a72",
+        "key": "frames_motion_38941de56aea0ca4_ne",
+        "type": "npc.frames-postprocess",
+        "workerType": "postprocess",
+        "dependsOn": "workflow.task.083d3914362005158c17c1b7f06a3dd775c6f698cb1dbfc4b3335f57d42c73c3",
+        "input": {
+          "npcId": "npc.motion-fixture",
+          "direction": "ne",
+          "motion": "sword-attack-flat",
+          "posePreset": "combat",
+          "assetSetSha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "input": "native-png"
+        }
+      },
+      {
+        "id": "workflow.task.c73bacfee065d6e884c00107abcb112fdc86dfb236db8c2cae9eec83903e55c2",
+        "key": "animation_motion_38941de56aea0ca4_e",
+        "type": "npc.animation-native-png",
+        "workerType": "animation",
+        "dependsOn": null,
+        "input": {
+          "npcId": "npc.motion-fixture",
+          "direction": "e",
+          "motion": "sword-attack-flat",
+          "posePreset": "combat",
+          "assetSetSha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "output": "native-png"
+        }
+      },
+      {
+        "id": "workflow.task.52cbb3a912904e5596265c9fc9024495830b6e5cc21c7a6d190e3c4d3d777cd0",
+        "key": "frames_motion_38941de56aea0ca4_e",
+        "type": "npc.frames-postprocess",
+        "workerType": "postprocess",
+        "dependsOn": "workflow.task.c73bacfee065d6e884c00107abcb112fdc86dfb236db8c2cae9eec83903e55c2",
+        "input": {
+          "npcId": "npc.motion-fixture",
+          "direction": "e",
+          "motion": "sword-attack-flat",
+          "posePreset": "combat",
+          "assetSetSha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "input": "native-png"
+        }
+      },
+      {
+        "id": "workflow.task.304979a7717312b85c9c0ae59efda03a80da21a4b91a470208f2fdb3d557a2ca",
+        "key": "animation_motion_38941de56aea0ca4_se",
+        "type": "npc.animation-native-png",
+        "workerType": "animation",
+        "dependsOn": null,
+        "input": {
+          "npcId": "npc.motion-fixture",
+          "direction": "se",
+          "motion": "sword-attack-flat",
+          "posePreset": "combat",
+          "assetSetSha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "output": "native-png"
+        }
+      },
+      {
+        "id": "workflow.task.b3885e698b711a2436a65d9752392492f81da6e4a1e084edc338d69738338036",
+        "key": "frames_motion_38941de56aea0ca4_se",
+        "type": "npc.frames-postprocess",
+        "workerType": "postprocess",
+        "dependsOn": "workflow.task.304979a7717312b85c9c0ae59efda03a80da21a4b91a470208f2fdb3d557a2ca",
+        "input": {
+          "npcId": "npc.motion-fixture",
+          "direction": "se",
+          "motion": "sword-attack-flat",
+          "posePreset": "combat",
+          "assetSetSha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "input": "native-png"
+        }
+      },
+      {
+        "id": "workflow.task.c6d8e266f9c8fe7993e61c345d780ce7465f8b577eb0ce0508832e59eb3ec2af",
+        "key": "animation_motion_38941de56aea0ca4_s",
+        "type": "npc.animation-native-png",
+        "workerType": "animation",
+        "dependsOn": null,
+        "input": {
+          "npcId": "npc.motion-fixture",
+          "direction": "s",
+          "motion": "sword-attack-flat",
+          "posePreset": "combat",
+          "assetSetSha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "output": "native-png"
+        }
+      },
+      {
+        "id": "workflow.task.baffc78510b58f767c9e169964195ba4014deb856819983325bd60a6e5975444",
+        "key": "frames_motion_38941de56aea0ca4_s",
+        "type": "npc.frames-postprocess",
+        "workerType": "postprocess",
+        "dependsOn": "workflow.task.c6d8e266f9c8fe7993e61c345d780ce7465f8b577eb0ce0508832e59eb3ec2af",
+        "input": {
+          "npcId": "npc.motion-fixture",
+          "direction": "s",
+          "motion": "sword-attack-flat",
+          "posePreset": "combat",
+          "assetSetSha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "input": "native-png"
+        }
+      },
+      {
+        "id": "workflow.task.df6d6e26e62f7b846461754de5901a382abba9fec8464565179ce4737a419644",
+        "key": "animation_motion_38941de56aea0ca4_sw",
+        "type": "npc.animation-native-png",
+        "workerType": "animation",
+        "dependsOn": null,
+        "input": {
+          "npcId": "npc.motion-fixture",
+          "direction": "sw",
+          "motion": "sword-attack-flat",
+          "posePreset": "combat",
+          "assetSetSha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "output": "native-png"
+        }
+      },
+      {
+        "id": "workflow.task.60a191955e49b28e9031e05d54275c2f23dcbd45fd1bf662af6e9e04a1b12519",
+        "key": "frames_motion_38941de56aea0ca4_sw",
+        "type": "npc.frames-postprocess",
+        "workerType": "postprocess",
+        "dependsOn": "workflow.task.df6d6e26e62f7b846461754de5901a382abba9fec8464565179ce4737a419644",
+        "input": {
+          "npcId": "npc.motion-fixture",
+          "direction": "sw",
+          "motion": "sword-attack-flat",
+          "posePreset": "combat",
+          "assetSetSha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "input": "native-png"
+        }
+      },
+      {
+        "id": "workflow.task.f4ab53df873c37c072aefcc29577c1cbbd986f80e8fc7f61149312a5dc9e95e5",
+        "key": "animation_motion_38941de56aea0ca4_w",
+        "type": "npc.animation-native-png",
+        "workerType": "animation",
+        "dependsOn": null,
+        "input": {
+          "npcId": "npc.motion-fixture",
+          "direction": "w",
+          "motion": "sword-attack-flat",
+          "posePreset": "combat",
+          "assetSetSha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "output": "native-png"
+        }
+      },
+      {
+        "id": "workflow.task.05c7a3b1299c9ddf1e64198abfc730aad4c262a4e7e320ce67cd2d2ddb943729",
+        "key": "frames_motion_38941de56aea0ca4_w",
+        "type": "npc.frames-postprocess",
+        "workerType": "postprocess",
+        "dependsOn": "workflow.task.f4ab53df873c37c072aefcc29577c1cbbd986f80e8fc7f61149312a5dc9e95e5",
+        "input": {
+          "npcId": "npc.motion-fixture",
+          "direction": "w",
+          "motion": "sword-attack-flat",
+          "posePreset": "combat",
+          "assetSetSha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "input": "native-png"
+        }
+      },
+      {
+        "id": "workflow.task.068b30b9e698b9d89b4c18f83c0c189179237eadd97361dd1c430686871e1536",
+        "key": "animation_motion_38941de56aea0ca4_nw",
+        "type": "npc.animation-native-png",
+        "workerType": "animation",
+        "dependsOn": null,
+        "input": {
+          "npcId": "npc.motion-fixture",
+          "direction": "nw",
+          "motion": "sword-attack-flat",
+          "posePreset": "combat",
+          "assetSetSha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "output": "native-png"
+        }
+      },
+      {
+        "id": "workflow.task.3a520406ddf271adae081b917077042da48eed39d8f90db346a71e6303cbe1ce",
+        "key": "frames_motion_38941de56aea0ca4_nw",
+        "type": "npc.frames-postprocess",
+        "workerType": "postprocess",
+        "dependsOn": "workflow.task.068b30b9e698b9d89b4c18f83c0c189179237eadd97361dd1c430686871e1536",
+        "input": {
+          "npcId": "npc.motion-fixture",
+          "direction": "nw",
+          "motion": "sword-attack-flat",
+          "posePreset": "combat",
+          "assetSetSha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "input": "native-png"
+        }
+      }
+    ]
+  }
+}

@@ -145,3 +145,9 @@ services Planner at `e080f3481bdf1525981a35e46d864d194059ae31`. Its narrow
 media-branch projection and fixtures assert the exact tasks and dependency
 identities. The package is carried independently in the existing worker
 release roots. No new worker role, model, or runtime dependency is needed.
+
+Animation-only regeneration reuses the selected-frame lane with the exact
+same-run animation task as its only dependency. PDS serves that request's
+privately staged raw sequence, never the older visible slot. The normal
+scoped result ref is written only after PDS confirms the coherent
+raw/alpha/pixel replacement.

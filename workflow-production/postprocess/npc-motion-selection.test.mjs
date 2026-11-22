@@ -10,8 +10,10 @@ import {canonical,selectedMotionBranch} from './vendor/npc-motion-selection-v1/m
 import {sha} from './vendor/npc-motion-selection-v1/envelope.mjs';
 
 const cases=JSON.parse(readFileSync(new URL('./vendor/npc-motion-selection-v1/golden-media.fixture.json',import.meta.url)));
+const regenerateGolden=JSON.parse(readFileSync(new URL('./vendor/npc-motion-selection-v1/npc-animation-regenerate.v1.fixture.json',import.meta.url)));
+const regenerateCase=()=>({row:regenerateGolden.row,tasks:regenerateGolden.plan.tasks});
 function fixture(t,which=0){
- const {row,tasks}=cases[which];
+ const {row,tasks}=which==='regenerate'?regenerateCase():cases[which];
  const root=realpathSync(mkdtempSync(join(tmpdir(),'npc-motion-selection-'))),dbPath=join(root,'workflow.sqlite');
  const db=new DatabaseSync(dbPath);chmodSync(dbPath,0o600);
  t.after(()=>{db.close();rmSync(root,{recursive:true,force:true});});
@@ -100,4 +102,34 @@ test('matches Planner golden media for replacement and new generation',()=>{
    assert.deepEqual(b.parent,tasks.find(candidate=>candidate.id===t.dependsOn));
   }
  }
+});
+
+test('regenerated frames wait for exact same-run staged raw and expose only a confirmed selected output',async t=>{
+ const f=fixture(t,'regenerate'),target=selected(f);
+ assert.equal(nextPostprocessFromPath(f.dbPath),null);
+ const other=selected(f,'run-2d');
+ f.finish(other.dependsOn);
+ assert.equal(nextPostprocessFromPath(f.dbPath).taskId,other.id);
+ f.finish(target.dependsOn);
+ let publishCalls=0;
+ const result=await runPostprocessFromPath({...f,taskId:target.id,officialRequestId:f.row.officialRequestId,
+  pds:{
+   read:async binding=>{
+    assert.equal(binding.predecessorTaskId,target.dependsOn);assert.equal(binding.motionPosePreset,'combat');
+    assert.equal(binding.motion,'sword-attack-flat');return {};
+   },
+   publish:async()=>{publishCalls++;return {ok:true};}},
+  render:async()=>({artifact:{}})});
+ assert.equal(publishCalls,1);assert.equal(result.state,'completed');
+ assert.equal(result.resultRef,'canonical-files/binari/npcs/'+f.row.payload.npcId+'/animation-processed-directions/combat/sword-attack-flat/n.json');
+ assert.equal(f.byId(other.id).status,'pending');
+});
+
+test('unconfirmed final regeneration write stays unreconciled, without publishing a result ref',async t=>{
+ const f=fixture(t,'regenerate'),target=selected(f);
+ f.finish(target.dependsOn);
+ const result=await runPostprocessFromPath({...f,taskId:target.id,officialRequestId:f.row.officialRequestId,
+  pds:{read:async()=>({}), publish:async()=>{throw Error('response lost');}},render:async()=>({artifact:{}})});
+ assert.equal(result.state,'requires_reconciliation');
+ assert.deepEqual({...f.byId(target.id)},{status:'running',result:null});
 });

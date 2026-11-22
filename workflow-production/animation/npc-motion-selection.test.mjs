@@ -9,11 +9,14 @@ import {canonical,selectedMotionBranch} from './vendor/npc-motion-selection-v1/m
 import {sha} from './vendor/npc-motion-selection-v1/envelope.mjs';
 
 const cases=JSON.parse(readFileSync(new URL('./vendor/npc-motion-selection-v1/golden-media.fixture.json',import.meta.url)));
+const regenerateGolden=JSON.parse(readFileSync(new URL('./vendor/npc-motion-selection-v1/npc-animation-regenerate.v1.fixture.json',import.meta.url)));
+const regenerateCase=()=>({row:regenerateGolden.row,tasks:regenerateGolden.plan.tasks.filter(t=>t.workerType==='animation')});
+const generationId='a'.repeat(48),resultBasisSha256='6'.repeat(64);
 const title='npc-animation workflow fixture';
 const dummyPNG=Buffer.from('not production pixels');
 const dummyMP4=Buffer.from('not production video');
 function fixture(t,which=0){
- const {row,tasks}=cases[which];
+ const {row,tasks}=which==='regenerate'?regenerateCase():cases[which];
  const root=realpathSync(mkdtempSync(join(tmpdir(),'npc-motion-selection-'))),path=join(root,'workflow.sqlite');
  const db=new DatabaseSync(path);chmodSync(path,0o600);
  t.after(()=>{db.close();rmSync(root,{recursive:true,force:true});});
@@ -29,12 +32,15 @@ function fixture(t,which=0){
  const status=key=>db.prepare('SELECT status FROM workflow_tasks WHERE task_key=?').get(key).status;
  return {row,tasks,root,path,db,finish,status};
 }
-const expected=f=>f.tasks.find(x=>x.workerType==='animation'&&x.input.motion==='sword-attack-flat');
+const expected=f=>f.row.requestType==='npc.animation.regenerate'?
+ f.tasks.toSorted((a,b)=>a.key<b.key?-1:a.key>b.key?1:0)[0]:
+ f.tasks.find(x=>x.workerType==='animation'&&x.input.motion==='sword-attack-flat');
 const taskLookup=f=>choose(f.path);
 const signal=new AbortController().signal;
 const send=async(f,{referencePatch={},settingsPatch={}}={})=>{
  const selected=taskLookup(f),{input}=expected(f);
- const settings={direction:input.direction,motion:input.motion,portraitAssetId:sha(dummyPNG)+'.png',posePreset:input.posePreset,
+ const regenerate=f.row.requestType==='npc.animation.regenerate';
+ const settings={...(regenerate?{generationId,resultBasisSha256}:{}),direction:input.direction,motion:input.motion,portraitAssetId:sha(dummyPNG)+'.png',posePreset:input.posePreset,
   assetSetSha256:input.assetSetSha256,referencePresetHash:'5'.repeat(64),referenceSha256:sha(dummyMP4),...settingsPatch};
  const reference={direction:input.direction,presetId:input.motion,posePreset:input.posePreset,presetHash:'5'.repeat(64),
   assetId:sha(dummyMP4)+'.mp4',sha256:sha(dummyMP4),bytes:dummyMP4.length,base64:dummyMP4.toString('base64'),
@@ -49,6 +55,8 @@ const send=async(f,{referencePatch={},settingsPatch={}}={})=>{
   if(path==='/v1/motion-presets/'+input.motion+'/'+input.direction)return reference;
   assert.equal(path,'/v1/npcs/ownership/workflow-animation');
   assert.equal(options.body.artifact.frames.length,2);assert.equal(options.body.artifact.fps,24);
+  if(regenerate)assert.deepEqual(options.body.artifact.source,{generationId,portraitAssetId:settings.portraitAssetId,resultBasisSha256});
+  else assert.equal(options.body.artifact.source,undefined);
   return {ok:true};
  };
  const native=async(dir)=>{
@@ -56,6 +64,7 @@ const send=async(f,{referencePatch={},settingsPatch={}}={})=>{
   assert.equal(readFileSync(join(dir,'portrait.png')).toString(),dummyPNG.toString());
   const job=JSON.parse(readFileSync(join(dir,'job.json')));
   assert.deepEqual([job.fps,job.frameCount,job.motionPrompt],[24,2,title]);
+  if(regenerate)assert.equal(job.appearancePrompt.trim(),'Preserve the exact reference character design and costume.');
   mkdirSync(join(dir,'wan','frames'),{recursive:true});
   const frames=['00000.png','00001.png'];
   for(const frame of frames)writeFileSync(join(dir,'wan','frames',frame),dummyPNG);
@@ -101,4 +110,29 @@ test('both golden schema payloads project exact planner media tasks',()=>{
    assert.deepEqual(branch.parent,tasks.find(t=>t.id===task.dependsOn));
   }
  }
+});
+
+test('animation-only regeneration claims a null dependency and forwards the exact render-start scoped publication fence',async t=>{
+ const f=fixture(t,'regenerate'),target=taskLookup(f);
+ assert.equal(target.parent,null);assert.equal(target.taskId,expected(f).id);
+ const calls=await send(f);
+ assert.deepEqual(calls,[
+  '/v1/npcs/ownership/workflow-animation/read','/v1/npcs/ownership/workflow-animation/asset',
+  '/v1/motion-presets/'+target.motion+'/'+target.direction,'/v1/npcs/ownership/workflow-animation']);
+ assert.equal(f.status(target.key),'completed');
+ assert.equal(f.db.prepare('SELECT COUNT(*) AS n FROM workflow_tasks WHERE depends_on_task_id IS NOT NULL').get().n,0);
+});
+
+test('regen rejects a missing, stale-shaped or tampered basis and does not invent a source',async t=>{
+ for(const patch of [{generationId:null},{resultBasisSha256:undefined},{resultBasisSha256:'X'.repeat(64)}]){
+  const f=fixture(t,'regenerate');
+  const target=taskLookup(f);
+  const calls=await send(f,{settingsPatch:patch});
+  assert.deepEqual(calls,['/v1/npcs/ownership/workflow-animation/read']);assert.equal(f.status(target.key),'failed');
+ }
+ const f=fixture(t,'regenerate'),target=taskLookup(f);
+ const other=f.tasks.find(x=>x.id!==target.taskId);
+ f.db.prepare("UPDATE workflow_tasks SET depends_on_task_id=? WHERE task_id=?").run(other.id,target.taskId);
+ assert.equal(claim(f.db,target),null);
+ assert.equal(f.status(target.key),'pending');
 });

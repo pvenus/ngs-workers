@@ -222,3 +222,12 @@ services Planner at `e080f3481bdf1525981a35e46d864d194059ae31`. Its narrow
 media-branch projection and fixtures assert the exact tasks and dependency
 identities. The package is carried independently in the existing worker
 release roots. No new worker role, model, or runtime dependency is needed.
+
+For animation-only regeneration, the selected motion lane also verifies exact
+`npc.animation.regenerate` / `ngs.npc-animation.regenerate.v1` rows. It has no
+same-run portrait task dependency: PDS resolves and pins the currently
+published directional character portrait, generation, and selected output
+basis. The worker echoes those exact pins in the existing animation publish
+artifact. An animation ACK confirms prepared raw PNG only; it does not report
+a current Filex update. The existing postprocess lane commits and confirms the
+final replacement.

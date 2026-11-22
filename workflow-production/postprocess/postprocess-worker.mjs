@@ -1,7 +1,7 @@
 import {DatabaseSync} from 'node:sqlite';
 import {directions,buildPlan,portraitPixelTaskType,pixelImageStyle} from './vendor/planner-pixel-chain/planner.mjs';
 import {canonical} from './vendor/planner-f24d23a/envelope.mjs';
-import {isSelectionSchema,selectedMotionBranch,matchesMotionTask} from './vendor/npc-motion-selection-v1/media-branch.mjs';
+import {isSelectedMediaRun,regenerateType,regenerateSchema,selectedMotionBranch,matchesMotionTask} from './vendor/npc-motion-selection-v1/media-branch.mjs';
 import {assertDatabasePath,protectSchema,nextWorkflowTaskFromPath,markWorkflowTaskFailed,workflowTaskEligibleSql,workflowTaskRetrySetSql} from './workflow-ready.mjs';
 
 import {FramesDefinitelyRejected} from './postprocess-ports.mjs';
@@ -30,7 +30,7 @@ function checked(db,taskId,requestId,state,stamp){
  const row=db.prepare("SELECT * FROM workflow_runs WHERE official_request_id=? AND state='planned'").get(requestId);
  if(!row||!task||(!claiming&&task.status!==state)||![TYPE,portraitPixelTaskType].includes(task.task_type)||task.worker_type!==WORKER||task.result_ref!==null||
     (stamp!==undefined&&task.updated_at!==stamp))return null;
- const selected=isSelectionSchema(row.schema_version);
+ const selected=isSelectedMediaRun(row.request_type,row.schema_version);
  let target,parent,plan;
  if(selected){
   ({target,parent}=selectedMotionBranch(row,task.task_key));
@@ -68,11 +68,12 @@ function nextSelectedPostprocess(dbPath){
   const row=db.prepare(`SELECT r.*,t.task_id,t.task_key
    FROM workflow_tasks t JOIN workflow_runs r USING(official_request_id)
    JOIN workflow_tasks p ON p.task_id=t.depends_on_task_id AND p.official_request_id=t.official_request_id
-   WHERE r.state='planned' AND r.reason IS NULL AND r.request_type='npc.workflow' AND r.project_id='binari'
-   AND r.schema_version IN ('ngs.npc-one-stop.selection.v1','ngs.npc-one-stop.selection.replace.v1')
+   WHERE r.state='planned' AND r.reason IS NULL AND r.project_id='binari'
+   AND ((r.request_type='npc.workflow' AND r.schema_version IN ('ngs.npc-one-stop.selection.v1','ngs.npc-one-stop.selection.replace.v1'))
+        OR (r.request_type=? AND r.schema_version=?))
    AND ${workflowTaskEligibleSql('t')} AND t.result_ref IS NULL AND t.worker_type=? AND t.task_type=?
    AND t.task_key GLOB 'frames_motion_*' AND p.status='completed' AND p.worker_type='animation'
-   ORDER BY r.registered_at,r.official_request_id,t.task_key LIMIT 1`).get(WORKER,TYPE);
+   ORDER BY r.registered_at,r.official_request_id,t.task_key LIMIT 1`).get(regenerateType,regenerateSchema,WORKER,TYPE);
   if(!row)return null;
   const {target}=selectedMotionBranch(row,row.task_key);
   expect(target.id===row.task_id,'POSTPROCESS_TASK_BINDING_INVALID');

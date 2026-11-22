@@ -34,7 +34,7 @@ export const sha=value=>createHash('sha256').update(value).digest('hex');
 
 export const motionSelectionSlot=presetId=>sha(presetId).slice(0,16);
 
-function validateMotionSelection(selection) {
+export function validateMotionSelection(selection) {
  if(!Array.isArray(selection)||!selection.length||selection.length>motionSelectionLimit)throw invalid();
  const ids=new Set(),slots=new Set();
  for(const entry of selection){
