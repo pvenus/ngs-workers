@@ -39,7 +39,7 @@ export async function createPostprocessRenderer({configPath,modelPinsPath,worker
    child.once('close',code=>{clearTimeout(timer);if(code===0)resolveRun();else reject(Error('POSTPROCESS_PROVIDER_FAILED'));});
   });
  }
- return async(sequence,{claim,motion,direction,posePreset})=>{
+ return async(sequence,{claim,motion,direction,posePreset,motionPosePreset,assetSetSha256})=>{
   if(posePreset!==undefined){
    const root=await mkdtemp(join(tmpdir(),'workflow-postprocess-pixel-'));
    try{
@@ -60,7 +60,7 @@ export async function createPostprocessRenderer({configPath,modelPinsPath,worker
   const cleanup=()=>rm(root,{recursive:true,force:true});
   try{
    await mkdir(join(root,'raw'),{mode:0o700});
-   await writeFile(join(root,'input.json'),JSON.stringify({claim,motion,direction,sequence}),{mode:0o600,flag:'wx'});
+   await writeFile(join(root,'input.json'),JSON.stringify({claim,motion,direction,sequence,...(motionPosePreset===undefined?{}:{motionPosePreset,assetSetSha256})}),{mode:0o600,flag:'wx'});
    for(const [i,frame] of sequence.frames.entries()){
     if(frame.index!==i)fail('POSTPROCESS_SOURCE_ORDER');
     const raw=await pds.fetchAsset(claim,frame);
@@ -69,7 +69,8 @@ export async function createPostprocessRenderer({configPath,modelPinsPath,worker
    await run(root);
    const {alpha,pixel}=JSON.parse(await readFile(join(root,'output.json'),'utf8'));
    if(alpha.requestId!==claim.taskId||pixel.requestId!==claim.taskId||alpha.frames.length!==sequence.frameCount||
-      pixel.frames.length!==sequence.frameCount)fail('POSTPROCESS_OUTPUT_BINDING');
+      pixel.frames.length!==sequence.frameCount||
+      alpha.posePreset!==(motionPosePreset??'idle')||pixel.posePreset!==(motionPosePreset??'idle'))fail('POSTPROCESS_OUTPUT_BINDING');
    const assets={};
    for(const id of new Set([...alpha.frames.map(f=>f.alphaAssetId),...pixel.frames.map(f=>f.assetId)])){
     if(!/^[a-f0-9]{64}\.png$/.test(id))fail('POSTPROCESS_OUTPUT_ASSET');

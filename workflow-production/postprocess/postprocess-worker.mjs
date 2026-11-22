@@ -1,6 +1,7 @@
 import {DatabaseSync} from 'node:sqlite';
 import {directions,buildPlan,portraitPixelTaskType,pixelImageStyle} from './vendor/planner-pixel-chain/planner.mjs';
 import {canonical} from './vendor/planner-f24d23a/envelope.mjs';
+import {isSelectionSchema,selectedMotionBranch,matchesMotionTask} from './vendor/npc-motion-selection-v1/media-branch.mjs';
 import {assertDatabasePath,protectSchema,nextWorkflowTaskFromPath,markWorkflowTaskFailed,workflowTaskEligibleSql,workflowTaskRetrySetSql} from './workflow-ready.mjs';
 
 import {FramesDefinitelyRejected} from './postprocess-ports.mjs';
@@ -29,10 +30,17 @@ function checked(db,taskId,requestId,state,stamp){
  const row=db.prepare("SELECT * FROM workflow_runs WHERE official_request_id=? AND state='planned'").get(requestId);
  if(!row||!task||(!claiming&&task.status!==state)||![TYPE,portraitPixelTaskType].includes(task.task_type)||task.worker_type!==WORKER||task.result_ref!==null||
     (stamp!==undefined&&task.updated_at!==stamp))return null;
- const plan=buildPlan({officialRequestId:requestId,projectId:row.project_id,requestType:row.request_type,
-  schemaVersion:row.schema_version,payload:JSON.parse(row.payload),payloadSha256:row.payload_sha256,
-  status:'registered',registeredAt:row.registered_at});
- const target=plan.tasks.find(t=>t.id===taskId),parent=plan.tasks.find(t=>t.id===target?.dependsOn);
+ const selected=isSelectionSchema(row.schema_version);
+ let target,parent,plan;
+ if(selected){
+  ({target,parent}=selectedMotionBranch(row,task.task_key));
+  plan={payload:row.payload};
+ }else{
+  plan=buildPlan({officialRequestId:requestId,projectId:row.project_id,requestType:row.request_type,
+   schemaVersion:row.schema_version,payload:JSON.parse(row.payload),payloadSha256:row.payload_sha256,
+   status:'registered',registeredAt:row.registered_at});
+  target=plan.tasks.find(t=>t.id===taskId);parent=plan.tasks.find(t=>t.id===target?.dependsOn);
+ }
  expect(target?.type===task.task_type&&target.workerType===WORKER&&task.task_key===target.key&&task.task_input===canonical(target.input)&&
   task.depends_on_task_id===target.dependsOn&&row.payload===plan.payload,'POSTPROCESS_TASK_BINDING_INVALID');
  const pixel=target.type===portraitPixelTaskType;
@@ -44,14 +52,34 @@ function checked(db,taskId,requestId,state,stamp){
    (parent.input.direction??null)===direction&&parent.input.npcId===target.input.npcId,
    'POSTPROCESS_PORTRAIT_SOURCE_BINDING_INVALID');
  }else expect(parent?.type==='npc.animation-native-png'&&parent.workerType==='animation'&&
-  parent.input.direction===target.input.direction&&parent.input.motion===target.input.motion,'POSTPROCESS_TASK_BINDING_INVALID');
+  parent.input.direction===target.input.direction&&parent.input.motion===target.input.motion&&
+  (!selected||(parent.input.posePreset===target.input.posePreset&&parent.input.assetSetSha256===target.input.assetSetSha256)),
+  'POSTPROCESS_TASK_BINDING_INVALID');
  const dep=db.prepare('SELECT * FROM workflow_tasks WHERE task_id=? AND official_request_id=?').get(target.dependsOn,requestId);
  if(!dep||dep.status!=='completed')return null;
- expect(dep.task_key===parent.key&&dep.task_type===parent.type&&dep.worker_type===parent.workerType&&
-  dep.task_input===canonical(parent.input)&&dep.depends_on_task_id===parent.dependsOn,
-  'POSTPROCESS_PREDECESSOR_BINDING_INVALID');
- return {task,row,dep,input:target.input,pixel};
+ expect(matchesMotionTask(dep,parent),'POSTPROCESS_PREDECESSOR_BINDING_INVALID');
+ return {task,row,dep,input:target.input,pixel,selected};
 }
+function nextSelectedPostprocess(dbPath){
+ assertDatabasePath(dbPath);
+ const db=new DatabaseSync(dbPath,{readOnly:true});
+ try{
+  protectSchema(db);
+  const row=db.prepare(`SELECT r.*,t.task_id,t.task_key
+   FROM workflow_tasks t JOIN workflow_runs r USING(official_request_id)
+   JOIN workflow_tasks p ON p.task_id=t.depends_on_task_id AND p.official_request_id=t.official_request_id
+   WHERE r.state='planned' AND r.reason IS NULL AND r.request_type='npc.workflow' AND r.project_id='binari'
+   AND r.schema_version IN ('ngs.npc-one-stop.selection.v1','ngs.npc-one-stop.selection.replace.v1')
+   AND ${workflowTaskEligibleSql('t')} AND t.result_ref IS NULL AND t.worker_type=? AND t.task_type=?
+   AND t.task_key GLOB 'frames_motion_*' AND p.status='completed' AND p.worker_type='animation'
+   ORDER BY r.registered_at,r.official_request_id,t.task_key LIMIT 1`).get(WORKER,TYPE);
+  if(!row)return null;
+  const {target}=selectedMotionBranch(row,row.task_key);
+  expect(target.id===row.task_id,'POSTPROCESS_TASK_BINDING_INVALID');
+  return {taskId:row.task_id,officialRequestId:row.official_request_id};
+ }finally{db.close();}
+}
+
 export function nextPostprocessFromPath(dbPath,{frames=true,portraits=true}={}){
  // Exact tuple queries share the same readiness implementation as all other workers.
  // Rotation between directions is unnecessary: each direction is consumed once
@@ -60,7 +88,7 @@ export function nextPostprocessFromPath(dbPath,{frames=true,portraits=true}={}){
   const target=nextWorkflowTaskFromPath(dbPath,scope);
   if(target)return target;
  }
- return null;
+ return frames?nextSelectedPostprocess(dbPath):null;
 }
 export async function runPostprocessFromPath({dbPath,taskId,officialRequestId,pds,render,signal}){
  expect(id.test(taskId)&&official.test(officialRequestId),'POSTPROCESS_IDS_REQUIRED');
@@ -81,7 +109,8 @@ export async function runPostprocessFromPath({dbPath,taskId,officialRequestId,pd
    const claim=Object.freeze({officialRequestId,taskId,projectId:found.row.project_id,npcId:found.input.npcId,
     payloadSha256:found.row.payload_sha256,claimStamp:stamp});
    const binding=Object.freeze({claim,direction:found.input.direction,predecessorTaskId:found.dep.task_id,
-    ...(found.pixel?{posePreset:found.input.posePreset}:{motion:found.input.motion})});
+    ...(found.pixel?{posePreset:found.input.posePreset}:{motion:found.input.motion,...(found.selected?
+     {motionPosePreset:found.input.posePreset,assetSetSha256:found.input.assetSetSha256}:{})})});
    return {found,stamp,binding};
   });
   if(!selected)return {state:'not_claimable',taskId};
@@ -95,7 +124,7 @@ export async function runPostprocessFromPath({dbPath,taskId,officialRequestId,pd
    publishing=true;
    const result=await pds.publish(binding,source,rendered);
    expect(result?.ok===true&&Object.keys(result).length===1,'POSTPROCESS_PUBLICATION_UNVERIFIED');
-   const resultRef=found.pixel?null:'canonical-files/binari/npcs/'+binding.claim.npcId+'/animation-processed-directions/idle/'+binding.motion+'/'+binding.direction+'.json';
+   const resultRef=found.pixel?null:'canonical-files/binari/npcs/'+binding.claim.npcId+'/animation-processed-directions/'+(binding.motionPosePreset??'idle')+'/'+binding.motion+'/'+binding.direction+'.json';
    tx(db,()=>{
     const current=checked(db,taskId,officialRequestId,'running',stamp);
     expect(current&&canonical(current.row)===canonical(found.row)&&canonical(current.dep)===canonical(found.dep),'POSTPROCESS_FINAL_BINDING_CHANGED');

@@ -49,4 +49,28 @@ with tempfile.TemporaryDirectory() as tmp:
     try: worker.process(root,claim,'run','sw',raw,'e'*64,matte)
     except ValueError as e: assert str(e)=='POSTPROCESS_SOURCE_SCOPE'
     else: raise AssertionError('wrong motion accepted')
+
+# Same deterministic image operation with a selected combat pose and arbitrary
+# preset ID. Test both its true path and the exact claim/source binding.
+with tempfile.TemporaryDirectory() as tmp:
+    selected_root=Path(tmp);(selected_root/'raw').mkdir()
+    for i,raw_png in enumerate(payloads):
+        (selected_root/'raw'/f'frame-{i:08d}.png').write_bytes(raw_png)
+    official='request.official.'+'a'*64
+    chosen='sword-attack-flat';asset_set='1'*64;direction='sw'
+    lineage=manifest_hash([official,'portrait_'+direction,chosen,'combat',asset_set])
+    raw_selected=build_native_png_manifest(dict(requestId='workflow.task.'+'b'*64,npcId='npc.fixture',generationId='a'*48,
+        posePreset='combat',presetId=chosen,direction=direction,sourceBindingHash=lineage),payloads,frame_count=2,fps=24)
+    selected_claim={**claim,'officialRequestId':official}
+    selected=worker.process(selected_root,selected_claim,chosen,direction,raw_selected,'e'*64,matte,
+                            pose_preset='combat',asset_set_sha256=asset_set)
+    assert selected['alpha']['posePreset']==selected['pixel']['posePreset']=='combat'
+    assert selected['alpha']['presetId']==selected['pixel']['presetId']==chosen
+    assert selected['alpha']['rawManifestId'].endswith('/animation-sequences/combat/sword-attack-flat/sw.json')
+    assert selected['pixel']['sourceBindingHash']==lineage
+    try:
+        worker.process(selected_root,selected_claim,chosen,direction,raw_selected,'e'*64,matte,
+                        pose_preset='combat',asset_set_sha256='2'*64)
+    except ValueError as e: assert str(e)=='POSTPROCESS_SELECTED_SOURCE_HASH'
+    else: raise AssertionError('mismatched selected asset set accepted')
 print('synthetic PNG fixture passed')

@@ -1,0 +1,298 @@
+[
+ {
+  "row": {
+   "officialRequestId": "request.official.287c8d20c7db69d502eafeacd347e262faab524e035675b55bf8972be0175f89",
+   "projectId": "binari",
+   "requestType": "npc.workflow",
+   "schemaVersion": "ngs.npc-one-stop.selection.v1",
+   "payload": {
+    "schemaVersion": "ngs.npc-one-stop.selection.v1",
+    "projectId": "binari",
+    "intent": "정식 요청 기반으로 선택한 모션만 생성",
+    "character": {
+     "npcId": "npc.fixture",
+     "name": "Fixture",
+     "slug": "fixture",
+     "role": "Resident",
+     "actId": "act.01",
+     "chapterId": "chapter01"
+    },
+    "sourceRefs": [
+     "fixture.story"
+    ],
+    "motionSelection": [
+     {
+      "presetId": "sword-attack-flat",
+      "posePreset": "combat",
+      "assetSetSha256": "1111111111111111111111111111111111111111111111111111111111111111"
+     },
+     {
+      "presetId": "run-2d",
+      "posePreset": "idle",
+      "assetSetSha256": "2222222222222222222222222222222222222222222222222222222222222222"
+     }
+    ]
+   },
+   "payloadSha256": "08327df1e71657d8f10fec8cf9dddfcff427cb317ff43dceae13d3dfe22018fa",
+   "status": "registered",
+   "registeredAt": 1795290000000
+  },
+  "tasks": [
+   {
+    "id": "workflow.task.5dbc0cb2571c66390259927bbeefbcf85c4ecbb418ea5fe083444e05b6710833",
+    "key": "portrait_idle_reference",
+    "type": "npc.portrait-idle-reference",
+    "workerType": "image",
+    "dependsOn": "workflow.task.d26331022693774121a67f3941eaafd37ea43c72476338702fc40cbf64a6ba68",
+    "input": {
+     "npcId": "npc.fixture",
+     "imageStyle": "pixel-sprite.v1"
+    }
+   },
+   {
+    "id": "workflow.task.6b55c344abe8c53e5ed5aea86c26de8d0e9412b6618bf22328c5b159ebd144a1",
+    "key": "portrait_pixel_idle_reference",
+    "type": "npc.portrait-pixel",
+    "workerType": "postprocess",
+    "dependsOn": "workflow.task.5dbc0cb2571c66390259927bbeefbcf85c4ecbb418ea5fe083444e05b6710833",
+    "input": {
+     "npcId": "npc.fixture",
+     "posePreset": "idle",
+     "direction": null
+    }
+   },
+   {
+    "id": "workflow.task.4498299052c9f46a96d47434540084dce0c95e157a6817f11528408a0973f220",
+    "key": "portrait_n",
+    "type": "npc.portrait-direction",
+    "workerType": "image",
+    "dependsOn": "workflow.task.6b55c344abe8c53e5ed5aea86c26de8d0e9412b6618bf22328c5b159ebd144a1",
+    "input": {
+     "npcId": "npc.fixture",
+     "direction": "n",
+     "imageStyle": "pixel-sprite.v1"
+    }
+   },
+   {
+    "id": "workflow.task.fe7b43380023eea697dd6cd5f5df73584769392d8c4a070d9d269512a4752411",
+    "key": "portrait_pixel_idle_n",
+    "type": "npc.portrait-pixel",
+    "workerType": "postprocess",
+    "dependsOn": "workflow.task.4498299052c9f46a96d47434540084dce0c95e157a6817f11528408a0973f220",
+    "input": {
+     "npcId": "npc.fixture",
+     "posePreset": "idle",
+     "direction": "n"
+    }
+   },
+   {
+    "id": "workflow.task.91ac6ba7fee5a074ac859dfeef24a669a9d33879543a372ea676eed795ebbf37",
+    "key": "animation_motion_38941de56aea0ca4_n",
+    "type": "npc.animation-native-png",
+    "workerType": "animation",
+    "dependsOn": "workflow.task.4498299052c9f46a96d47434540084dce0c95e157a6817f11528408a0973f220",
+    "input": {
+     "npcId": "npc.fixture",
+     "direction": "n",
+     "motion": "sword-attack-flat",
+     "posePreset": "combat",
+     "assetSetSha256": "1111111111111111111111111111111111111111111111111111111111111111",
+     "output": "native-png"
+    }
+   },
+   {
+    "id": "workflow.task.652a9cd2d3011373e577044028cc7347e0cda1172f454efca630537b7071283d",
+    "key": "frames_motion_38941de56aea0ca4_n",
+    "type": "npc.frames-postprocess",
+    "workerType": "postprocess",
+    "dependsOn": "workflow.task.91ac6ba7fee5a074ac859dfeef24a669a9d33879543a372ea676eed795ebbf37",
+    "input": {
+     "npcId": "npc.fixture",
+     "direction": "n",
+     "motion": "sword-attack-flat",
+     "posePreset": "combat",
+     "assetSetSha256": "1111111111111111111111111111111111111111111111111111111111111111",
+     "input": "native-png"
+    }
+   },
+   {
+    "id": "workflow.task.cde14060bfd7408ca054bbb5b1a9816616dac3762b69f304cdbf1cb41f700090",
+    "key": "animation_motion_fdfef59ab5ac1dff_n",
+    "type": "npc.animation-native-png",
+    "workerType": "animation",
+    "dependsOn": "workflow.task.4498299052c9f46a96d47434540084dce0c95e157a6817f11528408a0973f220",
+    "input": {
+     "npcId": "npc.fixture",
+     "direction": "n",
+     "motion": "run-2d",
+     "posePreset": "idle",
+     "assetSetSha256": "2222222222222222222222222222222222222222222222222222222222222222",
+     "output": "native-png"
+    }
+   },
+   {
+    "id": "workflow.task.2c9e0e9783abddd0f0283c6707a921aae210b425ee504bd32fcfc27a02b9672c",
+    "key": "frames_motion_fdfef59ab5ac1dff_n",
+    "type": "npc.frames-postprocess",
+    "workerType": "postprocess",
+    "dependsOn": "workflow.task.cde14060bfd7408ca054bbb5b1a9816616dac3762b69f304cdbf1cb41f700090",
+    "input": {
+     "npcId": "npc.fixture",
+     "direction": "n",
+     "motion": "run-2d",
+     "posePreset": "idle",
+     "assetSetSha256": "2222222222222222222222222222222222222222222222222222222222222222",
+     "input": "native-png"
+    }
+   }
+  ]
+ },
+ {
+  "row": {
+   "officialRequestId": "request.official.35f8dfa7a76577497dadee518d71ea9f3011aa16e7ab380661d47cd7b135670a",
+   "projectId": "binari",
+   "requestType": "npc.workflow",
+   "schemaVersion": "ngs.npc-one-stop.selection.replace.v1",
+   "payload": {
+    "schemaVersion": "ngs.npc-one-stop.selection.replace.v1",
+    "projectId": "binari",
+    "intent": "정식 요청 기반으로 선택한 모션만 생성",
+    "character": {
+     "npcId": "npc.fixture",
+     "name": "Fixture",
+     "slug": "fixture",
+     "role": "Resident",
+     "actId": "act.01",
+     "chapterId": "chapter01"
+    },
+    "sourceRefs": [
+     "fixture.story"
+    ],
+    "motionSelection": [
+     {
+      "presetId": "sword-attack-flat",
+      "posePreset": "combat",
+      "assetSetSha256": "1111111111111111111111111111111111111111111111111111111111111111"
+     },
+     {
+      "presetId": "run-2d",
+      "posePreset": "idle",
+      "assetSetSha256": "2222222222222222222222222222222222222222222222222222222222222222"
+     }
+    ]
+   },
+   "payloadSha256": "24d9691443600848c38736ee451d668c310e185398683110a94d5fbb5c1e1b5d",
+   "status": "registered",
+   "registeredAt": 1795290000000
+  },
+  "tasks": [
+   {
+    "id": "workflow.task.77049d8836792abcd5f3fa8b953f5c1ed37e7df907ab29c07a1cc796c977e232",
+    "key": "portrait_idle_reference",
+    "type": "npc.portrait-idle-reference",
+    "workerType": "image",
+    "dependsOn": "workflow.task.89cf642d3f09b9e5aa43b8090fd37c3d36b2c5259481c4ad04fdb83c7ec0a359",
+    "input": {
+     "npcId": "npc.fixture",
+     "imageStyle": "pixel-sprite.v1"
+    }
+   },
+   {
+    "id": "workflow.task.d851188aac16ab364a0e5a8d074db19b87d60957126dd859de123edce9b881f9",
+    "key": "portrait_pixel_idle_reference",
+    "type": "npc.portrait-pixel",
+    "workerType": "postprocess",
+    "dependsOn": "workflow.task.77049d8836792abcd5f3fa8b953f5c1ed37e7df907ab29c07a1cc796c977e232",
+    "input": {
+     "npcId": "npc.fixture",
+     "posePreset": "idle",
+     "direction": null
+    }
+   },
+   {
+    "id": "workflow.task.5ec6d0b6b4f02dced8f0039230d43a653558ba8a842816a63c6f1f4e3af8ef34",
+    "key": "portrait_n",
+    "type": "npc.portrait-direction",
+    "workerType": "image",
+    "dependsOn": "workflow.task.d851188aac16ab364a0e5a8d074db19b87d60957126dd859de123edce9b881f9",
+    "input": {
+     "npcId": "npc.fixture",
+     "direction": "n",
+     "imageStyle": "pixel-sprite.v1"
+    }
+   },
+   {
+    "id": "workflow.task.b5c402708259bc83448cf290f61753063526c726db9ad25d372a54deeccac954",
+    "key": "portrait_pixel_idle_n",
+    "type": "npc.portrait-pixel",
+    "workerType": "postprocess",
+    "dependsOn": "workflow.task.5ec6d0b6b4f02dced8f0039230d43a653558ba8a842816a63c6f1f4e3af8ef34",
+    "input": {
+     "npcId": "npc.fixture",
+     "posePreset": "idle",
+     "direction": "n"
+    }
+   },
+   {
+    "id": "workflow.task.43257eba9872b00d61c1847c9cb86402b820109b3f0f943e3ffec8984a03a692",
+    "key": "animation_motion_38941de56aea0ca4_n",
+    "type": "npc.animation-native-png",
+    "workerType": "animation",
+    "dependsOn": "workflow.task.5ec6d0b6b4f02dced8f0039230d43a653558ba8a842816a63c6f1f4e3af8ef34",
+    "input": {
+     "npcId": "npc.fixture",
+     "direction": "n",
+     "motion": "sword-attack-flat",
+     "posePreset": "combat",
+     "assetSetSha256": "1111111111111111111111111111111111111111111111111111111111111111",
+     "output": "native-png"
+    }
+   },
+   {
+    "id": "workflow.task.6d746fe1f5c49046a41084c78f3525630f665863af9d96739361a8ccc86bbce9",
+    "key": "frames_motion_38941de56aea0ca4_n",
+    "type": "npc.frames-postprocess",
+    "workerType": "postprocess",
+    "dependsOn": "workflow.task.43257eba9872b00d61c1847c9cb86402b820109b3f0f943e3ffec8984a03a692",
+    "input": {
+     "npcId": "npc.fixture",
+     "direction": "n",
+     "motion": "sword-attack-flat",
+     "posePreset": "combat",
+     "assetSetSha256": "1111111111111111111111111111111111111111111111111111111111111111",
+     "input": "native-png"
+    }
+   },
+   {
+    "id": "workflow.task.4db9f1783c08ee5d2732507ff84b5ad39224910d3730afc4f41fad4fcdf4cc8f",
+    "key": "animation_motion_fdfef59ab5ac1dff_n",
+    "type": "npc.animation-native-png",
+    "workerType": "animation",
+    "dependsOn": "workflow.task.5ec6d0b6b4f02dced8f0039230d43a653558ba8a842816a63c6f1f4e3af8ef34",
+    "input": {
+     "npcId": "npc.fixture",
+     "direction": "n",
+     "motion": "run-2d",
+     "posePreset": "idle",
+     "assetSetSha256": "2222222222222222222222222222222222222222222222222222222222222222",
+     "output": "native-png"
+    }
+   },
+   {
+    "id": "workflow.task.8cfb1d48c76304771d84e1bc460683417408dcad92a7682eac93b85c742b0b3d",
+    "key": "frames_motion_fdfef59ab5ac1dff_n",
+    "type": "npc.frames-postprocess",
+    "workerType": "postprocess",
+    "dependsOn": "workflow.task.4db9f1783c08ee5d2732507ff84b5ad39224910d3730afc4f41fad4fcdf4cc8f",
+    "input": {
+     "npcId": "npc.fixture",
+     "direction": "n",
+     "motion": "run-2d",
+     "posePreset": "idle",
+     "assetSetSha256": "2222222222222222222222222222222222222222222222222222222222222222",
+     "input": "native-png"
+    }
+   }
+  ]
+ }
+]

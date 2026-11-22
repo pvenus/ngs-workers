@@ -49,7 +49,7 @@ export function postprocessPorts({transport=raw,heartbeatTransport=requestLocalJ
   }catch{return false;}},
   async heartbeat(signal){try{return (await heartbeatTransport({port:8090,path:'/api/service-heartbeat',method:'POST',
         body:{serverName:'postprocess-worker'},deadline:5000,signal})).ok===true;}catch{return false;}},
-  async read({claim,motion,direction,predecessorTaskId,posePreset}){
+  async read({claim,motion,direction,predecessorTaskId,posePreset,motionPosePreset,assetSetSha256}){
    if(posePreset!==undefined){
     const v=await json(portraitRoute+'/read',{claim},30000);
     if(!exact(v,['posePreset','direction','source'])||v.posePreset!==posePreset||v.direction!==direction||
@@ -59,9 +59,15 @@ export function postprocessPorts({transport=raw,heartbeatTransport=requestLocalJ
    const v=await json(route+'/read',{claim},30000);
    const s=v.sequence;
    if(v.motion!==motion||v.direction!==direction||!s||s.schemaVersion!=='ngs.animation-native-png-sequence.v1'||
-      s.npcId!==claim.npcId||s.presetId!==motion||s.posePreset!=='idle'||s.direction!==direction||s.requestId!==predecessorTaskId||
+      s.npcId!==claim.npcId||s.presetId!==motion||s.posePreset!==(motionPosePreset??'idle')||s.direction!==direction||s.requestId!==predecessorTaskId||
       !Number.isInteger(s.frameCount)||s.frameCount<2||s.frameCount>1000||s.frames?.length!==s.frameCount)
     throw Error('POSTPROCESS_PDS_SOURCE_BINDING');
+   if(motionPosePreset!==undefined){
+    if(!exact(v,['direction','motion','sequence','posePreset','assetSetSha256'])||
+       v.posePreset!==motionPosePreset||v.assetSetSha256!==assetSetSha256||
+       s.sourceBindingHash!==sha(JSON.stringify([claim.officialRequestId,'portrait_'+direction,motion,motionPosePreset,assetSetSha256])))
+      throw Error('POSTPROCESS_PDS_SELECTED_SOURCE_BINDING');
+   }
    return s;
   },
   async fetchAsset(claim,frame){

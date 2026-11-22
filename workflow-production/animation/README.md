@@ -207,3 +207,18 @@ run is not rewritten into the new task graph.
 
 Use `node --test workflow-production/animation/*.test.mjs` for isolated
 fixtures. These tests do not invoke a production model.
+
+### Selected NPC motion presets
+
+The `ngs.npc-one-stop.selection.v1` and `ngs.npc-one-stop.selection.replace.v1`
+schemas keep the existing portrait and native PNG/pixel workers. They
+publish only the immutable preset selections in the official request.
+Each selection binds the exact preset ID, pose, and full eight-direction
+asset-set SHA-256; a changed or missing source is not replaced by walk/run.
+The unrelated generic 2D preset conversion lane is unchanged.
+
+`vendor/npc-motion-selection-v1/envelope.mjs` is an exact copy from the
+services Planner at `e080f3481bdf1525981a35e46d864d194059ae31`. Its narrow
+media-branch projection and fixtures assert the exact tasks and dependency
+identities. The package is carried independently in the existing worker
+release roots. No new worker role, model, or runtime dependency is needed.
