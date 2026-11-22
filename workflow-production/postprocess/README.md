@@ -115,3 +115,18 @@ PDS advertises availability. No operational app changes on install/import.
 Isolated checks: `node --test`, and `postprocess-render.test.py` with a reviewed
 Worker source on PYTHONPATH and Pillow installed. The latter generates its own
 synthetic PNGs and stubs only learned alpha inference.
+
+### Non-NPC 2D motion preset
+
+Postprocess now owns `motion-preset.convert-2d.encode` and
+`motion-preset.convert-2d.finalize` in the existing resident service. Each
+direction can encode as soon as its exact animation PNG task is complete.
+The worker reads a claim-bound binary PDS bundle, checks the frame manifest
+against the task receipt and verifies each PNG's order, size, dimensions and
+SHA-256. Fixed local FFmpeg/ffprobe creates and checks one H.264 MP4 (no audio,
+up to 8 MiB) in temporary storage; this path never calls the NPC
+alpha/pixel renderer or loads a GPU model.
+
+After all eight exact directional encode receipts are complete, Postprocess
+requests final publication through PDS. It does not write canonical files
+directly and does not rerun a task when publication may already have committed.
