@@ -1,16 +1,16 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {DatabaseSync} from 'node:sqlite';
-import {chmodSync,existsSync,mkdtempSync,realpathSync,readFileSync,rmSync,statSync,writeFileSync,mkdirSync} from 'node:fs';
+import {chmodSync,existsSync,mkdtempSync,realpathSync,readFileSync,rmSync,writeFileSync,mkdirSync} from 'node:fs';
 import {join} from 'node:path';
 import {tmpdir} from 'node:os';
 import {crc32,deflateSync} from 'node:zlib';
 import {
- claimPresetVideo,choosePresetVideo,clipKey,clipType,finalKey,finalType,imageType,imageKey,
- requestType,requestSchema,materializeRead,executePresetVideo,presetVideoPorts,
+ claimPresetFrames,choosePresetFrames,framesKey,framesType,imageType,imageKey,
+ requestType,requestSchema,materializeRead,executePresetFrames,presetFramePorts,
  DefinitePresetWriteRejection,presetPath,presetCapability,
-} from './preset-video-worker.mjs';
-import {directions,sha256,width,height,validateFrames,encodePresetVideo,validateProbe} from './preset-video-artifact.mjs';
+} from './preset-frame-worker.mjs';
+import {directions,sha256,width,height,makeFrameBundle,maxHeaderBytes,validTiming} from './preset-frame-artifact.mjs';
 
 const id='request.official.4ec9fcca84e0839dfb2b37142f360737b5b275ca71c56e53e06dc3e14ef35181';
 const keyId=key=>'workflow.task.'+sha256(JSON.stringify([id,key]));
@@ -20,8 +20,7 @@ const packed=bytes=>({sha256:sha256(bytes),base64:bytes.toString('base64'),bytes
 const pngHeader=Buffer.from('89504e470d0a1a0a0000000d4948445200000300000001b00802000000000000000000','hex');
 const mp4Header=Buffer.from('000000146674797069736f6d0000000069736f6d000000146d646174000000000000000000000000','hex');
 const signal=new AbortController().signal;
-const target=d=>({taskId:keyId(clipKey(d)),officialRequestId:id,type:clipType,key:clipKey(d)});
-const finalize={taskId:keyId(finalKey),officialRequestId:id,type:finalType,key:finalKey};
+const target=d=>({taskId:keyId(framesKey(d)),officialRequestId:id,type:framesType,key:framesKey(d)});
 const common={sourcePresetId,variantPresetId};
 const canonical=v=>JSON.stringify(Object.fromEntries(Object.entries(v).sort(([a],[b])=>a.localeCompare(b))));
 
@@ -42,9 +41,9 @@ function fixture(t){
   db.prepare("INSERT INTO workflow_tasks VALUES(?,?,?,?,?,?,'pending',NULL,?,1,0)")
     .run(keyId(key),id,worker,type,key,canonical(input),depends);
  add(imageKey,imageType,'image',common,null);
- for(const d of directions)add(clipKey(d),clipType,'animation',{...common,direction:d},keyId(imageKey));
- assert.equal(keyId(clipKey('n')),'workflow.task.b4f406f6205c34981b5ae82076a34cee79bfb22433222f963676ea78a84d021f');
- add(finalKey,finalType,'animation',{...common,dependsOnTaskIds:directions.map(d=>keyId(clipKey(d)))},null);
+ for(const d of directions)add(framesKey(d),framesType,'animation',{...common,direction:d},keyId(imageKey));
+ add('motion_2d_n','motion-preset.convert-2d.clip','animation',{...common,direction:'n'},keyId(imageKey));
+ add('motion_2d_finalize','motion-preset.convert-2d.finalize','animation',{...common,dependsOnTaskIds:[]},null);
  const set=(key,result,status='completed')=>db.prepare('UPDATE workflow_tasks SET status=?,result_ref=? WHERE task_key=?').run(status,result,key);
  const row=key=>db.prepare('SELECT status,result_ref AS resultRef FROM workflow_tasks WHERE task_key=?').get(key);
  return {file,db,row,set,dir,image:()=>set(imageKey,'motion.2d.image.'+sha256(pngHeader))};
@@ -59,109 +58,116 @@ function readClip(d){
   direction:d,assetId:source.sha256+'.mp4',...source,frameCount:4,fps:24,cycleCount:1,
   sourceVersion:hash('b'),presetHash:sourcePresetHash},image:packed(pngHeader)};
 }
-const generated=Buffer.concat([mp4Header,Buffer.from('local fixture only')]);
-function ports(d,{write}={}){
- return {read:async()=>d===null?{sourcePresetHash}:readClip(d),
-  write:write??(async (claim,artifact)=>({ok:true,resultRef:d===null?
-   'motion.2d.published.'+hash('c'):'motion.2d.clip.'+d+'.'+artifact.sha256}))};
+function parseWire(wire){
+ const n=wire.readUInt32BE(0);
+ assert(n>0&&n<=maxHeaderBytes);
+ const raw=wire.subarray(4+n),head=JSON.parse(wire.subarray(4,4+n).toString('utf8'));
+ assert.deepEqual(Object.keys(head).sort(),['claim','frames']);
+ let offset=0;
+ for(const f of head.frames){
+  assert.deepEqual(Object.keys(f).sort(),['bytes','sha256']);
+  assert.equal(sha256(raw.subarray(offset,offset+f.bytes)),f.sha256);
+  offset+=f.bytes;
+ }
+ assert.equal(offset,raw.length);
+ return {...head,raw};
+}
+const finalHash=(direction,frames)=>sha256(JSON.stringify({direction,frames,height,sourcePresetHash,width}));
+function ports(d,{handoff}={}){
+ return {read:async()=>readClip(d),handoff:handoff??(async wire=>{
+  const {frames}=parseWire(wire);
+  return {ok:true,resultRef:'motion.2d.frames.'+d+'.'+finalHash(d,frames)};
+ })};
 }
 
-test('one shared generated image gates eight specifically bound clip claims and exact finalizer',async t=>{
+function renderFixture(dir){
+ const frames=['00000.png','00001.png','00002.png','00003.png'];
+ const local=join(dir,'wan','frames');mkdirSync(local,{recursive:true});
+ const png=realFixturePNG();
+ for(const name of frames)writeFileSync(join(local,name),png);
+ return {width,height,fps:24,frames,frameHashes:frames.map(()=>sha256(png))};
+}
+
+test('one shared generated image gates exactly eight GPU frame bundles; no legacy clip or finalizer',async t=>{
  const f=fixture(t);
- assert.equal(choosePresetVideo(f.file),undefined);
- assert.equal(claimPresetVideo(f.db,target('e')),null);
+ assert.equal(choosePresetFrames(f.file),undefined);
+ assert.equal(claimPresetFrames(f.db,target('e')),null);
  f.image();
- assert.equal(choosePresetVideo(f.file).type,clipType);
- assert.equal(claimPresetVideo(f.db,finalize),null);
+ assert.equal(choosePresetFrames(f.file).type,framesType);
  const images=[],sources=[];
  for(const d of directions){
   const task=target(d);
   let scratch;
-  const result=await executePresetVideo(f.db,task,signal,{pds:ports(d),
+  const result=await executePresetFrames(f.db,task,signal,{pds:ports(d),
    native:async dir=>{
     scratch=dir;
     const job=JSON.parse(readFileSync(join(dir,'job.json')));
-    assert.equal(job.frameCount,4);
-    assert.equal(job.fps,24);
-    assert.equal(job.referenceType,'portrait');
+    assert.equal(job.frameCount,4);assert.equal(job.fps,24);assert.equal(job.referenceType,'portrait');
     assert.match(job.motionPrompt,/single-cycle directional/);
     assert(!job.motionPrompt.includes('걷기 2D'));
     images.push(sha256(readFileSync(join(dir,'portrait.png'))));
     sources.push(sha256(readFileSync(join(dir,'motion.mp4'))));
-    return {frames:[]};
-   },
-   validate:async()=>{},encode:async()=>({mimeType:'video/mp4',...packed(generated)})});
+    return renderFixture(dir);
+   }});
   assert.equal(result.state,'completed',JSON.stringify(result));
-  assert.equal(result.resultRef,'motion.2d.clip.'+d+'.'+sha256(generated));
+  assert.match(result.resultRef,new RegExp('^motion[.]2d[.]frames[.]'+d+'[.][a-f0-9]{64}$'));
   assert.equal(f.row(task.key).status,'completed');
+  assert.equal(f.row(task.key).resultRef,result.resultRef);
   assert.equal(existsSync(scratch),false);
-  assert.equal(claimPresetVideo(f.db,task),null);
+  assert.equal(claimPresetFrames(f.db,task),null);
  }
  assert.equal(new Set(images).size,1);
  assert.deepEqual(sources,directions.map(d=>readClip(d).reference.sha256));
  assert.equal(new Set(sources).size,8);
- assert.equal(choosePresetVideo(f.file).key,finalKey);
- let published=false;
- const out=await executePresetVideo(f.db,finalize,signal,{pds:ports(null,{write:async (claim,artifact)=>{
-  assert.deepEqual(artifact,{});
-  assert.deepEqual(Object.keys(claim).sort(),['claimStamp','officialRequestId','payloadSha256','projectId','taskId']);
-  published=true;
-  return {ok:true,resultRef:'motion.2d.published.'+hash('c')};
- }}),native:()=>assert.fail('finalization is not inference'),encode:()=>assert.fail('finalization is not encoding')});
- assert.equal(out.state,'completed');
- assert.equal(published,true);
- assert.equal(f.row(finalKey).resultRef,out.resultRef);
+ assert.equal(choosePresetFrames(f.file),undefined);
+ for(const [key,type] of [['motion_2d_n','motion-preset.convert-2d.clip'],['motion_2d_finalize','motion-preset.convert-2d.finalize']]){
+  assert.equal(f.row(key).status,'pending');
+  assert.throws(()=>claimPresetFrames(f.db,{taskId:keyId(key),officialRequestId:id,key,type}),/PRESET_2D_TASK_KIND/);
+ }
 });
 
-test('finalization does not accept missing, wrong, spoofed or misordered completed clip proof',t=>{
+test('rejects source drift, different image, wrong timing/direction before renderer',t=>{
  const f=fixture(t);f.image();
- for(const d of directions)f.set(clipKey(d),'motion.2d.clip.'+d+'.'+hash('7'));
- f.set(clipKey('s'),'motion.2d.clip.n.'+hash('7'));
- assert.equal(claimPresetVideo(f.db,finalize),null);
- f.set(clipKey('s'),'motion.2d.clip.s.'+hash('7'));
- const wrong={...common,dependsOnTaskIds:directions.map(d=>keyId(clipKey(d))).reverse()};
- f.db.prepare('UPDATE workflow_tasks SET task_input=? WHERE task_key=?').run(canonical(wrong),finalKey);
- assert.equal(claimPresetVideo(f.db,finalize),null);
- assert.equal(f.row(finalKey).status,'pending');
-});
-
-test('rejects source drift, different image, modified timing and direction before renderer',t=>{
- const f=fixture(t);f.image();
- const bound=claimPresetVideo(f.db,target('w'));
+ const bound=claimPresetFrames(f.db,target('w'));
  const read=readClip('w');
  assert.equal(materializeRead(bound,read).source.length,read.reference.bytes);
  assert.throws(()=>materializeRead(bound,{...read,sourcePresetHash:hash('1')}),/PRESET_2D_CLIP_REFERENCE_SEMANTICS/);
  assert.throws(()=>materializeRead(bound,{...read,direction:'e'}),/PRESET_2D_CLIP_SOURCE/);
  assert.throws(()=>materializeRead(bound,{...read,image:{...read.image,sha256:hash('3')}}),/PRESET_2D_CLIP_SHARED_IMAGE_BINDING/);
  assert.throws(()=>materializeRead(bound,{...read,reference:{...read.reference,fps:0}}),/PRESET_2D_CLIP_REFERENCE_SEMANTICS/);
- assert.throws(()=>materializeRead(bound,{...read,reference:{...read.reference,base64:packed(generated).base64}}),/PRESET_2D_ASSET_/);
+ assert.throws(()=>materializeRead(bound,{...read,reference:{...read.reference,base64:packed(pngHeader).base64}}),/PRESET_2D_ASSET_/);
+ assert.equal(validTiming({frameCount:1000,fps:30}),true);
+ assert.equal(validTiming({frameCount:1001,fps:30}),false);
 });
 
-test('ambiguous write reconciles without retry, definite scoped rejection remains retryable',async t=>{
+test('lost binary handoff ACK remains running; definite scoped reject follows retry rules',async t=>{
  const f=fixture(t);f.image();
- const go=async (d,write)=>executePresetVideo(f.db,target(d),signal,{pds:ports(d,{write}),
-  native:async()=>({}),validate:async()=>{},encode:async()=>({mimeType:'video/mp4',...packed(generated)})});
+ const go=(d,handoff)=>executePresetFrames(f.db,target(d),signal,{pds:ports(d,{handoff}),native:renderFixture});
  assert.equal((await go('n',async()=>{throw Error('NETWORK');})).state,'requires_reconciliation');
- assert.equal(f.row(clipKey('n')).status,'running');
- assert.equal(claimPresetVideo(f.db,target('n')),null);
+ assert.equal(f.row(framesKey('n')).status,'running');
+ assert.equal(claimPresetFrames(f.db,target('n')),null);
  assert.equal((await go('ne',async()=>{throw new DefinitePresetWriteRejection('MOTION_2D_REJECTED');})).state,'failed');
- assert.equal(f.row(clipKey('ne')).status,'failed');
- assert.equal((await go('e',async()=>({ok:true,resultRef:'motion.2d.clip.s.'+sha256(generated)}))).state,'requires_reconciliation');
+ assert.equal(f.row(framesKey('ne')).status,'failed');
+ assert.equal((await go('e',async()=>({ok:true,resultRef:'motion.2d.frames.s.'+hash('e')}))).state,'requires_reconciliation');
 });
 
-test('PDS client requires exact capability and prewrite rejection shape',async()=>{
+test('binary PDS capability, body and exact definitive rejection handling',async()=>{
  let behavior={enabled:true,schemaVersion:presetCapability};
- const p=presetVideoPorts(async (path,options)=>{
-  assert(path===presetPath||path===presetPath+'/read');
+ const body=Buffer.from('test packet without JSON wrapping');
+ const p=presetFramePorts(async (path,options)=>{
+  assert.equal(path,presetPath+'/frames');
   assert(options.maxJsonBytes>0);
-  if(options.onRejected)options.onRejected(behavior);
+  if(options.onRejected){
+   assert.equal(options.rawBody,body);assert.equal(options.body,undefined);
+   options.onRejected(behavior);
+  }
   return behavior;
  });
  assert(await p.ready(signal));
  behavior={enabled:true,schemaVersion:presetCapability,injected:true};
  assert.equal(await p.ready(signal),false);
  behavior={error:'MOTION_2D_REJECTED'};
- await assert.rejects(p.write({},{}),DefinitePresetWriteRejection);
+ await assert.rejects(p.handoff(body),DefinitePresetWriteRejection);
 });
 
 function chunk(name,payload){
@@ -178,24 +184,18 @@ function realFixturePNG(){
   chunk('IDAT',deflateSync(Buffer.alloc((width*3+1)*height))),chunk('IEND',Buffer.alloc(0))]);
 }
 
-test('lossless scratch frame hashes/order and real fixed FFmpeg/ffprobe yield one timed silent MP4',async t=>{
- if(!existsSync('/opt/homebrew/bin/ffmpeg')||!existsSync('/opt/homebrew/bin/ffprobe')){
-  t.skip('the fixed Mac codec tools are not provisioned in this test environment');return;
- }
- const dir=realpathSync(mkdtempSync(join(tmpdir(),'preset-2d-encode-fixture-')));
+test('lossless scratch packet binds exact order, sizes and canonical manifest digest',async t=>{
+ const dir=realpathSync(mkdtempSync(join(tmpdir(),'preset-2d-frame-packet-fixture-')));
  t.after(()=>rmSync(dir,{recursive:true,force:true}));
- const path=join(dir,'wan','frames');mkdirSync(path,{recursive:true});
- const png=realFixturePNG(),frames=['00000.png','00001.png','00002.png','00003.png'];
- for(const f of frames)writeFileSync(join(path,f),png);
- const fps=24,frameCount=frames.length,frameHashes=frames.map(()=>sha256(png));
- const out={width,height,fps,frames,frameHashes};
- await validateFrames(dir,out,{fps,frameCount});
- await assert.rejects(validateFrames(dir,{...out,frameHashes:frames.map(()=>hash('f'))},{fps,frameCount}),/PRESET_2D_FRAME_HASH/);
- await assert.rejects(validateFrames(dir,{...out,frames:frames.toReversed()},{fps,frameCount}),/PRESET_2D_FRAME_ORDER/);
- const a=await encodePresetVideo(dir,{fps,frameCount},signal);
- assert.equal(a.mimeType,'video/mp4');
- assert.equal(a.sha256,sha256(readFileSync(join(dir,'generic-2d.mp4'))));
- assert.equal(a.bytes,statSync(join(dir,'generic-2d.mp4')).size);
- assert.deepEqual([a.fps,a.frameCount,a.width,a.height],[fps,frameCount,width,height]);
- assert.throws(()=>validateProbe({streams:[]},{fps,frameCount}),/PRESET_2D_MP4_PROBE/);
+ const out=renderFixture(dir);
+ const header={claim:{taskId:keyId(framesKey('n'))},direction:'n',sourcePresetHash};
+ const timing={fps:out.fps,frameCount:out.frames.length};
+ await assert.rejects(makeFrameBundle(dir,{...out,frameHashes:out.frames.map(()=>hash('f'))},timing,header,signal),/PRESET_2D_FRAME_HASH/);
+ await assert.rejects(makeFrameBundle(dir,{...out,frames:out.frames.toReversed()},timing,header,signal),/PRESET_2D_FRAME_ORDER/);
+ const {wire,manifestSha256}=await makeFrameBundle(dir,out,timing,header,signal);
+ const {raw,frames,claim}=parseWire(wire);
+ assert.equal(manifestSha256,finalHash('n',frames));
+ assert.deepEqual(claim,header.claim);
+ assert.equal(raw.length,frames[0].bytes*4);
+ assert.equal(sha256(raw),sha256(Buffer.concat(Array(4).fill(realFixturePNG()))));
 });

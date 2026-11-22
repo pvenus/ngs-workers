@@ -180,31 +180,30 @@ publish. Provider-managed original output follows the legacy provider's file
 ownership; worker-owned temporary files are cleaned up. No permission changes,
 live model startup or deployment are performed by installing the files alone.
 
-## Generic 2D motion preset clips
+## Generic 2D motion preset frame handoff
 
-The existing animation watcher can additionally claim only the formal
-`motion-preset.convert-2d` workflow's eight directional clip tasks and
-one all-eight finalizer. It does not handle the preceding image generation
-or create formal requests. This lane is separate from NPC native PNG
-publication. It uses the same warm Wan renderer and model idle lifetime.
+The animation watcher claims only the formal `motion-preset.convert-2d`
+workflow's eight `.frames` tasks in this lane. Each requires the exact
+completed same-run image task. The loopback PDS claim reader returns the
+same generated PNG and the original 3D motion MP4 for that direction,
+bound to the source preset hash and original timing. The existing warm
+Wan renderer produces private lossless PNGs; the worker validates the
+entire ordered set and its raw hashes.
 
-Each clip requires the exact completed same-run image task and its image
-hash. The loopback PDS claim endpoint supplies the same generated PNG and
-the original 3D motion MP4 scoped to that direction, with bound source
-preset hash and original frame count/fps. The worker validates source
-bytes, renders to temporary lossless PNGs, verifies the complete ordered
-frame hashes, then uses the Mac's fixed Homebrew FFmpeg and ffprobe
-executables to encode and validate a silent H.264 MP4. It writes a scoped
-clip receipt through PDS. No source preset paths or media are rewritten.
+The scoped binary handoff carries a bounded JSON claim/ordered size and
+hash header followed by concatenated raw PNG bytes. A clip's frame task
+completes only after PDS durably acknowledges the exact directional
+manifest hash. It can then hand the GPU on to the next direction, without
+waiting for encoding. The existing postprocess worker owns MP4 encoding
+and final preset publication. The animation worker never handles those
+tasks in this split path and never rewrites the source preset.
 
-The finalizer requires exactly eight completed clips with the correct
-per-direction result references and same image lineage, then asks PDS
-to publish the separate variant. It does not start a renderer or encoder.
-Unknown publication or completion outcomes stay running for reconciliation;
-only an explicit PDS pre-write rejection or a pre-publication error can
-enter the existing retry policy. The existing renderer stop/cleanup rules
-remain in effect.
+Unknown handoff or completion outcomes stay running for reconciliation.
+Only the exact scoped PDS pre-write rejection or a pre-handoff failure
+can enter the existing retry policy. The renderer stop/cleanup rules,
+warm idle lifetime, and earlier NPC native PNG lane remain in effect.
+Roll out the split only after any prior inline preset runs drain; an old
+run is not rewritten into the new task graph.
 
-To run isolated tests, use `node --test workflow-production/animation/*.test.mjs`.
-The real codec test uses synthetic fixture pixels only and skips if the
-fixed Mac tools are unavailable; tests never invoke the production model.
+Use `node --test workflow-production/animation/*.test.mjs` for isolated
+fixtures. These tests do not invoke a production model.

@@ -8,7 +8,7 @@ import {createHash} from 'node:crypto';
 import {setTimeout as delay} from 'node:timers/promises';
 import {fileURLToPath} from 'node:url';
 import {createWarmAnimation,spawnAnimationChannel} from './animation-warm.mjs';
-import {choosePresetVideo,executePresetVideo,presetVideoPorts,finalType} from './preset-video-worker.mjs';
+import {choosePresetFrames,executePresetFrames,presetFramePorts} from './preset-frame-worker.mjs';
 import {assertDatabasePath,protectSchema,nextWorkflowTaskFromPath,markWorkflowTaskFailed,workflowTaskEligibleSql,workflowTaskRetrySetSql} from './workflow-ready.mjs';
 
 const path='/v1/npcs/ownership/workflow-animation',type='npc.animation-native-png';
@@ -18,9 +18,11 @@ const provider=process.env.WORKFLOW_WAN_RELEASE, py=process.env.WORKFLOW_WAN_PYT
  binding=process.env.WORKFLOW_WAN_BINDING;
 const helper=fileURLToPath(new URL('./animation-native.py',import.meta.url));
 function insist(test,error){if(!test)throw Error(error);}
-async function local(route,{body,port=8030,signal,timeout=30000,binary=false,maxJsonBytes,onRejected}={}){
- const response=await fetch('http://127.0.0.1:'+port+route,{method:body?'POST':'GET',redirect:'error',
-  headers:body?{'Content-Type':'application/json'}:{},body:body?JSON.stringify(body):undefined,
+async function local(route,{body,rawBody,port=8030,signal,timeout=30000,binary=false,maxJsonBytes,onRejected}={}){
+ insist(rawBody===undefined||Buffer.isBuffer(rawBody)&&body===undefined,'ANIMATION_PDS_REQUEST_TYPE');
+ const response=await fetch('http://127.0.0.1:'+port+route,{method:body||rawBody?'POST':'GET',redirect:'error',
+  headers:rawBody?{'Content-Type':'application/octet-stream'}:body?{'Content-Type':'application/json'}:{},
+  body:rawBody??(body?JSON.stringify(body):undefined),
   signal:AbortSignal.any([AbortSignal.timeout(timeout),...(signal?[signal]:[])])});
  const recognizedReject=typeof onRejected==='function'&&response.status===422&&maxJsonBytes;
  insist(response.ok||recognizedReject,'ANIMATION_PDS_HTTP_'+response.status);
@@ -201,14 +203,14 @@ if(process.argv[1]===fileURLToPath(import.meta.url)){
  assertDatabasePath(dbPath);const db=new DatabaseSync(dbPath);protectSchema(db);db.exec('PRAGMA busy_timeout=5000');
  const ping=()=>void local('/api/service-heartbeat',{body:{serverName:'animation-worker'},port:8090,signal}).catch(()=>{});
  const heart=setInterval(ping,60000);ping();
- const preset=presetVideoPorts(local);
+ const preset=presetFramePorts(local);
  const warm=createWarmAnimation({launch:root=>spawnAnimationChannel({py,helper,provider,binding,root}),
   onIdleUnload:()=>console.log(JSON.stringify({state:'idle_model_unloaded'}))});
  try{while(!signal.aborted){
   let idle=false;
   try{
    const legacy=choose(dbPath);
-   const t=legacy??choosePresetVideo(dbPath);
+   const t=legacy??choosePresetFrames(dbPath);
    if(!t){
     idle=true; // At the timeout boundary a runnable job takes precedence.
     if(!await warm.idle())throw Error('ANIMATION_PROCESS_STOP_UNCONFIRMED');
@@ -221,11 +223,11 @@ if(process.argv[1]===fileURLToPath(import.meta.url)){
     await execute(db,t,signal,warm);
    }else{
     insist(await preset.ready(signal),'PRESET_2D_PDS_UNAVAILABLE');
-    if(t.type!==finalType&&warm.cold()){
+    if(warm.cold()){
      const preflight=await runNative('--probe',signal);insist(preflight.ready===true,'ANIMATION_MODEL_UNAVAILABLE');
     }
     signal.throwIfAborted();
-    const result=await executePresetVideo(db,t,signal,{pds:preset,warm,native:runNative});
+    const result=await executePresetFrames(db,t,signal,{pds:preset,warm,native:runNative});
     if(result.state==='failed'||result.state==='requires_reconciliation')console.error(JSON.stringify(result));
     else if(result.state==='completed')console.log(JSON.stringify(result));
     else idle=true;

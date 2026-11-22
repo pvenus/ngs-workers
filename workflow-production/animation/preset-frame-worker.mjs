@@ -4,24 +4,22 @@ import {mkdtemp,rm,writeFile} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {assertDatabasePath,protectSchema,markWorkflowTaskFailed,workflowTaskEligibleSql,workflowTaskRetrySetSql} from './workflow-ready.mjs';
-import {directions,sha256,digestPattern,need,validTiming,pngShape,mp4Shape,maxBytes,maxReferenceBytes,validateFrames,encodePresetVideo} from './preset-video-artifact.mjs';
+import {directions,sha256,digestPattern,need,validTiming,pngShape,mp4Shape,maxReferenceBytes,maxBundleBytes,maxHeaderBytes,makeFrameBundle} from './preset-frame-artifact.mjs';
 
 export const presetPath='/v1/motion-presets/workflow-convert-2d';
-export const presetCapability='workflow.motion-preset-convert-2d.v1';
+export const presetCapability='workflow.motion-preset-convert-2d.frames.v1';
 export const requestType='motion-preset.convert-2d';
 export const requestSchema='ngs.motion-preset-convert-2d.v1';
 export const imageType='motion-preset.convert-2d.image',imageKey='motion_2d_image';
-export const clipType='motion-preset.convert-2d.clip',finalType='motion-preset.convert-2d.finalize',finalKey='motion_2d_finalize';
-export const clipKey=d=>'motion_2d_'+d;
-const clipKeys=directions.map(clipKey),worker='animation',project='binari';
+export const framesType='motion-preset.convert-2d.frames';
+export const framesKey=d=>'motion_2d_frames_'+d;
+const keys=directions.map(framesKey),worker='animation',project='binari';
 const official=/^request\.official\.[a-f0-9]{64}$/;
 const ident=/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
 const imageResult=/^motion\.2d\.image\.[a-f0-9]{64}$/;
-const finalResult=/^motion\.2d\.published\.[a-f0-9]{64}$/;
 export class DefinitePresetWriteRejection extends Error{}
 const isDict=v=>v!==null&&typeof v==='object'&&!Array.isArray(v);
 const exact=(v,ks)=>isDict(v)&&Object.keys(v).length===ks.length&&ks.every(k=>Object.hasOwn(v,k));
-const eqArray=(a,b)=>Array.isArray(a)&&a.length===b.length&&a.every((v,i)=>v===b[i]);
 const taskId=(id,key)=>'workflow.task.'+sha256(JSON.stringify([id,key]));
 const short=(value,max)=>typeof value==='string'&&value.isWellFormed()&&value.trim()!==''&&
  [...value].length<=max&&!/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f]/u.test(value);
@@ -33,16 +31,8 @@ function transaction(db,fn){
  db.exec('BEGIN IMMEDIATE');
  try{const value=fn();db.exec('COMMIT');return value;}catch(e){db.exec('ROLLBACK');throw e;}
 }
-function resultDigest(value, prefix){
- return typeof value==='string'&&value.startsWith(prefix)&&digestPattern.test(value.slice(prefix.length))?
-  value.slice(prefix.length):null;
-}
-function exactInput(p,t){
- const common=t.sourcePresetId===p.sourcePresetId&&t.variantPresetId===p.variantPresetId;
- return common;
-}
-const readyClipsSql=clipKeys.map(()=>'?').join(',');
-export function choosePresetVideo(dbPath){
+const directionKeysSql=keys.map(()=>'?').join(',');
+export function choosePresetFrames(dbPath){
  assertDatabasePath(dbPath);
  const db=new DatabaseSync(dbPath,{readOnly:true});
  try{
@@ -51,16 +41,11 @@ export function choosePresetVideo(dbPath){
    FROM workflow_tasks t JOIN workflow_runs r USING(official_request_id)
    WHERE r.state='planned' AND r.reason IS NULL AND r.request_type=? AND r.schema_version=? AND r.project_id=?
    AND ${workflowTaskEligibleSql('t')} AND t.result_ref IS NULL AND t.worker_type=?
-   AND ((t.task_type=? AND t.task_key=? AND t.depends_on_task_id IS NULL AND
-    (SELECT COUNT(*) FROM workflow_tasks c WHERE c.official_request_id=t.official_request_id
-      AND c.task_type=? AND c.worker_type=? AND c.status='completed' AND c.result_ref IS NOT NULL
-      AND c.task_key IN (${readyClipsSql}))=8)
-    OR (t.task_type=? AND t.task_key IN (${readyClipsSql}) AND EXISTS(
-      SELECT 1 FROM workflow_tasks i WHERE i.task_id=t.depends_on_task_id AND i.official_request_id=t.official_request_id
-      AND i.task_key=? AND i.task_type=? AND i.worker_type='image' AND i.status='completed' AND i.result_ref IS NOT NULL)))
-    ORDER BY CASE WHEN t.task_key=? THEN 0 ELSE 1 END,r.registered_at,t.official_request_id,t.task_key LIMIT 1`)
-   .get(requestType,requestSchema,project,worker,finalType,finalKey,clipType,worker,...clipKeys,
-        clipType,...clipKeys,imageKey,imageType,finalKey)??undefined;
+   AND t.task_type=? AND t.task_key IN (${directionKeysSql}) AND EXISTS(
+     SELECT 1 FROM workflow_tasks i WHERE i.task_id=t.depends_on_task_id AND i.official_request_id=t.official_request_id
+     AND i.task_key=? AND i.task_type=? AND i.worker_type='image' AND i.status='completed' AND i.result_ref IS NOT NULL)
+   ORDER BY r.registered_at,t.official_request_id,t.task_key LIMIT 1`)
+   .get(requestType,requestSchema,project,worker,framesType,...keys,imageKey,imageType)??undefined;
  }finally{db.close();}
 }
 
@@ -73,32 +58,11 @@ function imageProof(db, id){
  return {imageId,imageSha256:row.result_ref.slice(-64)};
 }
 
-function finalizedClips(db,id,input,p){
- const ids=directions.map(d=>taskId(id,clipKey(d))), image=imageProof(db,id);
- if(!image||!eqArray(input.dependsOnTaskIds,ids))return null;
- const rows=db.prepare(`SELECT task_id,task_key,task_type,worker_type,task_input,depends_on_task_id,result_ref,status
-  FROM workflow_tasks WHERE official_request_id=? AND (task_type=? OR task_key IN (${readyClipsSql}))`)
-  .all(id,clipType,...clipKeys);
- if(rows.length!==directions.length)return null;
- const byKey=new Map(rows.map(v=>[v.task_key,v]));
- const proofs=[];
- for(const [i,d] of directions.entries()){
-  const r=byKey.get(clipKey(d));
-  if(!r||r.task_id!==ids[i]||r.task_type!==clipType||r.worker_type!==worker||r.status!=='completed'||
-   r.depends_on_task_id!==image.imageId||!resultDigest(r.result_ref,'motion.2d.clip.'+d+'.'))return null;
-  const args=JSON.parse(r.task_input);
-  if(!exact(args,['sourcePresetId','variantPresetId','direction'])||!exactInput(p,args)||args.direction!==d)return null;
-  proofs.push(r.result_ref);
- }
- return proofs;
-}
-
-export function claimPresetVideo(db,t){
+export function claimPresetFrames(db,t){
  need(official.test(t?.officialRequestId)&&typeof t.key==='string'&&t.taskId===taskId(t.officialRequestId,t.key),
       'TASK_BINDING');
- const isFinal=t.type===finalType&&t.key===finalKey;
- const direction=t.type===clipType?directions.find(d=>clipKey(d)===t.key):undefined;
- need(isFinal||direction!==undefined,'TASK_KIND');
+ const direction=t.type===framesType?directions.find(d=>framesKey(d)===t.key):undefined;
+ need(direction!==undefined,'TASK_KIND');
  return transaction(db,()=>{
   const id=t.officialRequestId;
   const r=db.prepare(`SELECT t.updated_at,t.status,t.task_input,t.depends_on_task_id,r.payload,r.payload_sha256,r.project_id
@@ -109,18 +73,11 @@ export function claimPresetVideo(db,t){
   if(!r)return null;
   const input=JSON.parse(r.task_input),p=JSON.parse(r.payload);
   need(exactProject(p)&&r.payload_sha256===sha256(r.payload),'PAYLOAD_BINDING');
-  need(exact(input,['sourcePresetId','variantPresetId',isFinal?'dependsOnTaskIds':'direction'])&&exactInput(p,input),
-       'TASK_INPUT');
-  let proofs=null,imageSha256=null;
-  if(isFinal){
-   need(r.depends_on_task_id===null,'FINALIZE_TASK_BINDING');
-   proofs=finalizedClips(db,id,input,p);
-   if(!proofs)return null;
-  }else{
-   need(input.direction===direction&&r.depends_on_task_id===taskId(id,imageKey),'CLIP_TASK_BINDING');
-   imageSha256=imageProof(db,id)?.imageSha256;
-   if(!imageSha256)return null;
-  }
+  need(exact(input,['sourcePresetId','variantPresetId','direction'])&&input.sourcePresetId===p.sourcePresetId&&
+   input.variantPresetId===p.variantPresetId&&input.direction===direction&&r.depends_on_task_id===taskId(id,imageKey),
+   'TASK_INPUT');
+  const imageSha256=imageProof(db,id)?.imageSha256;
+  if(!imageSha256)return null;
   const claimStamp=Math.max(Date.now(),r.updated_at+1);
   need(Number.isSafeInteger(claimStamp)&&claimStamp<Number.MAX_SAFE_INTEGER,'CLAIM_STAMP');
   const applied=db.prepare(`UPDATE workflow_tasks AS t SET status='running',updated_at=?,${workflowTaskRetrySetSql}
@@ -129,7 +86,7 @@ export function claimPresetVideo(db,t){
    .run(claimStamp,t.taskId,id,worker,t.type,t.key,r.status,r.updated_at);
   if(applied.changes!==1)return null;
   return {claim:{officialRequestId:id,taskId:t.taskId,projectId:project,payloadSha256:r.payload_sha256,claimStamp},
-   sourcePresetId:p.sourcePresetId,variantPresetId:p.variantPresetId,direction,isFinal,imageSha256,proofs};
+   sourcePresetId:p.sourcePresetId,variantPresetId:p.variantPresetId,direction,imageSha256};
  });
 }
 
@@ -149,10 +106,6 @@ const views={n:'north (rear)',ne:'north-east (rear three-quarter right)',e:'east
  s:'south (front)',sw:'south-west (front three-quarter left)',w:'west (left side)',nw:'north-west (rear three-quarter left)'};
 
 export function materializeRead(state,v){
- if(state.isFinal){
-  need(exact(v,['sourcePresetHash'])&&typeof v.sourcePresetHash==='string'&&digestPattern.test(v.sourcePresetHash),'FINALIZE_SOURCE');
-  return null;
- }
  need(exact(v,['direction','sourcePresetHash','reference','image'])&&v.direction===state.direction&&
    typeof v.sourcePresetHash==='string'&&digestPattern.test(v.sourcePresetHash),'CLIP_SOURCE');
  const r=v.reference,i=v.image;
@@ -173,22 +126,23 @@ export function materializeRead(state,v){
   motionPrompt:'Match the supplied single-cycle directional motion exactly, especially body facing, limb movement, pose timing, and fixed '+views[state.direction]+' view. '+policy.motionInstruction,
   negativePrompt:'Character changes, realistic three-dimensional shading, scene changes, text, logos, duplicate limbs, cropping, camera motion, extra characters.',
   framingPolicy:fr};
- return {source,portrait,job};
+ return {source,portrait,job,sourcePresetHash:v.sourcePresetHash};
 }
 
-export function presetVideoPorts(local){
+export function presetFramePorts(local){
  return {
   async ready(signal){
-   const r=await local(presetPath,{signal,maxJsonBytes:4096});
+   const r=await local(presetPath+'/frames',{signal,maxJsonBytes:4096});
    return exact(r,['enabled','schemaVersion'])&&r.enabled===true&&r.schemaVersion===presetCapability;
   },
   async read(claim,signal){
    return local(presetPath+'/read',{body:{claim},signal,timeout:60_000,maxJsonBytes:104*1024*1024});
   },
-  async write(claim,artifact){
+  async handoff(wire){
    // Once the body is sent, an external cancellation cannot establish
    // whether publication committed. Use only a bounded internal timeout.
-   return local(presetPath,{body:{claim,artifact},timeout:180_000,maxJsonBytes:4096,onRejected:value=>{
+   need(Buffer.isBuffer(wire)&&wire.length>4&&wire.length<=maxBundleBytes+maxHeaderBytes+4,'FRAME_WIRE');
+   return local(presetPath+'/frames',{rawBody:wire,timeout:180_000,maxJsonBytes:4096,onRejected:value=>{
     if(exact(value,['error'])&&value.error==='MOTION_2D_REJECTED')
      throw new DefinitePresetWriteRejection(value.error);
    }});
@@ -213,45 +167,37 @@ function complete(db,t,s,ref){
  });
 }
 
-export async function executePresetVideo(db,t,signal,{pds,warm=null,native,encode=encodePresetVideo,validate=validateFrames}){
- const state=claimPresetVideo(db,t);
+export async function executePresetFrames(db,t,signal,{pds,warm=null,native,pack=makeFrameBundle}){
+ const state=claimPresetFrames(db,t);
  if(!state)return {state:'not_claimable',taskId:t.taskId};
  let phase='read',dir,rendererAttempt=false;
  try{
   signal.throwIfAborted();
   const input=materializeRead(state,await pds.read(state.claim,signal));
-  let artifact={};
-  if(!state.isFinal){
-   phase='scratch';
-   dir=warm?await warm.jobDir():await mkdtemp(join(tmpdir(),'workflow-preset-2d-'));
-   await Promise.all([writeFile(join(dir,'job.json'),JSON.stringify(input.job),{flag:'wx',mode:0o600}),
-    writeFile(join(dir,'motion.mp4'),input.source,{flag:'wx',mode:0o600}),
-    writeFile(join(dir,'portrait.png'),input.portrait,{flag:'wx',mode:0o600})]);
-   phase='render';
-   rendererAttempt=true;
-   const out=warm?await warm.render(dir,signal):await native(dir,signal);
-   phase='validate';
-   await validate(dir,out,input.job);
-   phase='encode';
-   const output=await encode(dir,input.job,signal);
-   need(isDict(output)&&output.mimeType==='video/mp4'&&typeof output.sha256==='string'&&digestPattern.test(output.sha256)&&
-    Number.isSafeInteger(output.bytes)&&output.bytes>=24&&output.bytes<=maxBytes,'ENCODE_RESULT');
-   decodeExact(output,maxBytes,mp4Shape);
-   artifact={base64:output.base64,sha256:output.sha256};
-  }
+  phase='scratch';
+  dir=warm?await warm.jobDir():await mkdtemp(join(tmpdir(),'workflow-preset-2d-'));
+  await Promise.all([writeFile(join(dir,'job.json'),JSON.stringify(input.job),{flag:'wx',mode:0o600}),
+   writeFile(join(dir,'motion.mp4'),input.source,{flag:'wx',mode:0o600}),
+   writeFile(join(dir,'portrait.png'),input.portrait,{flag:'wx',mode:0o600})]);
+  phase='render';
+  rendererAttempt=true;
+  const out=warm?await warm.render(dir,signal):await native(dir,signal);
+  phase='validate';
+  const {wire,manifestSha256}=await pack(dir,out,input.job,{claim:state.claim,direction:state.direction,
+   sourcePresetHash:input.sourcePresetHash},signal);
+  need(Buffer.isBuffer(wire)&&typeof manifestSha256==='string'&&digestPattern.test(manifestSha256),'FRAME_BUNDLE');
   signal.throwIfAborted();
-  phase='publish';
-  const ack=await pds.write(state.claim,artifact);
-  const prefix=!state.isFinal?('motion.2d.clip.'+state.direction+'.'+artifact.sha256):null;
-  need(exact(ack,['ok','resultRef'])&&ack.ok===true&&typeof ack.resultRef==='string'&&
-   (state.isFinal?finalResult.test(ack.resultRef):ack.resultRef===prefix),'PUBLICATION_UNCONFIRMED');
+  phase='handoff';
+  const ack=await pds.handoff(wire);
+  const ref='motion.2d.frames.'+state.direction+'.'+manifestSha256;
+  need(exact(ack,['ok','resultRef'])&&ack.ok===true&&ack.resultRef===ref,'PUBLICATION_UNCONFIRMED');
   phase='commit';
-  complete(db,t,state,ack.resultRef);
-  return {state:'completed',taskId:t.taskId,resultRef:ack.resultRef};
+  complete(db,t,state,ref);
+  return {state:'completed',taskId:t.taskId,resultRef:ref};
  }catch(e){
   const safe=typeof e?.message==='string'&&/^[A-Z0-9_]{1,130}$/.test(e.message)?e.message:'PRESET_2D_UNCONFIRMED';
   let failed=false;
-  if(!['publish','commit'].includes(phase)||phase==='publish'&&e instanceof DefinitePresetWriteRejection){
+  if(!['handoff','commit'].includes(phase)||phase==='handoff'&&e instanceof DefinitePresetWriteRejection){
    try{failed=markWorkflowTaskFailed(db,{...state.claim,workerType:worker});}catch{/* reconciliation only */}
   }
   return {state:failed?'failed':'requires_reconciliation',taskId:t.taskId,stage:phase,code:safe,
