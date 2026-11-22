@@ -11,7 +11,15 @@ RUNTIME_REVISION = 'ca1e85fe9430179831e6bc6be790c332190a3866'
 LM_REVISION = '0a3ec94b557aea7d508da38b31cfe7341f6ff737'
 XL_REVISION = 'd06de46b4622f781cf07f4a013a67d591ca52819'
 AUTO_MAX_SECONDS = 120
-SETTINGS = {'instrumental', 'lyrics', 'bpm', 'keyscale', 'timesignature', 'vocal_language'}
+TARGET_DURATION_KEY = 'target_duration_seconds'
+TARGET_DURATION_SECONDS = 60
+TARGET_PLAN_ATTEMPTS = 5
+SETTINGS = {'instrumental', 'lyrics', 'bpm', 'keyscale', 'timesignature', 'vocal_language', TARGET_DURATION_KEY}
+
+
+def target_plan_seed(initial, attempt):
+    # Stable across processes; odd increment makes the five 31-bit seeds distinct.
+    return (initial + (attempt - 1) * 0x9e3779b9) & 0x7fffffff
 
 
 def canonical(value):
@@ -30,6 +38,9 @@ def require_enabled():
 def validate_settings(value):
     if not isinstance(value, dict) or set(value) - SETTINGS:
         raise ValueError('HQ_SETTINGS_UNSUPPORTED')
+    if TARGET_DURATION_KEY in value and (type(value[TARGET_DURATION_KEY]) is not int
+                                         or value[TARGET_DURATION_KEY] != TARGET_DURATION_SECONDS):
+        raise ValueError('HQ_TARGET_DURATION_INVALID')
     instrumental = value.get('instrumental', True)
     if type(instrumental) is not bool:
         raise ValueError('HQ_INSTRUMENTAL_BOOLEAN_REQUIRED')
@@ -73,7 +84,10 @@ def validate_call(prompt, duration, seed, model, settings=None, kind='music'):
         raise ValueError('HQ_DURATION_10_TO_30_REQUIRED')
     if type(seed) is not int or not 0 <= seed <= 2147483647:
         raise ValueError('HQ_SEED_INVALID')
-    return validate_settings({} if settings is None else settings)
+    checked = validate_settings({} if settings is None else settings)
+    if TARGET_DURATION_KEY in checked and duration is not None:
+        raise ValueError('HQ_TARGET_DURATION_REQUIRES_AUTO')
+    return checked
 
 
 def validate_payload(value):

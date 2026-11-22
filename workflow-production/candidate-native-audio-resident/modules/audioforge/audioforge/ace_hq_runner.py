@@ -170,8 +170,11 @@ def validate_request(value, request_path):
         raise ValueError('HQ_DURATION_INVALID')
     _text(value.get('prompt'), 2000, empty=False)
     settings = value.get('settings')
-    if not isinstance(settings, dict) or set(settings) - {'instrumental', 'lyrics', 'bpm', 'keyscale', 'timesignature', 'vocal_language'}:
+    if not isinstance(settings, dict) or set(settings) - {'instrumental', 'lyrics', 'bpm', 'keyscale', 'timesignature', 'vocal_language', 'target_duration_seconds'}:
         raise ValueError('HQ_SETTINGS_INVALID')
+    if 'target_duration_seconds' in settings and (duration is not None
+            or type(settings['target_duration_seconds']) is not int or settings['target_duration_seconds'] != 60):
+        raise ValueError('HQ_TARGET_DURATION_INVALID')
     if type(settings.get('instrumental', True)) is not bool:
         raise ValueError('HQ_INSTRUMENTAL_INVALID')
     lyrics = _text(settings.get('lyrics', ''), 4000)

@@ -20,7 +20,8 @@ import wave
 
 from .backends import Cancelled
 from .hq_contract import (MODEL, PROFILE_VERSION, RUNTIME_REVISION, LM_REVISION,
-                          XL_REVISION, canonical, enabled, resolved_auto_duration, validate_call)
+                          XL_REVISION, TARGET_DURATION_KEY, TARGET_PLAN_ATTEMPTS,
+                          canonical, enabled, resolved_auto_duration, target_plan_seed, validate_call)
 
 _VERIFIED = {}
 
@@ -423,11 +424,19 @@ class HQBackend:
         output.parent.mkdir(parents=True, exist_ok=True)
         work = output.parent / (output.stem + '.hq')
         work.mkdir(mode=0o700, exist_ok=False)  # A previous uncertain attempt cannot replay.
-        request = dict(profile_version=PROFILE_VERSION, parent_pid=os.getpid(),
-                       runtime_root=str(self.root), output=str(work / 'audio.wav'),
-                       prompt=prompt, duration=duration, seed=seed, settings=settings)
-        request['request_sha256'] = hashlib.sha256(canonical(request).encode()).hexdigest()
-        request_path = work / 'request.json'; _write_new(request_path, request)
+        target = settings.get(TARGET_DURATION_KEY)
+        def prepare(attempt):
+            stage_dir = work if target is None else work / f'attempt-{attempt}'
+            if target is not None:
+                stage_dir.mkdir(mode=0o700, exist_ok=False)
+            attempt_seed = target_plan_seed(seed, attempt) if target is not None else seed
+            request = dict(profile_version=PROFILE_VERSION, parent_pid=os.getpid(),
+                           runtime_root=str(self.root), output=str(stage_dir / 'audio.wav'),
+                           prompt=prompt, duration=duration, seed=attempt_seed, settings=settings)
+            request['request_sha256'] = hashlib.sha256(canonical(request).encode()).hexdigest()
+            request_path = stage_dir / 'request.json'; _write_new(request_path, request)
+            return stage_dir, request_path, request
+
         started = time.monotonic(); stages = []
         try:
             with self._locks() as fds:
@@ -438,40 +447,49 @@ class HQBackend:
                 if shutil.disk_usage(self.root).free < 10 * 1024**3:
                     raise RuntimeError('HQ_DISK_LOW_STOP')
                 deadline = time.monotonic() + self.timeout
-                stages.append(self._stage('plan', request_path, fds, cancelled,
-                                          min(deadline, time.monotonic() + 240), baseline))
-                plan = _read_json(work / 'lm-result.json')
-                expected = dict(schemaVersion='ace-hq-plan.v1', success=True,
-                    profileVersion=PROFILE_VERSION, requestSha256=request['request_sha256'],
-                    model='acestep-5Hz-lm-4B', modelRevision=LM_REVISION,
-                    runtimeRevision=RUNTIME_REVISION, backend='mlx', dtype='bfloat16',
-                    seed=seed, plannerPid=stages[0]['pid'])
-                for key, value in expected.items():
-                    if type(plan.get(key)) is not type(value) or plan[key] != value:
-                        raise ValueError('HQ_PLAN_BINDING_MISMATCH:' + key)
-                planned = duration
-                if planned is None:
-                    metadata = plan.get('metadata')
-                    if not isinstance(metadata, dict):
-                        raise ValueError('HQ_LM_METADATA_INVALID')
-                    planned = resolved_auto_duration(metadata.get('duration'))
-                if type(plan.get('duration')) is not type(planned) or plan['duration'] != planned:
-                    raise ValueError('HQ_PLAN_BINDING_MISMATCH:duration')
+                best = None
+                for attempt in range(1, 2 if target is None else TARGET_PLAN_ATTEMPTS + 1):
+                    stage_dir, request_path, request = prepare(attempt)
+                    stage = self._stage('plan', request_path, fds, cancelled,
+                                        min(deadline, time.monotonic() + 240), baseline)
+                    stages.append(stage)
+                    plan = _read_json(stage_dir / 'lm-result.json')
+                    expected = dict(schemaVersion='ace-hq-plan.v1', success=True,
+                        profileVersion=PROFILE_VERSION, requestSha256=request['request_sha256'],
+                        model='acestep-5Hz-lm-4B', modelRevision=LM_REVISION,
+                        runtimeRevision=RUNTIME_REVISION, backend='mlx', dtype='bfloat16',
+                        seed=request['seed'], plannerPid=stage['pid'])
+                    for key, value in expected.items():
+                        if type(plan.get(key)) is not type(value) or plan[key] != value:
+                            raise ValueError('HQ_PLAN_BINDING_MISMATCH:' + key)
+                    planned = duration
+                    if planned is None:
+                        metadata = plan.get('metadata')
+                        if not isinstance(metadata, dict):
+                            raise ValueError('HQ_LM_METADATA_INVALID')
+                        planned = resolved_auto_duration(metadata.get('duration'))
+                    if type(plan.get('duration')) is not type(planned) or plan['duration'] != planned:
+                        raise ValueError('HQ_PLAN_BINDING_MISMATCH:duration')
+                    if best is None or planned > best[0]:  # ties keep the earlier valid plan
+                        best = planned, attempt, stage_dir, request_path, request
+                    if target is None or planned >= target:
+                        break
+                planned, selected_attempt, stage_dir, request_path, request = best
                 # One-shot plan exits. Resident planner replies only after the
                 # bound plan is fully written and its model invocation returned.
                 self.verify_runtime(self.root, deep=True)
                 stages.append(self._stage('render', request_path, fds, cancelled, deadline, baseline))
-                receipt = _read_json(work / 'render-result.json')
+                receipt = _read_json(stage_dir / 'render-result.json')
                 expected = dict(schemaVersion='ace-hq-render.v1', success=True,
                     profileVersion=PROFILE_VERSION, requestSha256=request['request_sha256'],
                     model='acestep-v15-xl-sft', modelRevision=XL_REVISION,
                     runtimeRevision=RUNTIME_REVISION, backend='mps', dtype='float32',
-                    lmResultSha256=_sha(work / 'lm-result.json'), seed=seed,
+                    lmResultSha256=_sha(stage_dir / 'lm-result.json'), seed=request['seed'],
                     sampleRate=48000, channels=2)
                 for key, value in expected.items():
                     if type(receipt.get(key)) is not type(value) or receipt[key] != value:
                         raise ValueError('HQ_RENDER_BINDING_MISMATCH:' + key)
-                audio = _canonical(work / 'audio.wav')
+                audio = _canonical(stage_dir / 'audio.wav')
                 with wave.open(str(audio), 'rb') as wav:
                     actual = wav.getnframes() / wav.getframerate()
                     if (wav.getframerate(), wav.getnchannels(), wav.getsampwidth(), wav.getcomptype()) != (48000, 2, 2, 'NONE') or abs(actual - planned) > .1:
@@ -495,6 +513,8 @@ class HQBackend:
                     generation_seconds=time.monotonic() - started, stages=stages,
                     request_sha256=request['request_sha256'], audio_sha256=receipt['audioSha256'],
                     runtime_validation=pins, allocator_limits='OS defaults')
+                if target is not None:
+                    result.update(plan_attempt=selected_attempt, seed=request['seed'])
                 _write_new(work / 'completion.json', result)
                 return result
         except BaseException as exc:
