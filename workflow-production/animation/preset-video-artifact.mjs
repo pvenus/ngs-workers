@@ -6,7 +6,8 @@ import {open,realpath,stat} from 'node:fs/promises';
 import {join} from 'node:path';
 
 export const directions=Object.freeze(['n','ne','e','se','s','sw','w','nw']);
-export const width=768,height=432,maxBytes=24*1024*1024,maxReferenceBytes=64*1024*1024;
+// Published previews must fit the existing Local/Space playback limit.
+export const width=768,height=432,maxBytes=8*1024*1024,maxReferenceBytes=64*1024*1024;
 export const sha256=bytes=>createHash('sha256').update(bytes).digest('hex');
 export const digestPattern=/^[a-f0-9]{64}$/;
 const PNG=Buffer.from('89504e470d0a1a0a','hex');
