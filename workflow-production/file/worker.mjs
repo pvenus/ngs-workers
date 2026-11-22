@@ -8,6 +8,7 @@ import {markWorkflowTaskFailed,workflowTaskEligibleSql,workflowTaskRetrySetSql} 
 import {DeleteDefinitelyRejected} from './local-ports.mjs';
 import {conceptDelete,npcDelete,audioDelete,audioDeleteSchema,audioDeleteKey,audioResultId,audioDeleteRoot,deleteCommandFromPlannedTask,singleTargetDeleteSchema,verifiedSingleTargetDelete} from './file-delete.mjs';
 export {conceptDelete} from './file-delete.mjs';
+import {buildPlan as buildSelectionPlan,isSelectionSchema} from './vendor/planner-npc-motion-selection-v1/planner.mjs';
 import {canonical,sha} from './vendor/planner-f24d23a/envelope.mjs';
 
 const validId=(v)=>typeof v==='string'&&/^workflow\.task\.[a-f0-9]{64}$/.test(v);
@@ -45,7 +46,7 @@ function claim(db,taskId,officialRequestId,operation){
   const row=db.prepare(ready).get(taskId,officialRequestId,operation);
   if(!row){db.exec('COMMIT');return null;}
   const concept=operation===conceptDelete;
-  const plan=operation===audioDelete?buildAudioDeletePlan(row):(concept?buildConceptPlan:buildPlan)({officialRequestId:row.official_request_id,projectId:row.project_id,
+  const plan=operation===audioDelete?buildAudioDeletePlan(row):(concept?buildConceptPlan:isSelectionSchema(row.schema_version)?buildSelectionPlan:buildPlan)({officialRequestId:row.official_request_id,projectId:row.project_id,
    requestType:row.request_type,schemaVersion:row.schema_version,payload:JSON.parse(row.payload),
    payloadSha256:row.payload_sha256,status:'registered',registeredAt:row.registered_at});
   const expected=plan.tasks.find(t=>t.key===(concept?'category_delete':operation===audioDelete?audioDeleteKey:'delete')&&t.type===operation&&t.workerType==='file');

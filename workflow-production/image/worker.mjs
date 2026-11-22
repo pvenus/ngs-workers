@@ -8,6 +8,7 @@ import {validatePlanningMarkdown} from './planning-markdown.mjs';
 import {presetArtifact} from './preset.mjs';
 import {resolvePlanningDocument} from './planning-document-storage.mjs';
 import {preparePlanningSources,readPlanningSources} from './planning-input.mjs';
+import {buildPlan as buildSelectionPlan,isSelectionSchema} from './vendor/planner-npc-motion-selection-v1/planner.mjs';
 import {canonical,sha} from './vendor/planner-f24d23a/envelope.mjs';
 
 const validId=(v)=>typeof v==='string'&&/^workflow\.task\.[a-f0-9]{64}$/.test(v);
@@ -57,7 +58,7 @@ function claim(db,taskId,officialRequestId,operation){
   const taskInput=JSON.parse(row.task_input);
   const pixel=taskInput.imageStyle===pixelImageStyle;
   if(pixel&&![IDLE_PORTRAIT,DIRECTION_PORTRAIT].includes(operation))throw Error('WORKFLOW_PORTRAIT_STYLE_INVALID');
-  const build=pixel?buildPixelPlan:buildPlan;
+  const build=isSelectionSchema(row.schema_version)?buildSelectionPlan:pixel?buildPixelPlan:buildPlan;
   const plan=build({officialRequestId:row.official_request_id,projectId:row.project_id,
    requestType:row.request_type,schemaVersion:row.schema_version,payload:JSON.parse(row.payload),
    payloadSha256:row.payload_sha256,status:'registered',registeredAt:row.registered_at},{pixelPortraits:pixel});

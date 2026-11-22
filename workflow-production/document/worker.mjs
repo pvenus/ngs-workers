@@ -11,6 +11,7 @@ import {buildPlan as buildFourDocPlan} from './vendor/planner-four-doc-v1/planne
 import {validatePlanningMarkdown} from './planning-markdown.mjs';
 import {presetArtifact} from './preset.mjs';
 import {readPlanningSources,assertCurrentPlanning} from './planning-input.mjs';
+import {buildPlan as buildSelectionPlan,isSelectionSchema} from './vendor/planner-npc-motion-selection-v1/planner.mjs';
 import {canonical,sha} from './vendor/planner-89c7568/envelope.mjs';
 
 const validId=(v)=>typeof v==='string'&&/^workflow\.task\.[a-f0-9]{64}$/.test(v);
@@ -72,7 +73,9 @@ function claim(db,taskId,officialRequestId,operation){
   const extra=db.prepare("SELECT task_key FROM workflow_tasks WHERE official_request_id=? AND task_key IN ('planning_overview','planning_portrait_art')").all(officialRequestId);
   if(extra.length!==0&&extra.length!==2)throw Error('WORKFLOW_DOCUMENT_GRAPH_INVALID');
   const fourDoc=extra.length===2;
-  const plan=(operation===ADD?buildAddPlan:operation===UPDATE?buildUpdatePlan:operation===CONCEPT?buildConceptPlan:fourDoc?buildFourDocPlan:buildLegacyPlan)({officialRequestId:row.official_request_id,projectId:row.project_id,
+  const selection=isSelectionSchema(row.schema_version);
+  if(selection&&!fourDoc)throw Error('WORKFLOW_DOCUMENT_GRAPH_INVALID');
+  const plan=(operation===ADD?buildAddPlan:operation===UPDATE?buildUpdatePlan:operation===CONCEPT?buildConceptPlan:selection?buildSelectionPlan:fourDoc?buildFourDocPlan:buildLegacyPlan)({officialRequestId:row.official_request_id,projectId:row.project_id,
    requestType:row.request_type,schemaVersion:row.schema_version,payload:JSON.parse(row.payload),
    payloadSha256:row.payload_sha256,status:'registered',registeredAt:row.registered_at});
   const expected=plan.tasks.find(t=>t.key===contracts[operation].key);
