@@ -212,21 +212,23 @@ if(process.argv[1]===fileURLToPath(import.meta.url)){
    if(!t){
     idle=true; // At the timeout boundary a runnable job takes precedence.
     if(!await warm.idle())throw Error('ANIMATION_PROCESS_STOP_UNCONFIRMED');
-   }else{
-    if(legacy){
-     const r=await local(path,{signal});insist(r.enabled===true&&r.schemaVersion==='workflow.animation-write.v1','ANIMATION_PDS_UNAVAILABLE');
-    }else insist(await preset.ready(signal),'PRESET_2D_PDS_UNAVAILABLE');
-    if((legacy||t.type!==finalType)&&warm.cold()){
+   }else if(legacy){
+    const r=await local(path,{signal});insist(r.enabled===true&&r.schemaVersion==='workflow.animation-write.v1','ANIMATION_PDS_UNAVAILABLE');
+    if(warm.cold()){
      const preflight=await runNative('--probe',signal);insist(preflight.ready===true,'ANIMATION_MODEL_UNAVAILABLE');
     }
     signal.throwIfAborted();
-    if(legacy)await execute(db,t,signal,warm);
-    else{
-     const result=await executePresetVideo(db,t,signal,{pds:preset,warm,native:runNative});
-     if(result.state==='failed'||result.state==='requires_reconciliation')console.error(JSON.stringify(result));
-     else if(result.state==='completed')console.log(JSON.stringify(result));
-     else idle=true;
+    await execute(db,t,signal,warm);
+   }else{
+    insist(await preset.ready(signal),'PRESET_2D_PDS_UNAVAILABLE');
+    if(t.type!==finalType&&warm.cold()){
+     const preflight=await runNative('--probe',signal);insist(preflight.ready===true,'ANIMATION_MODEL_UNAVAILABLE');
     }
+    signal.throwIfAborted();
+    const result=await executePresetVideo(db,t,signal,{pds:preset,warm,native:runNative});
+    if(result.state==='failed'||result.state==='requires_reconciliation')console.error(JSON.stringify(result));
+    else if(result.state==='completed')console.log(JSON.stringify(result));
+    else idle=true;
    }
   }catch(e){
    if(!signal.aborted)console.error(JSON.stringify({state:'not_ready',code:e.message}));
