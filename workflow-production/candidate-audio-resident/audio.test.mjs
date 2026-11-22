@@ -26,10 +26,10 @@ function fixture(t){
  chmodSync(dbPath,0o600);
  t.after(()=>{store.close();rmSync(dir,{recursive:true,force:true});});
  let sequence=0;
- function add({ack=true,durationSeconds=10,text='',targetDurationSeconds}={}){
+ function add({ack=true,durationSeconds=10,text='',conceptText,lyricsRequest,targetDurationSeconds}={}){
   sequence++;
-  const payload={schemaVersion:'ngs.audio-generate.v1',projectId:'binari',kind:'bgm',conceptId:source.conceptId,
-   title:'새 음원',brief:'짧고 조용하게',text,durationSeconds,...(targetDurationSeconds===undefined?{}:{targetDurationSeconds})};
+  const payload={schemaVersion:'ngs.audio-generate.v1',projectId:'binari',kind:'bgm',conceptId:conceptText===undefined?source.conceptId:'direct',
+   title:'새 음원',brief:'짧고 조용하게',text,durationSeconds,...(conceptText===undefined?{}:{conceptText}),...(lyricsRequest===undefined?{}:{lyricsRequest}),...(targetDurationSeconds===undefined?{}:{targetDurationSeconds})};
   const row={officialRequestId:'request.official.'+sha('registered'+sequence),registeredAt:sequence+1000,
    projectId:'binari',requestType:'audio.generate',schemaVersion:payload.schemaVersion,payload,payloadSha256:sha(canonical(payload)),status:'registered'};
   store.stage(row);
@@ -252,4 +252,39 @@ test('automatic target passes exact 60 and publishes a valid shorter result with
  }}});
  assert.equal(run.state,'completed');
  assert.deepEqual([run.targetDurationSeconds,run.actualDurationSeconds,run.targetReached],[60,52,false]);
+});
+
+
+test('direct concept binds only exact registered text and original supplied lyric bytes',async t=>{
+ const {add}=fixture(t),conceptText='달과 강\n물가',text='  이어서 부르는 노래\n둘째 줄  \n';
+ const f=add({durationSeconds:null,text,conceptText});
+ const direct={conceptId:'direct',title:'직접 입력',content:conceptText,sectionSha256:sha(conceptText)};
+ const output=await f.run({pds:{read:async()=>direct,publish:async(_claim,binding)=>{
+  assert.deepEqual(binding,{conceptId:'direct',sectionSha256:direct.sectionSha256});
+  return {ok:true,resultRef:audioResultRef('binari',f.row.officialRequestId)};
+ }},
+ composeLyrics:async()=>{assert.fail('literal input must not reach lyric composer');},
+ composeCaption:async b=>{assert.deepEqual(b.masterConcept,{title:direct.title,content:conceptText});return caption;},
+ adapters:{bgm:async input=>{assert.equal(input.text,text);return result();}}});
+ assert.equal(output.state,'completed');
+});
+
+test('generated Korean lyrics are passed to BGM unmodified and never replaced with a caption',async t=>{
+ const {add}=fixture(t),lyricsRequest='흐르는 강에 대한 노랫말';
+ const f=add({durationSeconds:null,lyricsRequest}),lyrics='  달이 비추는 강\n살며시 흘러가네  \n';
+ let invoked=0;
+ const output=await f.run({composeLyrics:async b=>{
+  invoked++;assert.equal(b.lyricsRequest,lyricsRequest);assert.equal(b.masterConcept.content,source.content);return lyrics;
+ },composeCaption:async b=>{assert.match(b.request.vocalMode,/vocal text/);assert(!JSON.stringify(b).includes(lyrics));return caption;},
+ adapters:{bgm:async input=>{assert.equal(input.text,lyrics);assert.equal(input.prompt,caption);return result();}}});
+ assert.equal(output.state,'completed');assert.equal(invoked,1);
+});
+
+test('invalid lyric output fails before caption, render or publish',async t=>{
+ const {add}=fixture(t),f=add({durationSeconds:null,lyricsRequest:'새벽의 노랫말'});
+ const output=await f.run({composeLyrics:async()=> 'This is not Korean',
+  composeCaption:async()=>assert.fail('should not compose caption'),
+  adapters:{bgm:async()=>assert.fail('should not render')}});
+ assert.equal(output.code,'AUDIO_LYRIC_FAILED');assert.equal(output.providerCode,'AUDIO_LYRIC_OUTPUT_INVALID');
+ assert.equal(f.get().status,'failed');
 });

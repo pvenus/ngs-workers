@@ -1,9 +1,10 @@
+import {createHash} from 'node:crypto';
 import {DatabaseSync} from 'node:sqlite';
 import {buildPlan,exact} from './vendor/planner/planner.mjs';
 import {canonical} from './vendor/planner/envelope.mjs';
 import {audioKind,audioRequestType,audioTaskKey} from './vendor/planner/audio-generate-envelope.mjs';
 import {assertDatabasePath,protectSchema,markWorkflowTaskFailed,workflowTaskEligibleSql,workflowTaskRetrySetSql} from './workflow-ready.mjs';
-import {validateCaption} from './bgm-caption.mjs';
+import {validateCaption,validateGeneratedLyrics} from './bgm-caption.mjs';
 import {validateWavWithDuration} from './audio-wav.mjs';
 
 const WORKER='audio';
@@ -59,11 +60,13 @@ function sameClaim(db,claim,found){
 function captionInput(payload,source){
  check(exact(source,['conceptId','sectionSha256','title','content'])&&source.conceptId===payload.conceptId&&
   shaPattern.test(source.sectionSha256)&&sourceText(source.title,600)&&sourceText(source.content,256*1024),'AUDIO_MASTER_SOURCE_INVALID');
+ if(payload.conceptId==='direct')check(source.title==='직접 입력'&&source.content===payload.conceptText&&
+  source.sectionSha256===createHash('sha256').update(payload.conceptText,'utf8').digest('hex'),'AUDIO_MASTER_SOURCE_INVALID');
  return Object.freeze({masterConcept:{title:source.title,content:source.content},
   request:{title:payload.title,brief:payload.brief,durationSeconds:payload.durationSeconds,
-   vocalMode:payload.text?'use supplied vocal text only':'instrumental'}});
+   vocalMode:payload.text||payload.lyricsRequest?'use supplied vocal text only':'instrumental'}});
 }
-export async function runAudioFromPath({dbPath,taskId,officialRequestId,pds,adapters,composeCaption,signal}){
+export async function runAudioFromPath({dbPath,taskId,officialRequestId,pds,adapters,composeCaption,composeLyrics,signal}){
  check(typeof taskId==='string'&&taskPattern.test(taskId)&&typeof officialRequestId==='string'&&requestPattern.test(officialRequestId),'AUDIO_IDS_REQUIRED');
  check(typeof pds?.read==='function'&&typeof pds?.publish==='function'&&typeof composeCaption==='function'&&adapters&&typeof adapters==='object'&&
   Object.keys(adapters).every(k=>k===audioKind&&typeof adapters[k]==='function'),'AUDIO_PORTS_REQUIRED');
@@ -92,10 +95,16 @@ export async function runAudioFromPath({dbPath,taskId,officialRequestId,pds,adap
    cancelled(signal);
    const source=await pds.read(claim,{signal});
    const basis=captionInput(found.payload,source);
+   const {kind,title,durationSeconds,text,targetDurationSeconds,lyricsRequest}=found.payload;
+   let lyrics=text;
+   if(lyricsRequest!==undefined){
+    code='AUDIO_LYRIC_FAILED';cancelled(signal);
+    check(typeof composeLyrics==='function','AUDIO_LYRIC_UNAVAILABLE');
+    lyrics=validateGeneratedLyrics(await composeLyrics({...basis,lyricsRequest},{signal}));
+   }
    code='AUDIO_CAPTION_FAILED';cancelled(signal);
    const prompt=validateCaption(await composeCaption(basis,{signal}));
-   const {kind,title,durationSeconds,text,targetDurationSeconds}=found.payload;
-   const input=Object.freeze({kind,title,prompt,durationSeconds,...(text?{text}:{}),...(targetDurationSeconds===undefined?{}:{targetDurationSeconds})});
+   const input=Object.freeze({kind,title,prompt,durationSeconds,...(lyrics?{text:lyrics}:{}),...(targetDurationSeconds===undefined?{}:{targetDurationSeconds})});
    code='AUDIO_RENDER_FAILED';cancelled(signal);
    const outcome=await adapters.bgm(input,{signal});
    code='AUDIO_MODEL_METADATA_INVALID';cancelled(signal);
@@ -123,6 +132,10 @@ export async function runAudioFromPath({dbPath,taskId,officialRequestId,pds,adap
      sameClaim(db,claim,found);
      check(markWorkflowTaskFailed(db,{...claim,workerType:WORKER}),'AUDIO_FAILURE_CLAIM_CHANGED');
     });const failure={state:'failed',taskId,code:publishing?'AUDIO_PUBLICATION_DEFINITELY_REJECTED':signal?.aborted?'AUDIO_CANCELLED':code};
+     if(failure.code==='AUDIO_LYRIC_FAILED'){
+      failure.providerPhase='lyrics';
+      failure.providerCode=typeof e?.message==='string'&&/^AUDIO_LYRIC_[A-Z_]{2,40}$/u.test(e.message)?e.message:'AUDIO_LYRIC_UNCLASSIFIED';
+     }
      if(failure.code==='AUDIO_CAPTION_FAILED'){
       failure.providerPhase='caption';
       failure.providerCode=typeof e?.message==='string'&&/^AUDIO_CAPTION_[A-Z_]{2,40}$/u.test(e.message)?e.message:'AUDIO_CAPTION_UNCLASSIFIED';

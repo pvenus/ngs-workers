@@ -10,7 +10,7 @@ test('the sole HQ port accepts a WAV plus model BPM and rejects non-BGM before l
  await writeFile(helper,`import base64,io,json,sys,wave
 value=json.load(sys.stdin)
 assert len(sys.argv)==2
-if value['durationSeconds'] is None: assert value['text'].startswith('[Humming]')
+if value['durationSeconds'] is None: assert value['text'] in ('[Humming]\\n음—', ' x ')
 else: assert value['durationSeconds']==10 and 'text' not in value
 media=io.BytesIO()
 with wave.open(media,'wb') as w:
@@ -27,7 +27,8 @@ print(json.dumps({"wavBase64":base64.b64encode(media.getvalue()).decode(),"bpm":
  const auto=await adapters.bgm({...input,durationSeconds:null,text:'[Humming]\n음—'});
  assert.deepEqual(auto.wav,result.wav);
  await assert.rejects(adapters.bgm({...input,text:'[Humming]'}),/INPUT_INVALID/);
- await assert.rejects(adapters.bgm({...input,durationSeconds:null,text:' x '}),/INPUT_INVALID/);
+ assert.deepEqual((await adapters.bgm({...input,durationSeconds:null,text:' x '})).wav,result.wav);
+ await assert.rejects(adapters.bgm({...input,durationSeconds:null,text:'  '}),/INPUT_INVALID/);
  await assert.rejects(adapters.bgm({...input,kind:'effect'}),/INPUT_INVALID/);
  await assert.rejects(adapters.bgm({...input,durationSeconds:9}),/INPUT_INVALID/);
 });

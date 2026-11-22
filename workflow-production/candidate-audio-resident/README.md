@@ -68,3 +68,20 @@ No new task type, queue, RS/Planner schema, or PDS storage contract is needed.
 `node --test` uses temporary independent Planner DBs and fixture WAVs. It never
 loads production data or starts a model. This is not confirmation of readiness,
 deployment, actual generation, or sonic quality.
+
+### Concept and vocal input
+
+`worker-audio` still claims the same single `audio_generate` task. Catalog
+requests retain the claim-bound PDS concept read. A direct request
+(`conceptId: "direct"`, `conceptText`) reads the PDS claim-bound synthetic
+concept; before proceeding, the worker validates the exact registered text,
+fixed title and UTF-8 SHA-256. WAV publication retains the same source binding.
+
+Empty vocal input keeps instrumental behavior. A nonempty `text` is the
+supplied vocal text and is forwarded without alteration. Alternatively, an
+exclusive `lyricsRequest` runs a separate tool-free Codex CLI turn with a
+structured Korean-lyrics output contract; those lyrics, not the music caption,
+go to ACE-Step. Both vocal modes require automatic duration. Failure to obtain
+valid generated lyrics fails the existing task before any rendering or
+publication; the worker does not substitute the caption, silently strip lyrics,
+or log them.

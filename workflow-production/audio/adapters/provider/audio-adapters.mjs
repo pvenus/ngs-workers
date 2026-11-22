@@ -82,8 +82,8 @@ export function createAudioAdapters({
    ||input.kind!=='bgm'||typeof input.title!=='string'||!input.title.trim()||[...input.title].length>120
    ||typeof input.prompt!=='string'||!input.prompt.trim()||!input.prompt.isWellFormed()||[...input.prompt].length>2000||
    !(input.durationSeconds===null
-    ? !hasText||typeof input.text==='string'&&input.text.isWellFormed()&&input.text===input.text.trim()&&
-      input.text.length>0&&[...input.text].length<=audioVocalTextLimit&&!/\x00/u.test(input.text)
+    ? !hasText||typeof input.text==='string'&&input.text.isWellFormed()&&input.text.trim().length>0&&
+      input.text.length>0&&[...input.text].length<=audioVocalTextLimit&&!/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f]/u.test(input.text)
     : !hasText&&Number.isFinite(input.durationSeconds)&&input.durationSeconds>=audioDuration.min&&input.durationSeconds<=audioDuration.max))
    throw fail('AUDIO_ONE_INPUT_INVALID');
   const bytes=Buffer.from(JSON.stringify(input));

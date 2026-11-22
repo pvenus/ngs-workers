@@ -3,7 +3,7 @@ import {resolve,isAbsolute} from 'node:path';
 import {pathToFileURL} from 'node:url';
 import {assertDatabasePath} from './workflow-ready.mjs';
 import {nextAudioFromPath,runAudioFromPath} from './audio-worker.mjs';
-import {createCaptionComposer} from './bgm-caption.mjs';
+import {createCaptionComposer,createLyricsComposer} from './bgm-caption.mjs';
 import {audioLifecycle} from './adapters/provider/audio-resident-bridge.mjs';
 import {audioPorts} from './audio-ports.mjs';
 
@@ -13,9 +13,9 @@ export function parseArgs(args){
   throw Error('AUDIO_EXPLICIT_CONFIG_REQUIRED');
  return {dbPath:args[2],modulePath:args[4],configPath:args[6]};
 }
-export async function residentAudio({dbPath,pds,adapters,composeCaption,signal,log=console.log,pause=delay}){
+export async function residentAudio({dbPath,pds,adapters,composeCaption,composeLyrics,signal,log=console.log,pause=delay}){
  assertDatabasePath(dbPath);
- const hasBgm=typeof adapters?.bgm==='function',base={dbPath,pds,adapters,composeCaption,signal};
+ const hasBgm=typeof adapters?.bgm==='function',base={dbPath,pds,adapters,composeCaption,composeLyrics,signal};
  const lifecycle=adapters?.[audioLifecycle];
  let ready=false,pulsing=false,last;
  const pulse=async()=>{
@@ -53,7 +53,7 @@ async function main(){
  const adapters=await loadAudioAdapters(configPath); // trusted deployment-owned module/config, never request-configurable
  const stop=new AbortController();
  process.once('SIGTERM',()=>stop.abort());process.once('SIGINT',()=>stop.abort());
- await residentAudio({dbPath,pds:audioPorts(),adapters,composeCaption:createCaptionComposer(),signal:stop.signal});
+ await residentAudio({dbPath,pds:audioPorts(),adapters,composeCaption:createCaptionComposer(),composeLyrics:createLyricsComposer(),signal:stop.signal});
 }
 if(process.argv[1]&&import.meta.url===pathToFileURL(process.argv[1]).href)
  main().catch(()=>{console.error('AUDIO_START_FAILED');process.exitCode=1;});
