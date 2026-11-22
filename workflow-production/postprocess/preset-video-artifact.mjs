@@ -77,13 +77,16 @@ function ratio(value){
  const [n,d]=value.split('/').map(Number);
  return n/d;
 }
+// MOV/MP4 duration can differ slightly after timestamp quantization.
+// 1 ms is well below a single frame even at the 120 fps contract limit.
+const mp4DurationToleranceSeconds=0.001;
 export function validateProbe(proof,timing){
  const streams=proof?.streams,v=streams?.[0],f=proof?.format;
  const duration=Number(v?.duration);
  need(validTiming(timing)&&Array.isArray(streams)&&streams.length===1&&v?.codec_type==='video'&&v.codec_name==='h264'&&
   v.width===width&&v.height===height&&v.pix_fmt==='yuv420p'&&v.nb_read_frames===String(timing.frameCount)&&
   Math.abs(ratio(v.avg_frame_rate)-timing.fps)<=1e-5&&Math.abs(ratio(v.r_frame_rate)-timing.fps)<=1e-5&&
-  Number.isFinite(duration)&&Math.abs(duration-timing.frameCount/timing.fps)<=1e-4&&
+  Number.isFinite(duration)&&Math.abs(duration-timing.frameCount/timing.fps)<=mp4DurationToleranceSeconds&&
   typeof f?.format_name==='string'&&f.format_name.split(',').includes('mp4'),'MP4_PROBE');
 }
 

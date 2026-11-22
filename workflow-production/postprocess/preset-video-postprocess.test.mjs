@@ -7,7 +7,7 @@ import {join} from 'node:path';
 import {crc32,deflateSync} from 'node:zlib';
 
 import {canonical} from './vendor/planner-f24d23a/envelope.mjs';
-import {directions,sha256,width,height,probePresetEncoder,encodePresetVideo} from './preset-video-artifact.mjs';
+import {directions,sha256,width,height,probePresetEncoder,encodePresetVideo,validateProbe} from './preset-video-artifact.mjs';
 import {choosePresetPostprocess,decodeFrameBundle,encodeKey,encodeType,executePresetPostprocess,framesKey,
  framesType,finalType,finalKey,motionTaskId,requestType,requestSchema,runPresetPostprocessFromPath} from './preset-video-postprocess.mjs';
 import {presetPostprocessPorts,motionFramesSchema,motionPath} from './preset-video-ports.mjs';
@@ -60,6 +60,17 @@ function fixture(t){
  const row=key=>db.prepare('SELECT * FROM workflow_tasks WHERE task_key=?').get(key);
  return {db,path,result,frame,row};
 }
+
+test('MP4 duration allows sub-millisecond timestamp rounding, not a lost frame or changed fps',()=>{
+ const timing={fps:24,frameCount:41};
+ const stream={codec_type:'video',codec_name:'h264',width,height,pix_fmt:'yuv420p',
+  r_frame_rate:'24/1',avg_frame_rate:'24/1',nb_read_frames:'41',duration:'1.708008'};
+ const proof=changes=>({streams:[{...stream,...changes}],format:{format_name:'mov,mp4'}});
+ assert.doesNotThrow(()=>validateProbe(proof({}),timing));
+ assert.throws(()=>validateProbe(proof({duration:'1.707'}),timing),/PRESET_2D_MP4_PROBE/);
+ assert.throws(()=>validateProbe(proof({nb_read_frames:'40'}),timing),/PRESET_2D_MP4_PROBE/);
+ assert.throws(()=>validateProbe(proof({avg_frame_rate:'25/1'}),timing),/PRESET_2D_MP4_PROBE/);
+});
 
 test('validated binary frames, actual CPU encode/probe, one directional proof and cleanup',async t=>{
  if(!await probePresetEncoder()){t.skip('fixed Homebrew CPU encoder not present');return;}
