@@ -4,7 +4,7 @@ import {canonical} from './vendor/planner/envelope.mjs';
 import {audioKind,audioRequestType,audioTaskKey} from './vendor/planner/audio-generate-envelope.mjs';
 import {assertDatabasePath,protectSchema,markWorkflowTaskFailed,workflowTaskEligibleSql,workflowTaskRetrySetSql} from './workflow-ready.mjs';
 import {validateCaption} from './bgm-caption.mjs';
-import {validateWav} from './audio-wav.mjs';
+import {validateWavWithDuration} from './audio-wav.mjs';
 
 const WORKER='audio';
 const taskPattern=/^workflow\.task\.[a-f0-9]{64}$/u;
@@ -94,15 +94,16 @@ export async function runAudioFromPath({dbPath,taskId,officialRequestId,pds,adap
    const basis=captionInput(found.payload,source);
    code='AUDIO_CAPTION_FAILED';cancelled(signal);
    const prompt=validateCaption(await composeCaption(basis,{signal}));
-   const {kind,title,durationSeconds,text}=found.payload;
-   const input=Object.freeze({kind,title,prompt,durationSeconds,...(text?{text}:{})});
+   const {kind,title,durationSeconds,text,targetDurationSeconds}=found.payload;
+   const input=Object.freeze({kind,title,prompt,durationSeconds,...(text?{text}:{}),...(targetDurationSeconds===undefined?{}:{targetDurationSeconds})});
    code='AUDIO_RENDER_FAILED';cancelled(signal);
    const outcome=await adapters.bgm(input,{signal});
    code='AUDIO_MODEL_METADATA_INVALID';cancelled(signal);
    check(exact(outcome,['wav','bpm','bpmBasis'])&&((outcome.bpm===null&&outcome.bpmBasis==='unavailable')||
     (Number.isSafeInteger(outcome.bpm)&&outcome.bpm>=30&&outcome.bpm<=300&&outcome.bpmBasis==='model')),code);
    code='AUDIO_WAV_INVALID';
-   const artifact=Object.freeze({...validateWav(outcome.wav,input.kind,found.payload.durationSeconds),bpm:outcome.bpm});
+   const verified=validateWavWithDuration(outcome.wav,input.kind,found.payload.durationSeconds);
+   const artifact=Object.freeze({...verified.artifact,bpm:outcome.bpm});
    const sourceBinding=Object.freeze({conceptId:source.conceptId,sectionSha256:source.sectionSha256});
    const resultRef=audioResultRef(claim.projectId,claim.officialRequestId);
    code='AUDIO_CLAIM_CHANGED';sameClaim(db,claim,found);
@@ -114,7 +115,8 @@ export async function runAudioFromPath({dbPath,taskId,officialRequestId,pds,adap
     check(db.prepare("UPDATE workflow_tasks SET status='completed',result_ref=?,updated_at=? WHERE task_id=? AND official_request_id=? AND status='running' AND updated_at=? AND result_ref IS NULL")
      .run(resultRef,Math.max(Date.now(),claim.claimStamp+1),taskId,officialRequestId,claim.claimStamp).changes===1,'AUDIO_COMPLETE_CHANGED');
    });
-   return {state:'completed',taskId,resultRef};
+   return {state:'completed',taskId,resultRef,...(targetDurationSeconds===undefined?{}:{
+    targetDurationSeconds,actualDurationSeconds:verified.duration,targetReached:verified.duration>=targetDurationSeconds})};
   }catch(e){
    if(!publishing||e instanceof AudioDefinitelyRejected){
     try{tx(db,()=>{

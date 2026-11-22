@@ -6,7 +6,7 @@ export const maxAudioBytes=24*MiB;
 const reject=()=>{throw Error('AUDIO_WAV_INVALID');};
 export const digest=bytes=>createHash('sha256').update(bytes).digest('hex');
 /** Bounded RIFF/WAVE with one PCM16 format and one nonempty audio data chunk. */
-export function validateWav(wav,kind,durationSeconds){
+export function validateWavWithDuration(wav,kind,durationSeconds){
  if(!Buffer.isBuffer(wav)||wav.length<44||wav.length>maxAudioBytes||
   wav.toString('latin1',0,4)!=='RIFF'||wav.toString('latin1',8,12)!=='WAVE'||wav.readUInt32LE(4)!==wav.length-8)reject();
  let rate,align,data;
@@ -31,5 +31,7 @@ export function validateWav(wav,kind,durationSeconds){
    ? duration>=audioDuration.min&&duration<=audioDuration.autoMax
    : Number.isFinite(durationSeconds)&&durationSeconds>=audioDuration.min&&durationSeconds<=audioDuration.max&&
      Math.abs(duration-durationSeconds)<=0.100000001))reject();
- return Object.freeze({mimeType:'audio/wav',sha256:digest(wav),bytes:wav.length,base64:wav.toString('base64')});
+ return {duration,artifact:Object.freeze({mimeType:'audio/wav',sha256:digest(wav),bytes:wav.length,base64:wav.toString('base64')})};
 }
+
+export const validateWav=(...args)=>validateWavWithDuration(...args).artifact;

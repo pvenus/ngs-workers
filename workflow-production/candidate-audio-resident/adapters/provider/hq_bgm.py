@@ -46,7 +46,7 @@ def _validated_wav(path,duration):
             raise ValueError('AUDIO_HQ_WAV_DURATION')
     return data,actual
 
-def _proof(working,proof,duration,seed,wav,actual,text):
+def _proof(working,proof,duration,seed,wav,actual,text,target=None):
     wav_sha=hashlib.sha256(wav).hexdigest()
     if not isinstance(proof,dict):raise ValueError('AUDIO_HQ_PROVIDER_PROOF')
     job_sha=proof.get('request_sha256')
@@ -56,6 +56,14 @@ def _proof(working,proof,duration,seed,wav,actual,text):
         or proof.get('weights_snapshot')!=XL_REV or proof.get('runtime_commit')!=RUNTIME_REV):
         raise ValueError('AUDIO_HQ_PROVIDER_PROOF')
     root=working/'audio.hq'
+    if target is not None:
+        attempt=proof.get('plan_attempt')
+        if type(attempt) is not int or not 1<=attempt<=5:
+            raise ValueError('AUDIO_HQ_AUTO_DURATION_PROOF_MISMATCH')
+        seed=(seed+(attempt-1)*0x9e3779b9)&0x7fffffff
+        if type(proof.get('seed')) is not int or proof['seed']!=seed:
+            raise ValueError('AUDIO_HQ_AUTO_DURATION_PROOF_MISMATCH')
+        root=root/f'attempt-{attempt}'
     if root.resolve(strict=True)!=root or not root.is_dir():raise ValueError('AUDIO_HQ_PROOF_SCOPE')
     raw_plan=_file(root/'lm-result.json',1024**2)
     observe=json.loads(raw_plan)
@@ -93,11 +101,14 @@ def _proof(working,proof,duration,seed,wav,actual,text):
 
 def render_hq(value,binding,cancelled=lambda:False,*,connect=_music_boundary_from_binding):
     fields={'kind','title','prompt','durationSeconds'}
-    if (type(value)is not dict or set(value)-{'text'}!=fields or value['kind']!='bgm'
+    if (type(value)is not dict or set(value)-{'text','targetDurationSeconds'}!=fields or value['kind']!='bgm'
         or type(value['title'])is not str or not value['title'].strip() or len(value['title'])>120
         or type(value['prompt'])is not str or not value['prompt'].strip() or len(value['prompt'])>2000 or '\0' in value['prompt']
         or (value['durationSeconds'] is not None and (type(value['durationSeconds']) not in (int,float)
             or not math.isfinite(value['durationSeconds']) or not 10<=value['durationSeconds']<=30))):
+        raise ValueError('AUDIO_HQ_INPUT_INVALID')
+    target=value.get('targetDurationSeconds')
+    if 'targetDurationSeconds' in value and (value['durationSeconds'] is not None or type(target) is not int or target!=60):
         raise ValueError('AUDIO_HQ_INPUT_INVALID')
     text=value.get('text','')
     if type(text)is not str or len(text)>4000 or '\0' in text or (text and (not text.strip() or value['durationSeconds'] is not None)):
@@ -117,7 +128,8 @@ def render_hq(value,binding,cancelled=lambda:False,*,connect=_music_boundary_fro
         wav=root/'audio.wav'
         # No requested BPM: if the LM provides it, it is model metadata only.
         settings={'instrumental':False,'lyrics':text,'vocal_language':'ko'} if text else {}
+        if target is not None:settings['target_duration_seconds']=target
         proof=provider.generate_music(config,root,value['prompt'],duration,seed,HQ_PROFILE,wav,cancelled,timeout=1100,settings=settings)
         if cancelled():raise RuntimeError('AUDIO_HQ_CANCELLED')
         data,actual=_validated_wav(wav,duration)
-        return {'wavBase64':base64.b64encode(data).decode('ascii'),**_proof(root,proof,duration,seed,data,actual,text)}
+        return {'wavBase64':base64.b64encode(data).decode('ascii'),**_proof(root,proof,duration,seed,data,actual,text,target)}

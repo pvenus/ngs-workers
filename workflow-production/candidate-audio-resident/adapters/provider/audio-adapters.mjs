@@ -89,10 +89,11 @@ export function createAudioAdapters({
  const bridge=resident?createResidentBridge({binary:pythonPath,argv:['-I','-B',helper,hqBinding,'--resident'],
   env:childEnv(),spawnProcess,parseResult,maxResponse,idleMs}):null;
  const bgm=async(input,{signal}={})=>{
-  const keys=input&&typeof input==='object'&&Object.keys(input).sort().join(',');
+  const keys=input&&typeof input==='object'&&Object.keys(input).filter(k=>k!=='targetDurationSeconds').sort().join(',');
   const hasText=keys==='durationSeconds,kind,prompt,text,title';
+  const hasTarget=!!input&&Object.hasOwn(input,'targetDurationSeconds');
   if(input===null||typeof input!=='object'||Array.isArray(input)||!(hasText||keys==='durationSeconds,kind,prompt,title')
-   ||input.kind!=='bgm'||typeof input.title!=='string'||!input.title.trim()||[...input.title].length>120
+   ||hasTarget&&(input.durationSeconds!==null||input.targetDurationSeconds!==60)||input.kind!=='bgm'||typeof input.title!=='string'||!input.title.trim()||[...input.title].length>120
    ||typeof input.prompt!=='string'||!input.prompt.trim()||!input.prompt.isWellFormed()||[...input.prompt].length>2000||
    !(input.durationSeconds===null
     ? !hasText||typeof input.text==='string'&&input.text.isWellFormed()&&input.text===input.text.trim()&&

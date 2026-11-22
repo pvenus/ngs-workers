@@ -26,10 +26,10 @@ function fixture(t){
  chmodSync(dbPath,0o600);
  t.after(()=>{store.close();rmSync(dir,{recursive:true,force:true});});
  let sequence=0;
- function add({ack=true,durationSeconds=10,text=''}={}){
+ function add({ack=true,durationSeconds=10,text='',targetDurationSeconds}={}){
   sequence++;
   const payload={schemaVersion:'ngs.audio-generate.v1',projectId:'binari',kind:'bgm',conceptId:source.conceptId,
-   title:'새 음원',brief:'짧고 조용하게',text,durationSeconds};
+   title:'새 음원',brief:'짧고 조용하게',text,durationSeconds,...(targetDurationSeconds===undefined?{}:{targetDurationSeconds})};
   const row={officialRequestId:'request.official.'+sha('registered'+sequence),registeredAt:sequence+1000,
    projectId:'binari',requestType:'audio.generate',schemaVersion:payload.schemaVersion,payload,payloadSha256:sha(canonical(payload)),status:'registered'};
   store.stage(row);
@@ -238,4 +238,18 @@ test('resident loop retains one private bridge for full caption/render/publish a
   pause:async()=>{if(++pauses===2)ctr.abort();}});
  assert.equal(first.get().status,'completed');assert.equal(second.get().status,'completed');
  assert.deepEqual(events,[...Array(2)].flatMap(()=>['begin','read','caption','render','publish','end']).concat('closed'));
+});
+
+test('automatic target passes exact 60 and publishes a valid shorter result with factual duration',async t=>{
+ const {add}=fixture(t);
+ assert.throws(()=>add({durationSeconds:10,targetDurationSeconds:60}),/NGS_AUDIO_GENERATE_PAYLOAD_INVALID/);
+ assert.throws(()=>add({durationSeconds:null,targetDurationSeconds:59}),/NGS_AUDIO_GENERATE_PAYLOAD_INVALID/);
+ const f=add({durationSeconds:null,targetDurationSeconds:60});
+ const run=await f.run({adapters:{bgm:async input=>{
+  assert.equal(input.targetDurationSeconds,60);
+  assert.equal(input.durationSeconds,null);
+  return result(wav(52));
+ }}});
+ assert.equal(run.state,'completed');
+ assert.deepEqual([run.targetDurationSeconds,run.actualDurationSeconds,run.targetReached],[60,52,false]);
 });

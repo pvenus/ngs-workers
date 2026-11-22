@@ -39,8 +39,8 @@ export async function residentAudio({dbPath,pds,adapters,composeCaption,signal,l
      finally{lifecycle?.endTask();}
     }else r={state:ready?'idle':'not_ready'};
    }catch{r={state:'blocked',code:'AUDIO_EXACT_TASK_REJECTED'};}
-   const {state,code,taskId,providerPhase,providerCode}=r;
-   const line=JSON.stringify({service:'audio-worker',state,code,taskId,providerPhase,providerCode});
+   const {state,code,taskId,providerPhase,providerCode,targetDurationSeconds,actualDurationSeconds,targetReached}=r;
+   const line=JSON.stringify({service:'audio-worker',state,code,taskId,providerPhase,providerCode,targetDurationSeconds,actualDurationSeconds,targetReached});
    if(last!==line){log(line);last=line;}
    if(!signal.aborted)await pause(1000,undefined,{signal}).catch(e=>{if(e.name!=='AbortError')throw e;});
   }
