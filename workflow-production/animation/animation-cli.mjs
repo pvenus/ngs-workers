@@ -8,6 +8,7 @@ import {createHash} from 'node:crypto';
 import {setTimeout as delay} from 'node:timers/promises';
 import {fileURLToPath} from 'node:url';
 import {createWarmAnimation,spawnAnimationChannel} from './animation-warm.mjs';
+import {choosePresetVideo,executePresetVideo,presetVideoPorts,finalType} from './preset-video-worker.mjs';
 import {assertDatabasePath,protectSchema,nextWorkflowTaskFromPath,markWorkflowTaskFailed,workflowTaskEligibleSql,workflowTaskRetrySetSql} from './workflow-ready.mjs';
 
 const path='/v1/npcs/ownership/workflow-animation',type='npc.animation-native-png';
@@ -17,12 +18,31 @@ const provider=process.env.WORKFLOW_WAN_RELEASE, py=process.env.WORKFLOW_WAN_PYT
  binding=process.env.WORKFLOW_WAN_BINDING;
 const helper=fileURLToPath(new URL('./animation-native.py',import.meta.url));
 function insist(test,error){if(!test)throw Error(error);}
-async function local(route,{body,port=8030,signal,timeout=30000,binary=false}={}){
+async function local(route,{body,port=8030,signal,timeout=30000,binary=false,maxJsonBytes,onRejected}={}){
  const response=await fetch('http://127.0.0.1:'+port+route,{method:body?'POST':'GET',redirect:'error',
   headers:body?{'Content-Type':'application/json'}:{},body:body?JSON.stringify(body):undefined,
   signal:AbortSignal.any([AbortSignal.timeout(timeout),...(signal?[signal]:[])])});
- insist(response.ok,'ANIMATION_PDS_HTTP_'+response.status);
- return binary?Buffer.from(await response.arrayBuffer()):response.json();
+ const recognizedReject=typeof onRejected==='function'&&response.status===422&&maxJsonBytes;
+ insist(response.ok||recognizedReject,'ANIMATION_PDS_HTTP_'+response.status);
+ if(binary)return Buffer.from(await response.arrayBuffer());
+ if(maxJsonBytes){
+  insist(/^application\/json(?:\s*;|$)/i.test(response.headers.get('Content-Type')??'')&&response.body,
+   'ANIMATION_PDS_RESPONSE_TYPE');
+  const size=response.headers.get('Content-Length');
+  insist(size===null||/^\d+$/.test(size)&&Number(size)<=maxJsonBytes,'ANIMATION_PDS_RESPONSE_SIZE');
+  const parts=[];let total=0;
+  for await(const chunk of response.body){
+   total+=chunk.length;
+   insist(total<=maxJsonBytes,'ANIMATION_PDS_RESPONSE_SIZE');parts.push(chunk);
+  }
+  const value=JSON.parse(new TextDecoder('utf-8',{fatal:true}).decode(Buffer.concat(parts)));
+  if(recognizedReject){
+   onRejected(value); // only a positively authenticated scoped pre-write rejection is definite
+   throw Error('ANIMATION_PDS_HTTP_'+response.status);
+  }
+  return value;
+ }
+ return response.json();
 }
 function transaction(db,fn){db.exec('BEGIN IMMEDIATE');try{const r=fn();db.exec('COMMIT');return r;}catch(e){db.exec('ROLLBACK');throw e;}}
 function choose(dbPath){
@@ -181,22 +201,32 @@ if(process.argv[1]===fileURLToPath(import.meta.url)){
  assertDatabasePath(dbPath);const db=new DatabaseSync(dbPath);protectSchema(db);db.exec('PRAGMA busy_timeout=5000');
  const ping=()=>void local('/api/service-heartbeat',{body:{serverName:'animation-worker'},port:8090,signal}).catch(()=>{});
  const heart=setInterval(ping,60000);ping();
+ const preset=presetVideoPorts(local);
  const warm=createWarmAnimation({launch:root=>spawnAnimationChannel({py,helper,provider,binding,root}),
   onIdleUnload:()=>console.log(JSON.stringify({state:'idle_model_unloaded'}))});
  try{while(!signal.aborted){
   let idle=false;
   try{
-   const t=choose(dbPath);
+   const legacy=choose(dbPath);
+   const t=legacy??choosePresetVideo(dbPath);
    if(!t){
     idle=true; // At the timeout boundary a runnable job takes precedence.
     if(!await warm.idle())throw Error('ANIMATION_PROCESS_STOP_UNCONFIRMED');
    }else{
-    const r=await local(path,{signal});insist(r.enabled===true&&r.schemaVersion==='workflow.animation-write.v1','ANIMATION_PDS_UNAVAILABLE');
-    if(warm.cold()){
+    if(legacy){
+     const r=await local(path,{signal});insist(r.enabled===true&&r.schemaVersion==='workflow.animation-write.v1','ANIMATION_PDS_UNAVAILABLE');
+    }else insist(await preset.ready(signal),'PRESET_2D_PDS_UNAVAILABLE');
+    if((legacy||t.type!==finalType)&&warm.cold()){
      const preflight=await runNative('--probe',signal);insist(preflight.ready===true,'ANIMATION_MODEL_UNAVAILABLE');
     }
     signal.throwIfAborted();
-    await execute(db,t,signal,warm);
+    if(legacy)await execute(db,t,signal,warm);
+    else{
+     const result=await executePresetVideo(db,t,signal,{pds:preset,warm,native:runNative});
+     if(result.state==='failed'||result.state==='requires_reconciliation')console.error(JSON.stringify(result));
+     else if(result.state==='completed')console.log(JSON.stringify(result));
+     else idle=true;
+    }
    }
   }catch(e){
    if(!signal.aborted)console.error(JSON.stringify({state:'not_ready',code:e.message}));

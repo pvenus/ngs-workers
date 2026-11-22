@@ -179,3 +179,32 @@ outcomes remain running for reconciliation, never a fresh claim or second
 publish. Provider-managed original output follows the legacy provider's file
 ownership; worker-owned temporary files are cleaned up. No permission changes,
 live model startup or deployment are performed by installing the files alone.
+
+## Generic 2D motion preset clips
+
+The existing animation watcher can additionally claim only the formal
+`motion-preset.convert-2d` workflow's eight directional clip tasks and
+one all-eight finalizer. It does not handle the preceding image generation
+or create formal requests. This lane is separate from NPC native PNG
+publication. It uses the same warm Wan renderer and model idle lifetime.
+
+Each clip requires the exact completed same-run image task and its image
+hash. The loopback PDS claim endpoint supplies the same generated PNG and
+the original 3D motion MP4 scoped to that direction, with bound source
+preset hash and original frame count/fps. The worker validates source
+bytes, renders to temporary lossless PNGs, verifies the complete ordered
+frame hashes, then uses the Mac's fixed Homebrew FFmpeg and ffprobe
+executables to encode and validate a silent H.264 MP4. It writes a scoped
+clip receipt through PDS. No source preset paths or media are rewritten.
+
+The finalizer requires exactly eight completed clips with the correct
+per-direction result references and same image lineage, then asks PDS
+to publish the separate variant. It does not start a renderer or encoder.
+Unknown publication or completion outcomes stay running for reconciliation;
+only an explicit PDS pre-write rejection or a pre-publication error can
+enter the existing retry policy. The existing renderer stop/cleanup rules
+remain in effect.
+
+To run isolated tests, use `node --test workflow-production/animation/*.test.mjs`.
+The real codec test uses synthetic fixture pixels only and skips if the
+fixed Mac tools are unavailable; tests never invoke the production model.
