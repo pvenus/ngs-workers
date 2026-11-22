@@ -222,3 +222,18 @@ representative image, even when the independent idle plan is already complete.
 Representative output must pass the pinned native decoded PNG transparency
 contract before canonical write. This checks PNG and alpha, not the subject
 matter or whether it visually matches the character.
+
+### Neutral 2D motion reference
+
+The existing image worker handles the exact `motion-preset.convert-2d.image`
+task (`motion_2d_image`) in the formal motion preset conversion workflow.
+It checks the original request and selected task against the workflow DB,
+then verifies the source preset through the claim-bound PDS route. The native
+image adapter accepts only the fixed neutral-reference marker, with no NPC
+identity, visual source attachment, or request-supplied path. It asks for one
+flat monochrome, faceless full-body mannequin on a transparent background.
+
+The PNG is published through PDS with its content hash. The worker marks only
+its exact task complete after the matching receipt; errors after dispatching
+publication remain reconcilable. No NPC portrait, project catalog item, or
+other workspace is created by the image worker.

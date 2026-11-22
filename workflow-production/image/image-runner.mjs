@@ -1,8 +1,9 @@
 import {PORTRAIT,imageOperations,nextPortraitFromPath,probePresetDatabase,runPortraitFromPath} from './worker.mjs';
+import {motionImageOperation,nextMotionImageFromPath,runMotionImageFromPath} from './motion-neutral-reference.mjs';
 
 export function parseImageArgs(args){
  let operation;
- if(args.at(-2)==='--operation'&&imageOperations.includes(args.at(-1))){
+ if(args.at(-2)==='--operation'&&[...imageOperations,motionImageOperation].includes(args.at(-1))){
   operation=args.at(-1);args=args.slice(0,-2);
  }
  if(args.length>=3&&args[1]==='--db'&&args[2].startsWith('/')){
@@ -25,8 +26,16 @@ export async function imageHealth({dbPath,pds,providerReady,signal,operation=POR
  return {ready:true};
 }
 
-/** At most one runnable portrait task per tick. Never reclaims running rows. */
-export async function imageTick(options,{select=nextPortraitFromPath,execute=runPortraitFromPath,check=imageHealth}={}){
+function selectImageTask(dbPath){
+ const portrait=nextPortraitFromPath(dbPath);
+ if(portrait)return portrait;
+ const motion=nextMotionImageFromPath(dbPath);
+ return motion?{...motion,operation:motionImageOperation}:null;
+}
+const executeImage=options=>options.operation===motionImageOperation?runMotionImageFromPath(options):runPortraitFromPath(options);
+
+/** At most one runnable image task per tick. Never reclaims running rows. */
+export async function imageTick(options,{select=selectImageTask,execute=executeImage,check=imageHealth}={}){
  const {mode,dbPath,signal,admissionSignal,onHealth}=options;
  const stopping=()=>signal?.aborted||admissionSignal?.aborted;
  if(stopping())return {state:'stopping'};

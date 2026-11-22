@@ -6,8 +6,10 @@ export const representativePath='/v1/npcs/ownership/workflow-plan-representative
 export const portraitPath='/v1/npcs/ownership/workflow-portrait-representative';
 export const idlePortraitPath='/v1/npcs/ownership/workflow-portrait-idle-reference';
 export const directionPortraitPath='/v1/npcs/ownership/workflow-portrait-direction';
+export const motionImagePath='/v1/motion-presets/workflow-convert-2d';
 export const heartbeatPath='/api/service-heartbeat';
 const routes={
+ 'motion-preset.convert-2d.image':{path:motionImagePath,schema:'workflow.motion-preset-convert-2d.v1'},
  'npc.portrait-representative':{path:portraitPath,schema:'workflow.representative-portrait-write.v1'},
  'npc.portrait-idle-reference':{path:idlePortraitPath,schema:'workflow.idle-reference-portrait-write.v1'},
  'npc.portrait-direction':{path:directionPortraitPath,schema:'workflow.direction-portrait-write.v1'},
@@ -69,6 +71,12 @@ export function localPorts({transport=requestLocalJson}={}){
   async publishPortrait(command,claimStamp,basis,signal){
    return await transport({port:8030,path:routes[command.operation].path,method:'POST',
     body:{claim:claimOf(command,claimStamp),basis,artifact:JSON.parse(command.artifact)},deadline:120000,signal});
+  },
+  async readMotionImage(claim,signal){
+   return transport({port:8030,path:motionImagePath+'/read',method:'POST',body:{claim},deadline:5000,signal});
+  },
+  async publishMotionImage(claim,artifact){
+   return transport({port:8030,path:motionImagePath,method:'POST',body:{claim,artifact},deadline:120000});
   },
   async publishRepresentative(command,claimStamp,basis){
    return await transport({port:8030,path:representativePath,method:'POST',

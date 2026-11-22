@@ -156,6 +156,24 @@ def prompt(data, pairs, direction_views):
     )
 
 
+
+NEUTRAL_REFERENCE = {"referenceKind": "motion-neutral-2d.v1"}
+
+
+def neutral_reference_prompt(data):
+    if type(data) is not dict or data != NEUTRAL_REFERENCE:
+        raise ValueError("IMAGE_NATIVE_NEUTRAL_REFERENCE_INVALID")
+    return (
+        "Draw exactly one full-body 2D humanoid mannequin for motion transfer, "
+        "flat monochrome solid neutral gray, no textures, shadows or gradients. "
+        "Use a plain faceless head and simple human proportions with two arms and two legs. "
+        "Show the figure straight on, in a natural neutral standing pose, with arms slightly "
+        "away from the torso, feet apart and all limbs distinct in silhouette. Center the "
+        "entire figure with generous margins, head to feet, on a transparent background. "
+        "No costume, clothing detail, accessories, props, labels, scenery, identifying traits, "
+        "identity reference, extra figures, panels or outlines resembling a skeleton."
+    )
+
 def main():
     mode, path, expected = sys.argv[1:]
     stopped = threading.Event()
@@ -165,32 +183,38 @@ def main():
     if mode == "probe":
         sys.stdout.buffer.write(b"ok\n")
         return
-    if mode != "render":
+    if mode not in ("render", "render-neutral"):
         raise ValueError("IMAGE_NATIVE_MODE_DENIED")
     payload = sys.stdin.buffer.read(12 * 1024 * 1024 + 1)
     if len(payload) > 12 * 1024 * 1024:
         raise ValueError("IMAGE_NATIVE_INPUT_TOO_LARGE")
     data = json.loads(payload)
-    modern = "artDirection" in data or "poseDirection" in data
-    base = ({"character", "artDirection", "poseDirection"} if modern else
-            {"character", "intent", "sourceRefs", "planningContent", "conceptSources"})
-    styled = "imageStyle" in data or "posePreset" in data
-    if styled:
-        if (data.get("imageStyle") != "pixel-sprite.v1" or data.get("posePreset") not in ("idle", "combat")
-                or "reference" not in data):
-            raise ValueError("IMAGE_NATIVE_INPUT_INVALID")
-        base |= {"imageStyle", "posePreset"}
-    if (set(data) not in (base, base | {"reference"}, base | {"direction", "reference"}) or stopped.is_set() or
-            ("direction" in data and data["direction"] not in direction_views)):
+    neutral = mode == "render-neutral"
+    if stopped.is_set():
         raise ValueError("IMAGE_NATIVE_INPUT_INVALID")
-    if modern:
-        if any(not isinstance(data[k], str) or not data[k].strip() for k in ("artDirection", "poseDirection")):
+    if neutral:
+        instruction = neutral_reference_prompt(data)
+    else:
+        modern = "artDirection" in data or "poseDirection" in data
+        base = ({"character", "artDirection", "poseDirection"} if modern else
+                {"character", "intent", "sourceRefs", "planningContent", "conceptSources"})
+        styled = "imageStyle" in data or "posePreset" in data
+        if styled:
+            if (data.get("imageStyle") != "pixel-sprite.v1" or data.get("posePreset") not in ("idle", "combat")
+                    or "reference" not in data):
+                raise ValueError("IMAGE_NATIVE_INPUT_INVALID")
+            base |= {"imageStyle", "posePreset"}
+        if (set(data) not in (base, base | {"reference"}, base | {"direction", "reference"}) or stopped.is_set() or
+                ("direction" in data and data["direction"] not in direction_views)):
             raise ValueError("IMAGE_NATIVE_INPUT_INVALID")
-    elif (not data["planningContent"].strip() or not isinstance(data["conceptSources"]["files"], list) or
-          not data["conceptSources"]["files"]):
-        raise ValueError("IMAGE_NATIVE_INPUT_INVALID")
+        if modern:
+            if any(not isinstance(data[k], str) or not data[k].strip() for k in ("artDirection", "poseDirection")):
+                raise ValueError("IMAGE_NATIVE_INPUT_INVALID")
+        elif (not data["planningContent"].strip() or not isinstance(data["conceptSources"]["files"], list) or
+              not data["conceptSources"]["files"]):
+            raise ValueError("IMAGE_NATIVE_INPUT_INVALID")
+        instruction = prompt(data, pairs, direction_views)
     request_hash = digest(data)
-    instruction = prompt(data, pairs, direction_views)
     if len(instruction.encode()) > _LIMIT:
         raise ValueError("IMAGE_NATIVE_INPUT_TOO_LARGE")
     with tempfile.TemporaryDirectory(prefix="workflow-portrait-") as directory:

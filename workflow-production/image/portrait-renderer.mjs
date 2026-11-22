@@ -66,6 +66,18 @@ export async function probePortraitRenderer(config){
  catch{return false;}
 }
 
+export const neutralReferenceKind='motion-neutral-2d.v1';
+export function createNeutralReferenceRenderer(config){
+ const pinned=options(config);
+ return async (input,{signal}={})=>{
+  if(!exact(input,['referenceKind'])||input.referenceKind!==neutralReferenceKind)
+   throw fail('WORKFLOW_IMAGE_NEUTRAL_REFERENCE_INVALID');
+  const png=await call(pinned,'render-neutral',Buffer.from(JSON.stringify(input)),signal);
+  if(!png.subarray(0,8).equals(signature))throw fail('WORKFLOW_IMAGE_OUTPUT_INVALID');
+  return png;
+ };
+}
+
 export function createPortraitRenderer(config){
  const pinned=options(config);
  return async (input,{signal}={})=>{
