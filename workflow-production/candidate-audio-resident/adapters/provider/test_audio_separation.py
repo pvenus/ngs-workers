@@ -45,3 +45,23 @@ class SeparationTest(unittest.TestCase):
             target.run(value,split=lambda *_:b'')
         with self.assertRaisesRegex(RuntimeError,'HQ_SEPARATOR_OUTPUT_UNCHANGED'):
             target.run(value,split=lambda raw,*_:raw)
+
+    def test_shifted_context_consensus_preserves_aligned_transient_and_reduces_single_grid_error(self):
+        import torch
+        samples=torch.ones((2,54))*.03
+        samples[:,18]=.8
+        calls=[]
+        def model(batch):
+            calls.append(batch.shape[-1])
+            stems=torch.zeros((1,4,2,batch.shape[-1]))
+            stems[:,0]=batch
+            stems[:,3]=1.0 # ignored entirely, regardless of magnitude
+            if len(calls)==1:
+                stems[:,0,:,6]+=.6 # interior, outside raised-cosine overlap
+            return stems
+        result=target._consensus(samples,model,1.,torch,lambda:False,segment=20,overlap=4)
+        self.assertEqual(calls,[20,20,20,8,12,20,20,14])
+        self.assertLessEqual(max(calls),20)
+        expected=samples.clone()
+        expected[:,6]+=.3
+        torch.testing.assert_close(result,expected)

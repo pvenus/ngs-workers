@@ -101,7 +101,11 @@ PDS resolves the new title and lineage; BPM is unmeasured.
 
 A separate CPU process runs Hybrid Demucs from the local pinned TorchAudio
 checkpoint. It discards the predicted vocal stem and sums drums, bass and other.
-Complementary raised-cosine fades blend only chunk overlaps. The worker outputs
+Two staggered 10-second inference grids are blended equally; complementary
+raised-cosine fades blend local overlaps within each grid. A shared transient
+is preserved, while a spike found in only one grid receives at most half weight.
+Each model call and the shared track buffers are bounded; separation may take
+about twice the CPU time. The worker outputs
 48 kHz stereo PCM16 at the original duration to the nearest output-frame boundary,
 without rearrangement, normalization or time stretch. Nothing calls ACE-Step,
 its resident GPU process, or the caption/lyrics composer for this request.

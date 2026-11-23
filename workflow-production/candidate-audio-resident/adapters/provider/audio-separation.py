@@ -76,31 +76,8 @@ def separate(raw,rate,channels,frames,root,torch,cancelled=lambda:False):
     if not torch.isfinite(ref_std) or ref_std<1e-5:
         raise RuntimeError('HQ_SEPARATOR_OUTPUT_EMPTY')
     normalized=(samples-ref.mean())/ref_std
-    # HDemucs runs in bounded CPU chunks. Crossfade only the overlapping
-    # inference boundaries; no time-stretch, normalization or trimming of song form.
-    segment,overlap=10*44100,44100
-    mix=torch.zeros_like(samples); denom=torch.zeros_like(ref)
-    ramp=(1-torch.cos(torch.linspace(0,math.pi,overlap)))*.5
-    with torch.inference_mode():
-        for start in range(0,samples.shape[1],segment-overlap):
-            if cancelled():raise RuntimeError('AUDIO_HQ_CANCELLED')
-            end=min(start+segment,samples.shape[1]); actual=end-start
-            chunk=normalized[:,start:end]
-            if actual<2*overlap:chunk=torch.nn.functional.pad(chunk,(0,2*overlap-actual))
-            stems=model(chunk.unsqueeze(0))[0]
-            if tuple(stems.shape[:2])!=(4,2) or stems.shape[-1]<actual:
-                raise RuntimeError('HQ_SEPARATOR_OUTPUT_EMPTY')
-            accompaniment=stems[:3,:,:actual].sum(0)*ref_std
-            fade=torch.ones(actual)
-            if start:fade[:min(overlap,actual)]=ramp[:min(overlap,actual)]
-            if end<samples.shape[1]:fade[-overlap:]=1-ramp
-            mix[:,start:end]+=accompaniment*fade
-            denom[start:end]+=fade
-            if end>=samples.shape[1]:break
-    if not torch.all(denom>0):raise RuntimeError('HQ_SEPARATOR_OUTPUT_EMPTY')
-    mix=mix/denom
-    if not torch.isfinite(mix).all() or mix.abs().mean()<1e-5:
-        raise RuntimeError('HQ_SEPARATOR_OUTPUT_EMPTY')
+    # Two bounded, staggered contexts share one full-track accumulator.
+    mix=_consensus(normalized,model,ref_std,torch,cancelled,segment=10*44100,overlap=44100)
 
     mix=resample(mix,44100,48000)
     needed=(frames*48000+rate//2)//rate
@@ -108,6 +85,46 @@ def separate(raw,rate,channels,frames,root,torch,cancelled=lambda:False):
         raise RuntimeError('HQ_SEPARATOR_DURATION_INVALID')
     mix=mix[:,:needed]
     return (mix.T*32768).round().clamp(-32768,32767).to(torch.int16).contiguous().numpy().tobytes()
+
+def _consensus(samples,model,std,torch,cancelled,*,segment,overlap):
+    # Two complementary overlap-add estimates of the same aligned waveform.
+    # Averaging retains an identical transient and attenuates a one-grid spike
+    # by half, irrespective of song dynamics or where it sits in the segment.
+    hop=segment-overlap
+    length=samples.shape[-1]
+    mix=torch.zeros_like(samples)
+    denom=torch.zeros_like(samples[0])
+    ramp=(1-torch.cos(torch.linspace(0,math.pi,overlap)))*.5
+    grids=(0,hop//2) if length>segment else (0,)
+    with torch.inference_mode():
+        for offset in grids:
+            start=0
+            end=min(length,segment-offset)
+            while True:
+                if cancelled():raise RuntimeError('AUDIO_HQ_CANCELLED')
+                actual=end-start
+                chunk=samples[:,start:end]
+                if actual<2*overlap:
+                    chunk=torch.nn.functional.pad(chunk,(0,2*overlap-actual))
+                stems=model(chunk.unsqueeze(0))[0]
+                if tuple(stems.shape[:2])!=(4,2) or stems.shape[-1]<actual:
+                    raise RuntimeError('HQ_SEPARATOR_OUTPUT_EMPTY')
+                accompaniment=stems[:3,:,:actual].sum(0)*std
+                fade=torch.ones(actual)
+                if start:fade[:overlap]=ramp
+                if end<length:fade[-overlap:]=1-ramp
+                mix[:,start:end]+=accompaniment*fade
+                denom[start:end]+=fade
+                if end==length:break
+                start=end-overlap
+                end=min(length,start+segment)
+    # Each grid must cover every frame equally, including both endpoint fades.
+    if not torch.allclose(denom,torch.full_like(denom,float(len(grids))),rtol=1e-6,atol=1e-6):
+        raise RuntimeError('HQ_SEPARATOR_DURATION_INVALID')
+    mix.div_(denom)
+    if not torch.isfinite(mix).all() or mix.abs().mean()<1e-5:
+        raise RuntimeError('HQ_SEPARATOR_OUTPUT_EMPTY')
+    return mix
 
 def run(value,root=RUNTIME,cancelled=lambda:False,split=separate):
     try:
