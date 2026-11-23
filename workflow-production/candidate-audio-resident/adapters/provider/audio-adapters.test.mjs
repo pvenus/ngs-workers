@@ -170,21 +170,38 @@ def render_hq(value,binding,cancelled,*,connect):
   w.setparams((2,2,48000,0,'NONE',''))
   w.writeframes(b'\\0\\0\\0\\0'*12)
  return {'wavBase64':base64.b64encode(b.getvalue()).decode(),'bpm':80,'bpmBasis':'model'}
-def render_cover_hq(value,binding,cancelled,*,connect):
- import hashlib
- assert set(value)=={'kind','sourceSha256','wavBase64'}
- assert hashlib.sha256(base64.b64decode(value['wavBase64'])).hexdigest()==value['sourceSha256']
- result=render_hq(value,binding,cancelled,connect=connect)
- return {**result,'bpm':None,'bpmBasis':'unavailable'}
 `);
  const adapter=createAudioAdapters({helper,hqBinding:trace,resident:true}),lifecycle=adapter[audioLifecycle];
  t.after(async()=>{await lifecycle.close();await rm(root,{force:true,recursive:true});});
- const {createHash}=await import('node:crypto');
- lifecycle.beginTask();const first=await adapter.bgm(fixtureInput);assert.equal(first.bpm,80);lifecycle.endTask();
+ lifecycle.beginTask();assert.equal((await adapter.bgm(fixtureInput)).bpm,80);lifecycle.endTask();
  lifecycle.beginTask();assert.equal((await adapter.bgm({...fixtureInput,title:'second'})).bpm,80);lifecycle.endTask();
- const sourceSha256=createHash('sha256').update(first.wav).digest('hex');
- lifecycle.beginTask();assert.equal((await adapter.separate({sourceSha256,sourceWav:first.wav})).bpmBasis,'unavailable');lifecycle.endTask();
- assert.equal(await readFile(trace,'utf8'),'load\ngenerate\ngenerate\ngenerate\n');
+ assert.equal(await readFile(trace,'utf8'),'load\ngenerate\ngenerate\n');
  await lifecycle.close();
- assert.equal(await readFile(trace,'utf8'),'load\ngenerate\ngenerate\ngenerate\nunload\n');
+ assert.equal(await readFile(trace,'utf8'),'load\ngenerate\ngenerate\nunload\n');
+});
+
+test('direct separation uses its own process and never exercises the ACE bridge',async t=>{
+ const {spawn}=await import('node:child_process');
+ const {createHash}=await import('node:crypto');
+ const root=await mkdtemp(join(tmpdir(),'direct-separator-'));t.after(()=>rm(root,{force:true,recursive:true}));
+ const fake=join(root,'fake.py');
+ await writeFile(fake,`import json,sys
+data=json.load(sys.stdin)
+assert set(data)=={'kind','sourceSha256','wavBase64'} and data['kind']=='separate'
+print(json.dumps({'bpm':None,'bpmBasis':'unavailable','wavBase64':data['wavBase64']}))
+`);
+ let invoked=0;
+ const adapter=createAudioAdapters({resident:true,spawnProcess(binary,argv,opts){
+   invoked++;
+   assert.match(binary,/acestep-hq\/source\/\.venv\/bin\/python$/u);
+   assert.equal(argv.length,3);
+   assert.match(argv[2],/audio-separation\.py$/u);
+   return spawn('/opt/homebrew/bin/python3.12',['-I','-B',fake],opts);
+ }});
+ const wav=Buffer.alloc(44);wav.write('RIFF');wav.write('WAVE',8);
+ const sourceSha256=createHash('sha256').update(wav).digest('hex');
+ await assert.rejects(adapter.separate({sourceWav:wav,sourceSha256:'0'.repeat(64)}),/INPUT_INVALID/);
+ const result=await adapter.separate({sourceWav:wav,sourceSha256});
+ assert.equal(result.bpmBasis,'unavailable');
+ assert.equal(invoked,1);
 });

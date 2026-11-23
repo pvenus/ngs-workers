@@ -99,13 +99,13 @@ digest, invalid WAV or result differing from the actual input duration by more
 than 100 ms is refused without padding, time stretching or text-only fallback.
 PDS resolves the new title and lineage; BPM is unmeasured.
 
-The one existing HQ provider uses CPU Hybrid Demucs of the approved local
-TorchAudio release, then runs ACE-Step XL-SFT Cover from only the combined
-drums/bass/other tracks, with a fixed instrumental arrangement caption,
-`[Instrumental]`, cover strength 0.8 and no direct source-noise blend. This
-request never asks the caption/lyrics composer or the ACE language planning
-stage. Vocal suppression is an intent/conditioning policy, not an auditory
-guarantee; verify voice absence and musical fidelity by listening.
+A separate CPU process runs Hybrid Demucs from the local pinned TorchAudio
+checkpoint. It discards the predicted vocal stem and sums drums, bass and other.
+Complementary raised-cosine fades blend only chunk overlaps. The worker outputs
+48 kHz stereo PCM16 at the original duration to the nearest output-frame boundary,
+without rearrangement, normalization or time stretch. Nothing calls ACE-Step,
+its resident GPU process, or the caption/lyrics composer for this request.
+Vocal removal quality is model-dependent; audition for residual artifacts.
 
 The deployer must separately enroll the reviewed TorchAudio `hdemucs_high_trained.pt`
 original checkpoint at `<HQ runtime>/cache/separation/hdemucs_high_trained.pt`,

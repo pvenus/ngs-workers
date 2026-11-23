@@ -7,6 +7,7 @@ import {createResidentBridge,audioLifecycle,warmIdleMs} from './audio-resident-b
 import {digest,maxAudioBytes} from '../../audio-wav.mjs';
 import {audioDuration,audioVocalTextLimit} from '../../vendor/planner/audio-generate-envelope.mjs';
 
+const separationHelper=fileURLToPath(new URL('./audio-separation.py',import.meta.url));
 const defaultHelper=fileURLToPath(new URL('./audio-hq-cli.py',import.meta.url));
 const abs=value=>typeof value==='string'&&isAbsolute(value)&&normalize(value)===value;
 const fail=code=>Error(code);
@@ -110,8 +111,9 @@ export function createAudioAdapters({
      input.sourceWav.length<44||input.sourceWav.length>maxAudioBytes||input.sourceSha256!==digest(input.sourceWav))
    throw fail('AUDIO_ONE_INPUT_INVALID');
   const bytes=Buffer.from(JSON.stringify({kind:'separate',sourceSha256:input.sourceSha256,wavBase64:input.sourceWav.toString('base64')}));
-  if(bridge)return await bridge.request(bytes,signal);
-  return await launch(pythonPath,['-I','-B',helper,hqBinding],bytes,signal,spawnProcess);
+  // A fresh CPU subprocess never opens the resident ACE/MPS bridge.
+  const separatorPython=join(homedir(),'Workspaces/Workers/runtime/acestep-hq/source/.venv/bin/python');
+  return await launch(separatorPython,['-I','-B',separationHelper],bytes,signal,spawnProcess);
  };
  const result={bgm,separate};
  if(bridge)Object.defineProperty(result,audioLifecycle,{value:Object.freeze(bridge)});

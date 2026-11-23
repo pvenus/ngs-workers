@@ -101,60 +101,6 @@ def _proof(working,proof,duration,seed,wav,actual,text,target=None):
         raise ValueError('AUDIO_HQ_TEMPO_PROOF_MISMATCH')
     return {'bpm':int(model_bpm),'bpmBasis':'model'}
 
-def _scratch_parent(config):
-    if config.get('schema')!='private.music-hq-boundary.v1':
-        raise ValueError('AUDIO_HQ_BINDING_INVALID')
-    parent=Path(config['artifact_root'])
-    if not parent.is_absolute() or parent.resolve(strict=True)!=parent or not parent.is_dir() or parent.stat().st_uid!=os.getuid() or parent.stat().st_mode&0o077:
-        raise ValueError('AUDIO_HQ_SCRATCH_INVALID')
-    return parent
-
-
-def render_cover_hq(value,binding,cancelled=lambda:False,*,connect=_music_boundary_from_binding):
-    if (type(value) is not dict or set(value)!={'kind','sourceSha256','wavBase64'} or value['kind']!='separate'
-            or type(value['sourceSha256']) is not str or not re.fullmatch(r'[a-f0-9]{64}',value['sourceSha256'])
-            or type(value['wavBase64']) is not str or len(value['wavBase64'])>32*1024**2):
-        raise ValueError('AUDIO_HQ_INPUT_INVALID')
-    try:
-        import io
-        source=base64.b64decode(value['wavBase64'],validate=True)
-        sha=value['sourceSha256']
-        if not 44<=len(source)<=MAX_WAV_BYTES or hashlib.sha256(source).hexdigest()!=sha:
-            raise ValueError('hash')
-        with wave.open(io.BytesIO(source),'rb') as wav:
-            frames,channels,sample_rate=wav.getnframes(),wav.getnchannels(),wav.getframerate()
-            if (wav.getsampwidth()!=2 or wav.getcomptype()!='NONE' or channels not in (1,2) or not 8000<=sample_rate<=96000
-                    or not 10<=frames/sample_rate<=AUTO_MAX_SECONDS or len(wav.readframes(frames))!=2*channels*frames):
-                raise ValueError('wav')
-        duration=frames/sample_rate
-    except (ValueError,EOFError,wave.Error):
-        raise ValueError('HQ_COVER_SOURCE_INVALID') from None
-    if cancelled():raise RuntimeError('AUDIO_HQ_CANCELLED')
-    provider,config=connect(HQ_PROFILE,binding)
-    parent=_scratch_parent(config)
-    # Use a source-bound deterministic seed. There is no request-controlled prompt.
-    seed=int.from_bytes(hashlib.sha256(b'workflow.audio-separate.v1\0'+sha.encode()).digest()[:4],'big')&0x7fffffff
-    with tempfile.TemporaryDirectory(prefix='content.workflow-bgm-',dir=parent) as name:
-        root=Path(name)
-        fd=os.open(root/'source.wav',os.O_WRONLY|os.O_CREAT|os.O_EXCL|os.O_NOFOLLOW,0o600)
-        with os.fdopen(fd,'wb') as stream:
-            stream.write(source);stream.flush();os.fsync(stream.fileno())
-        wav=root/'audio.wav'
-        proof=provider.generate_music(config,root,None,duration,seed,HQ_PROFILE,wav,cancelled,
-            timeout=1100,cover_sha256=sha)
-        if cancelled():raise RuntimeError('AUDIO_HQ_CANCELLED')
-        data,actual=_validated_wav(wav,None)
-        digest=hashlib.sha256(data).hexdigest()
-        if (not isinstance(proof,dict) or proof.get('synthetic_test_artifact') is not False
-                or proof.get('model')!=HQ_PROFILE or proof.get('cover_source_sha256')!=sha
-                or not re.fullmatch(r'[a-f0-9]{64}',proof.get('accompaniment_sha256') or '')
-                or proof['accompaniment_sha256']==sha or proof.get('audio_sha256')!=digest or digest==sha
-                or proof.get('duration_seconds')!=actual or abs(actual-duration)>.100000001
-                or proof.get('weights_snapshot')!=XL_REV or proof.get('runtime_commit')!=RUNTIME_REV):
-            raise ValueError('AUDIO_HQ_COVER_PROOF_INVALID')
-        return {'wavBase64':base64.b64encode(data).decode('ascii'),'bpm':None,'bpmBasis':'unavailable'}
-
-
 def render_hq(value,binding,cancelled=lambda:False,*,connect=_music_boundary_from_binding):
     fields={'kind','title','prompt','durationSeconds'}
     if (type(value)is not dict or set(value)-{'text','targetDurationSeconds'}!=fields or value['kind']!='bgm'
@@ -171,7 +117,11 @@ def render_hq(value,binding,cancelled=lambda:False,*,connect=_music_boundary_fro
         raise ValueError('AUDIO_HQ_INPUT_INVALID')
     if cancelled():raise RuntimeError('AUDIO_HQ_CANCELLED')
     provider,config=connect(HQ_PROFILE,binding)
-    parent=_scratch_parent(config)
+    if config.get('schema')!='private.music-hq-boundary.v1':
+        raise ValueError('AUDIO_HQ_BINDING_INVALID')
+    parent=Path(config['artifact_root'])
+    if not parent.is_absolute() or parent.resolve(strict=True)!=parent or not parent.is_dir() or parent.stat().st_uid!=os.getuid() or parent.stat().st_mode&0o077:
+        raise ValueError('AUDIO_HQ_SCRATCH_INVALID')
     duration=value['durationSeconds']
     raw=json.dumps(value,sort_keys=True,separators=(',',':'),ensure_ascii=False).encode()
     seed=int.from_bytes(hashlib.sha256(b'workflow.bgm.hq.v1\0'+raw).digest()[:4],'big')&0x7fffffff
