@@ -1,4 +1,5 @@
-"""Tests the owned ComfyUI invocation without opening a port or using the GPU."""
+"""Tests the owned ComfyUI launch and sample graph without using the GPU."""
+import json
 import os
 import pathlib
 import sys
@@ -32,3 +33,19 @@ class ComfyAttentionLaunchTest(unittest.TestCase):
                 self.assertNotIn('--gpu-only', args)
                 self.assertIn('--bf16-unet', args)
                 self.assertIn('--cache-classic' if retain else '--cache-none', args)
+
+
+    def test_production_lcm_sampler_uses_ten_steps(self):
+        assets = pathlib.Path(__file__).resolve().parents[1] / 'native-wan' / (
+            'workers/resident/backends/animation_assets')
+        graph = json.loads((assets / 'sample.api.json').read_text())['prompt']
+        scheduler = graph['19']
+        sampler = graph['21']
+        self.assertEqual(scheduler['class_type'], 'BasicScheduler')
+        self.assertEqual(scheduler['inputs'], {
+            'model': ['1', 0], 'scheduler': 'simple', 'steps': 10, 'denoise': 1.0,
+        })
+        self.assertEqual(sampler['class_type'], 'SamplerCustom')
+        self.assertEqual(sampler['inputs']['sigmas'], ['19', 0])
+        self.assertEqual(sampler['inputs']['sampler'], ['20', 0])
+        self.assertEqual(graph['20']['inputs']['sampler_name'], 'lcm')
