@@ -30,10 +30,10 @@ function childEnv(){
  return env;
 }
 
-function launch(binary,argv,value,signal,spawnProcess){
+function launch(binary,argv,value,signal,spawnProcess,overrides={}){
  return new Promise((resolve,reject)=>{
   if(signal?.aborted){reject(fail('AUDIO_ONE_CANCELLED'));return;}
-  const env=childEnv();
+  const env={...childEnv(),...overrides};
   const child=spawnProcess(binary,argv,{env,stdio:['pipe','pipe','pipe']});
   let pending=null,total=0,terminateTimer;
   const chunks=[];
@@ -112,8 +112,9 @@ export function createAudioAdapters({
    throw fail('AUDIO_ONE_INPUT_INVALID');
   const bytes=Buffer.from(JSON.stringify({kind:'separate',sourceSha256:input.sourceSha256,wavBase64:input.sourceWav.toString('base64')}));
   // A fresh CPU subprocess never opens the resident ACE/MPS bridge.
-  const separatorPython=join(homedir(),'Workspaces/Workers/runtime/acestep-hq/source/.venv/bin/python');
-  return await launch(separatorPython,['-I','-B',separationHelper],bytes,signal,spawnProcess);
+  const separatorPython=join(homedir(),'Workspaces/Workers/runtime/mel-band-roformer-becruily/venv/bin/python');
+  return await launch(separatorPython,['-I','-B',separationHelper],bytes,signal,spawnProcess,
+    {OMP_NUM_THREADS:'3',OPENBLAS_NUM_THREADS:'1',VECLIB_MAXIMUM_THREADS:'4',TORCH_FORCE_WEIGHTS_ONLY_LOAD:'1'});
  };
  const result={bgm,separate};
  if(bridge)Object.defineProperty(result,audioLifecycle,{value:Object.freeze(bridge)});

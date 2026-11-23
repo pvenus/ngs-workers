@@ -46,22 +46,24 @@ class SeparationTest(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError,'HQ_SEPARATOR_OUTPUT_UNCHANGED'):
             target.run(value,split=lambda raw,*_:raw)
 
-    def test_shifted_context_consensus_preserves_aligned_transient_and_reduces_single_grid_error(self):
-        import torch
-        samples=torch.ones((2,54))*.03
+    def test_overlap_preserves_aligned_pulses_and_exact_final_partial_chunk(self):
+        import numpy as np
+        samples=np.full((2,54),.03,np.float32)
         samples[:,18]=.8
         calls=[]
-        def model(batch):
-            calls.append(batch.shape[-1])
-            stems=torch.zeros((1,4,2,batch.shape[-1]))
-            stems[:,0]=batch
-            stems[:,3]=1.0 # ignored entirely, regardless of magnitude
-            if len(calls)==1:
-                stems[:,0,:,6]+=.6 # interior, outside raised-cosine overlap
-            return stems
-        result=target._consensus(samples,model,1.,torch,lambda:False,segment=20,overlap=4)
-        self.assertEqual(calls,[20,20,20,8,12,20,20,14])
-        self.assertLessEqual(max(calls),20)
-        expected=samples.clone()
-        expected[:,6]+=.3
-        torch.testing.assert_close(result,expected)
+        def predict(part,chunk):
+            calls.append((part.shape[-1],chunk))
+            return np.pad(part,((0,0),(0,chunk-part.shape[-1])))
+        result=target._staggered_overlap(samples,predict,np,lambda:False,chunk=20,hop=10)
+        self.assertEqual(calls,[(20,20)]*4+[(14,20)])
+        np.testing.assert_allclose(result,samples,rtol=1e-6,atol=1e-6)
+
+    def test_overlap_honors_cancellation_before_next_model_call(self):
+        import numpy as np
+        calls=[]
+        def predict(part,chunk):
+            calls.append(chunk)
+            return part
+        with self.assertRaisesRegex(RuntimeError,'AUDIO_HQ_CANCELLED'):
+            target._staggered_overlap(np.zeros((2,54),np.float32),predict,np,lambda:bool(calls),chunk=20,hop=10)
+        self.assertEqual(calls,[20])

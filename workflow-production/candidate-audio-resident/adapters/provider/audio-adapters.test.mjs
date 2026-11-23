@@ -193,7 +193,7 @@ print(json.dumps({'bpm':None,'bpmBasis':'unavailable','wavBase64':data['wavBase6
  let invoked=0;
  const adapter=createAudioAdapters({resident:true,spawnProcess(binary,argv,opts){
    invoked++;
-   assert.match(binary,/acestep-hq\/source\/\.venv\/bin\/python$/u);
+   assert.match(binary,/mel-band-roformer-becruily\/venv\/bin\/python$/u);
    assert.equal(argv.length,3);
    assert.match(argv[2],/audio-separation\.py$/u);
    return spawn('/opt/homebrew/bin/python3.12',['-I','-B',fake],opts);

@@ -99,24 +99,22 @@ digest, invalid WAV or result differing from the actual input duration by more
 than 100 ms is refused without padding, time stretching or text-only fallback.
 PDS resolves the new title and lineage; BPM is unmeasured.
 
-A separate CPU process runs Hybrid Demucs from the local pinned TorchAudio
-checkpoint. It discards the predicted vocal stem and sums drums, bass and other.
-Two staggered 10-second inference grids are blended equally; complementary
-raised-cosine fades blend local overlaps within each grid. A shared transient
-is preserved, while a spike found in only one grid receives at most half weight.
-Each model call and the shared track buffers are bounded; separation may take
-about twice the CPU time. The worker outputs
-48 kHz stereo PCM16 at the original duration to the nearest output-frame boundary,
-without rearrangement, normalization or time stretch. Nothing calls ACE-Step,
-its resident GPU process, or the caption/lyrics composer for this request.
-Vocal removal quality is model-dependent; audition for residual artifacts.
+A separate 3-thread CPU process uses the approved becruily **Mel-Band
+RoFormer Instrumental** model, not the BS model, MDX, Demucs, or ACE-Step.
+It generates the instrumental directly using the audition's 11-second windows
+and 50% complementary sine-squared overlap; no additional denoiser, original
+mix, or global effect is applied. 44.1 kHz model output returns to 48 kHz stereo
+PCM16 at the original frame-equivalent length with a gain guard only for a
+clipping peak. Vocal removal remains model-dependent and should be auditioned.
 
-The deployer must separately enroll the reviewed TorchAudio `hdemucs_high_trained.pt`
-original checkpoint at `<HQ runtime>/cache/separation/hdemucs_high_trained.pt`,
-with a sibling `pin.json` containing exactly
-`{"schemaVersion":"ace-hq-hdemucs-pin.v1","checkpointSha256":"<verified SHA-256>"}`.
-The directory is owner-private (0700), both files regular owner-only (0600),
-with no symlinks, and the separator checks the model hash before loading tensor
-weights from the pinned file. No code downloads package/checkpoint artifacts or
-falls back to the original vocal recording. An unprovisioned separator fails
-the separation lane explicitly; standard BGM does not require it.
+Provision an owner-private (0700) dedicated runtime
+`~/Workspaces/Workers/runtime/mel-band-roformer-becruily` with its own
+`venv/bin/python` and four owner-private regular files: `model.ckpt`,
+`model.json`, and `arch/models/bs_roformer/{mel_band_roformer.py,attend.py}`.
+The model kernels are from ZFTurbo Music-Source-Separation-Training commit
+`1523206d12a521bdb20673726562524cf0f9635b` (the upstream folder name is
+`bs_roformer`, but only the Mel architecture is loaded). The worker verifies
+the checkpoint, normalized audition configuration and source SHA-256s plus
+dependency versions before strict weights-only load. Provision reviewed
+artifacts separately; no downloads or fallback occur during a job. This
+runtime is never required for normal BGM generation.
