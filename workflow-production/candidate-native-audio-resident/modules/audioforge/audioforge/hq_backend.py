@@ -81,6 +81,7 @@ _CHILD_CODES = frozenset((
     'HQ_BPM_INVALID', 'HQ_TIME_SIGNATURE_INVALID', 'HQ_SETTING_TEXT_INVALID',
     'HQ_LM_MLX_INITIALIZATION_REQUIRED', 'HQ_MPS_REQUIRED', 'HQ_MPS_FP32_RENDERER_REQUIRED',
     'HQ_REQUIRED_COMPONENT_MISSING', 'HQ_RENDER_GENERATION_FAILED',
+    'HQ_SEPARATOR_UNPROVISIONED', 'HQ_COVER_SOURCE_INVALID', 'HQ_COVER_ACCOMPANIMENT_EMPTY',
     'HQ_GENERATED_OUTPUT_PATH_INVALID', 'HQ_WAV_FORMAT_INVALID', 'HQ_WAV_DURATION_INVALID',
     'HQ_PLANNER_BINDING_MISMATCH', 'HQ_REQUEST_HASH_MISMATCH',
 ))
@@ -410,6 +411,68 @@ class HQBackend:
                 raise
         return {'stage': name, 'pid': process.pid, 'exitCode': process.returncode,
                 'seconds': time.monotonic() - started, 'peakObservedSwapGiB': peak}
+
+    def generate_cover(self, duration, seed, output, cancelled, source_sha):
+        if (not (enabled() if self.activation is None else self.activation is True)
+                or type(source_sha) is not str or not re.fullmatch(r'[a-f0-9]{64}',source_sha)
+                or type(seed) is not int or not 0<=seed<=2147483647):
+            raise ValueError('HQ_COVER_SOURCE_INVALID')
+        duration=resolved_auto_duration(duration)
+        output=_canonical(output,exists=False)
+        if (not output.is_relative_to(self.artifacts) or output.name!='audio.wav' or output.exists()
+                or self.resident is not None and (output.parent.parent!=self.artifacts or not output.parent.name.startswith('content.workflow-bgm-'))):
+            raise ValueError('HQ_NEW_ARTIFACT_WAV_REQUIRED')
+        source=_canonical(output.parent/'source.wav')
+        before=_stamp(source)
+        if not 44<=before[2]<=24*1024**2 or _sha(source)!=source_sha or before!=_stamp(source):
+            raise ValueError('HQ_COVER_SOURCE_INVALID')
+        if cancelled():
+            raise Cancelled()
+        work=output.parent/'audio.hq'
+        work.mkdir(mode=0o700,exist_ok=False)
+        prepared=work/'audio.wav'
+        request=dict(profile_version=PROFILE_VERSION,parent_pid=os.getpid(),runtime_root=str(self.root),
+                     output=str(prepared),prompt=None,duration=duration,seed=seed,settings={'instrumental':True},
+                     cover_source_sha256=source_sha)
+        request['request_sha256']=hashlib.sha256(canonical(request).encode()).hexdigest()
+        request_path=work/'request.json'
+        _write_new(request_path,request)
+        with self._locks() as fds:
+            self.verify_runtime(self.root,deep=True)
+            baseline=self._memory()
+            if baseline['pressure']==4 or baseline['swapGiB']>=16:
+                raise RuntimeError('HQ_MEMORY_UNSAFE_BEFORE_START')
+            if shutil.disk_usage(self.root).free<10*1024**3:
+                raise RuntimeError('HQ_DISK_LOW_STOP')
+            self._stage('render',request_path,fds,cancelled,time.monotonic()+self.timeout,baseline)
+            receipt=_read_json(work/'render-result.json')
+            model_audio=_canonical(prepared)
+            cond=_canonical(work/'accompaniment.wav')
+            audio_sha,cond_sha=_sha(model_audio),_sha(cond)
+            expected=dict(schemaVersion='ace-hq-cover-result.v1',success=True,
+                          profileVersion=PROFILE_VERSION,requestSha256=request['request_sha256'],
+                          model='acestep-v15-xl-sft',modelRevision=XL_REVISION,
+                          runtimeRevision=RUNTIME_REVISION,backend='mps',dtype='float32',
+                          coverSourceSha256=source_sha,accompanimentSha256=cond_sha,
+                          seed=seed,sampleRate=48000,channels=2,audioSha256=audio_sha,
+                          audioBytes=model_audio.stat().st_size)
+            if audio_sha==source_sha or cond_sha==source_sha or audio_sha==cond_sha or before!=_stamp(source):
+                raise ValueError('HQ_COVER_SOURCE_INVALID')
+            for k,v in expected.items():
+                if type(receipt.get(k)) is not type(v) or receipt[k]!=v:
+                    raise ValueError('HQ_RENDER_BINDING_MISMATCH:'+k)
+            with wave.open(str(model_audio),'rb') as wav:
+                actual=wav.getnframes()/wav.getframerate()
+                if ((wav.getframerate(),wav.getnchannels(),wav.getsampwidth(),wav.getcomptype())!=(48000,2,2,'NONE')
+                    or abs(actual-duration)>.100000001 or receipt.get('durationSeconds')!=actual):
+                    raise ValueError('HQ_WAV_INVALID')
+            if cancelled():
+                raise Cancelled()
+            with model_audio.open('rb') as src, output.open('xb') as dst:
+                shutil.copyfileobj(src,dst);dst.flush();os.fsync(dst.fileno())
+            return dict(synthetic_test_artifact=False,model=MODEL,runtime_commit=RUNTIME_REVISION,
+                        weights_snapshot=XL_REVISION,cover_source_sha256=source_sha,accompaniment_sha256=cond_sha,
+                        audio_sha256=audio_sha,duration_seconds=actual)
 
     def generate(self, prompt, duration, seed, model, output, cancelled, settings=None):
         settings = validate_call(prompt, duration, seed, model, settings)

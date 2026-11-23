@@ -9,7 +9,15 @@ import signal
 import sys
 import threading
 sys.path.insert(0,str(Path(__file__).resolve().parent))
-from hq_bgm import render_hq
+from hq_bgm import render_hq, render_cover_hq
+
+MAX_WIRE = 32*1024**2 + 512
+
+def dispatch(value,*args,**kwargs):
+    if isinstance(value,dict) and value.get('kind')=='separate':
+        return render_cover_hq(value,*args,**kwargs)
+    return render_hq(value,*args,**kwargs)
+
 from music_boundary import _music_boundary_from_binding,HQ_PROFILE
 
 def main():
@@ -19,32 +27,35 @@ def main():
     for sig in (signal.SIGTERM,signal.SIGINT):signal.signal(sig,lambda *_:stopped.set())
     if len(sys.argv)==3:
         return resident_main(sys.argv[1],stopped)
-    data=sys.stdin.buffer.read(32769)
-    if len(data)>32768:raise ValueError('AUDIO_HQ_INPUT_OVERSIZE')
-    result=render_hq(json.loads(data),sys.argv[1],stopped.is_set)
+    data=sys.stdin.buffer.read(MAX_WIRE+1)
+    if len(data)>MAX_WIRE:raise ValueError('AUDIO_HQ_INPUT_OVERSIZE')
+    result=dispatch(json.loads(data),sys.argv[1],stopped.is_set)
     if stopped.is_set():raise ValueError('AUDIO_HQ_CANCELLED')
     print(json.dumps(result,separators=(',',':'),allow_nan=False))
 
 def resident_frames(fd,stopped):
-    cap=32832
+    cap=MAX_WIRE+64
     buf=bytearray()
+    searched=0
     while not stopped.is_set():
-        end=buf.find(b'\n')
+        end=buf.find(b'\n',searched)
+        searched=len(buf)
         if end>=cap or end<0 and len(buf)>=cap:
             raise ValueError('AUDIO_HQ_INPUT_OVERSIZE')
         if end>=0:
             data=bytes(buf[:end]);del buf[:end+1]
+            searched=0
             yield data
             continue
         readable,_,_=select.select([fd],[],[],.5)
         if readable:
-            more=os.read(fd,min(4096,cap-len(buf)))
+            more=os.read(fd,min(65536,cap-len(buf)))
             if not more:
                 return
             buf.extend(more)
 
 
-def resident_main(binding,stopped, frames=resident_frames, connect=_music_boundary_from_binding, render=render_hq):
+def resident_main(binding,stopped, frames=resident_frames, connect=_music_boundary_from_binding, render=dispatch):
     from types import SimpleNamespace
     last=0
     connector=None
@@ -82,7 +93,7 @@ _STAGE_CODES = frozenset((
     'HQ_LM_AUTO_DURATION_OUT_OF_RANGE', 'HQ_LM_FULL_DURATION_NOT_MET', 'AUDIO_HQ_FULL_DURATION_NOT_MET', 'HQ_LM_AUTO_DURATION_CAP_UNAVAILABLE', 'HQ_LM_METADATA_INVALID', 'HQ_LM_GENERATION_FAILED',
     'HQ_LM_AUDIO_CODES_INVALID', 'HQ_LM_AUDIO_CODE_RANGE_INVALID', 'HQ_BPM_INVALID',
     'HQ_TIME_SIGNATURE_INVALID', 'HQ_SETTING_TEXT_INVALID', 'HQ_LM_MLX_INITIALIZATION_REQUIRED',
-    'HQ_MPS_REQUIRED', 'HQ_MPS_FP32_RENDERER_REQUIRED', 'HQ_REQUIRED_COMPONENT_MISSING',
+    'HQ_SEPARATOR_UNPROVISIONED', 'HQ_COVER_SOURCE_INVALID', 'HQ_COVER_ACCOMPANIMENT_EMPTY', 'HQ_MPS_REQUIRED', 'HQ_MPS_FP32_RENDERER_REQUIRED', 'HQ_REQUIRED_COMPONENT_MISSING',
     'HQ_RENDER_GENERATION_FAILED', 'HQ_GENERATED_OUTPUT_PATH_INVALID', 'HQ_WAV_FORMAT_INVALID',
     'HQ_WAV_DURATION_INVALID', 'HQ_PLANNER_BINDING_MISMATCH', 'HQ_REQUEST_HASH_MISMATCH',
     'HQ_CHILD_OUT_OF_MEMORY', 'HQ_CHILD_NONZERO_EXIT', 'HQ_CHILD_SIGNAL', 'HQ_PIPELINE_TIMEOUT',
@@ -102,7 +113,8 @@ _STAGE_DIRECT = {
     'HQ_WAV_INVALID':'verify', 'HQ_AUDIO_RECEIPT_MISMATCH':'verify',
     'AUDIO_HQ_WAV_FORMAT':'verify', 'AUDIO_HQ_WAV_DURATION':'verify',
     'AUDIO_HQ_AUTO_DURATION_PROOF_MISMATCH':'verify', 'AUDIO_HQ_HUMMING_PROOF_MISMATCH':'verify',
-    'AUDIO_HQ_PROVIDER_PROOF':'verify', 'AUDIO_HQ_TEMPO_PROOF_MISMATCH':'verify',
+    'HQ_SEPARATOR_UNPROVISIONED':'setup', 'HQ_COVER_SOURCE_INVALID':'setup',
+    'AUDIO_HQ_COVER_PROOF_INVALID':'verify', 'AUDIO_HQ_PROVIDER_PROOF':'verify', 'AUDIO_HQ_TEMPO_PROOF_MISMATCH':'verify',
     'AUDIO_HQ_PROOF_SCOPE':'verify', 'AUDIO_HQ_FILE_INVALID':'verify', 'AUDIO_HQ_FILE_CHANGED':'verify',
     'AUDIO_HQ_CANCELLED':'unknown',
 }

@@ -15,6 +15,7 @@ import random
 import re
 import shutil
 import signal
+import stat
 import sys
 import threading
 import time
@@ -22,6 +23,11 @@ import wave
 
 PROFILE_VERSION = 'ace-xl-sft-lm4b.v1'
 RUNTIME_REVISION = 'ca1e85fe9430179831e6bc6be790c332190a3866'
+COVER_CAPTION = ('Instrumental arrangement preserving the reference melody, harmony, rhythm, '
+                 'instrumentation, dynamics, and section transitions.')
+COVER_STRENGTH = .8
+COVER_SOURCE_KEY = 'cover_source_sha256'
+SEPARATOR_WEIGHTS = 'hdemucs_high_trained.pt'
 LM_MODEL = 'acestep-5Hz-lm-4B'
 LM_REVISION = '0a3ec94b557aea7d508da38b31cfe7341f6ff737'
 DIT_MODEL = 'acestep-v15-xl-sft'
@@ -192,9 +198,16 @@ def validate_request(value, request_path):
     if type(value.get('seed')) is not int or not 0 <= value['seed'] <= 2**31 - 1:
         raise ValueError('HQ_SEED_INVALID')
     duration = value.get('duration')
-    if duration is not None and (type(duration) not in (int, float) or not math.isfinite(duration) or not 10 <= duration <= 30):
-        raise ValueError('HQ_DURATION_INVALID')
-    _text(value.get('prompt'), 2000, empty=False)
+    cover = COVER_SOURCE_KEY in value
+    if cover:
+        if (type(value[COVER_SOURCE_KEY]) is not str or not re.fullmatch(r'[a-f0-9]{64}',value[COVER_SOURCE_KEY])
+                or value.get('settings')!={'instrumental':True} or value.get('prompt') is not None
+                or type(duration) not in (int,float) or not math.isfinite(duration) or not 10<=duration<=AUTO_MAX_SECONDS):
+            raise ValueError('HQ_COVER_SOURCE_INVALID')
+    else:
+        if duration is not None and (type(duration) not in (int,float) or not math.isfinite(duration) or not 10<=duration<=30):
+            raise ValueError('HQ_DURATION_INVALID')
+        _text(value.get('prompt'),2000,empty=False)
     settings = value.get('settings')
     if not isinstance(settings, dict) or set(settings) - {'instrumental', 'lyrics', 'bpm', 'keyscale', 'timesignature', 'vocal_language', 'target_duration_seconds'}:
         raise ValueError('HQ_SETTINGS_INVALID')
@@ -268,6 +281,7 @@ def _lyrics(settings):
 
 
 def run_plan(request, root, output, resident=None):
+    if COVER_SOURCE_KEY in request:raise ValueError('HQ_COVER_SOURCE_INVALID')
     import torch
     import numpy as np
     import mlx.core as mx
@@ -358,8 +372,128 @@ def wav_details(path, expected_duration):
     return duration
 
 
+def _separator_checkpoint(root):
+    directory=root/'cache/separation'
+    pin=directory/'pin.json'
+    weights=directory/SEPARATOR_WEIGHTS
+    try:
+        for path in (directory,pin,weights):
+            st=path.lstat()
+            if (path.resolve(strict=True)!=path or st.st_uid!=os.getuid() or st.st_mode&0o077
+                    or (path==directory and not stat.S_ISDIR(st.st_mode))
+                    or (path!=directory and (not stat.S_ISREG(st.st_mode) or st.st_nlink!=1))):
+                raise ValueError
+        if pin.stat().st_size>4096 or not 0<weights.stat().st_size<=1024**3:
+            raise ValueError
+        metadata,_=load_json(pin,4096)
+        if (set(metadata)!={'schemaVersion','checkpointSha256'} or metadata['schemaVersion']!='ace-hq-hdemucs-pin.v1'
+                or type(metadata['checkpointSha256']) is not str or not re.fullmatch(r'[a-f0-9]{64}',metadata['checkpointSha256'])):
+            raise ValueError
+        return weights,metadata['checkpointSha256']
+    except (OSError,ValueError,TypeError):
+        raise RuntimeError('HQ_SEPARATOR_UNPROVISIONED') from None
+
+
+def _checked_cover_source(request, output):
+    source=output.parent.parent/'source.wav'
+    try:
+        fd=os.open(source,os.O_RDONLY|os.O_NOFOLLOW|os.O_CLOEXEC|os.O_NONBLOCK)
+        with os.fdopen(fd,'rb') as stream:
+            st=os.fstat(stream.fileno())
+            if (source.resolve(strict=True)!=source or not stat.S_ISREG(st.st_mode) or st.st_uid!=os.getuid()
+                    or st.st_nlink!=1 or st.st_mode&0o077 or not 44<=st.st_size<=24*1024**2):
+                raise ValueError
+            data=stream.read(st.st_size+1)
+        if len(data)!=st.st_size or sha256(data)!=request[COVER_SOURCE_KEY]:
+            raise ValueError
+        import io
+        with wave.open(io.BytesIO(data),'rb') as wav:
+            rate,channels,frames=wav.getframerate(),wav.getnchannels(),wav.getnframes()
+            raw=wav.readframes(frames)
+            if (wav.getsampwidth()!=2 or wav.getcomptype()!='NONE' or channels not in (1,2)
+                    or not 8000<=rate<=96000 or frames/rate!=request['duration'] or len(raw)!=frames*channels*2):
+                raise ValueError
+        return raw,rate,channels
+    except (OSError,ValueError,EOFError,wave.Error):
+        raise ValueError('HQ_COVER_SOURCE_INVALID') from None
+
+
+def _make_accompaniment(request, root, output, torch):
+    weights,expected=_separator_checkpoint(root)
+    try:
+        from torchaudio.functional import resample
+        from torchaudio.models import hdemucs_high
+    except (ImportError,OSError):
+        raise RuntimeError('HQ_SEPARATOR_UNPROVISIONED') from None
+    tracks=['drums','bass','other','vocals']
+    model=hdemucs_high(sources=tracks)
+    fd=os.open(weights,os.O_RDONLY|os.O_NOFOLLOW|os.O_CLOEXEC|os.O_NONBLOCK)
+    with os.fdopen(fd,'rb') as stream:
+        st=os.fstat(stream.fileno())
+        if not stat.S_ISREG(st.st_mode) or st.st_uid!=os.getuid() or st.st_nlink!=1 or st.st_mode&0o077:
+            raise RuntimeError('HQ_SEPARATOR_UNPROVISIONED')
+        if hashlib.file_digest(stream,'sha256').hexdigest()!=expected:
+            raise RuntimeError('HQ_SEPARATOR_UNPROVISIONED')
+        stream.seek(0)
+        try:
+            model.load_state_dict(torch.load(stream,map_location='cpu',weights_only=True),strict=True)
+        except (ValueError,RuntimeError,EOFError,TypeError):
+            raise RuntimeError('HQ_SEPARATOR_UNPROVISIONED') from None
+    model.eval()
+    raw,rate,channels=_checked_cover_source(request,output)
+    samples=torch.frombuffer(bytearray(raw),dtype=torch.int16).reshape(-1,channels).T.float()/32768.
+    if channels==1:samples=samples.repeat(2,1)
+    if rate!=44100:samples=resample(samples,rate,44100)
+    ref=samples.mean(0); ref_std=ref.std()
+    if not torch.isfinite(ref_std) or ref_std<1e-5:
+        raise RuntimeError('HQ_COVER_ACCOMPANIMENT_EMPTY')
+    normalized=(samples-ref.mean())/ref_std
+    # HDemucs runs in bounded CPU chunks. Crossfade only the overlapping
+    # inference boundaries; no time-stretch, normalization or trimming of song form.
+    segment,overlap=10*44100,44100
+    mix=torch.zeros_like(samples); denom=torch.zeros_like(ref)
+    with torch.inference_mode():
+        for start in range(0,samples.shape[1],segment-overlap):
+            end=min(start+segment,samples.shape[1]); actual=end-start
+            chunk=normalized[:,start:end]
+            if actual<2*overlap:chunk=torch.nn.functional.pad(chunk,(0,2*overlap-actual))
+            stems=model(chunk.unsqueeze(0))[0]
+            if tuple(stems.shape[:2])!=(4,2) or stems.shape[-1]<actual:
+                raise RuntimeError('HQ_COVER_ACCOMPANIMENT_EMPTY')
+            accompaniment=stems[:3,:,:actual].sum(0)*ref_std
+            fade=torch.ones(actual)
+            if start:fade[:min(overlap,actual)]=torch.linspace(0,1,min(overlap,actual))
+            if end<samples.shape[1]:fade[-overlap:]=torch.linspace(1,0,overlap)
+            mix[:,start:end]+=accompaniment*fade
+            denom[start:end]+=fade
+            if end>=samples.shape[1]:break
+    if not torch.all(denom>0):raise RuntimeError('HQ_COVER_ACCOMPANIMENT_EMPTY')
+    mix=mix/denom
+    if not torch.isfinite(mix).all() or mix.abs().mean()<1e-5:
+        raise RuntimeError('HQ_COVER_ACCOMPANIMENT_EMPTY')
+    peak=mix.abs().max()
+    if peak>.98:mix=mix*(.98/peak)
+    target=output.parent/'accompaniment.wav'
+    fd=os.open(target,os.O_WRONLY|os.O_CREAT|os.O_EXCL|os.O_NOFOLLOW,0o600)
+    with os.fdopen(fd,'wb') as raw_out:
+        with wave.open(raw_out,'wb') as audio:
+            audio.setparams((2,2,44100,0,'NONE','not compressed'))
+            audio.writeframes((mix.T*32767).round().to(torch.int16).contiguous().numpy().tobytes())
+        raw_out.flush();os.fsync(raw_out.fileno())
+    return target,sha256(target.read_bytes())
+
+
+def _cover_params(request, accompaniment):
+    return dict(task_type='cover',src_audio=str(accompaniment),reference_audio=None,
+                audio_cover_strength=COVER_STRENGTH,cover_noise_strength=0.0,
+                caption=COVER_CAPTION,lyrics='[Instrumental]',instrumental=True,
+                duration=request['duration'],vocal_language='unknown')
+
+
 def run_render(request, root, output, resident=None):
-    plan, plan_sha = read_plan(request, output)
+    cover=COVER_SOURCE_KEY in request
+    if not cover:
+        plan, plan_sha = read_plan(request, output)
     import torch
     from acestep.handler import AceStepHandler
     from acestep.inference import GenerationParams, GenerationConfig, generate_music
@@ -395,20 +529,24 @@ def run_render(request, root, output, resident=None):
                     device='mps', use_flash_attention=False, compile_model=False,
                     offload_to_cpu=False, offload_dit_to_cpu=False, quantization=None,
                     use_mlx_dit=False, vae_checkpoint='official')
-    fields = musical_fields(request['settings'], plan['metadata'])
-    fields.setdefault('vocal_language', 'unknown')
-    params = GenerationParams(audio_codes=plan['audio_codes'], caption=request['prompt'],
-                              lyrics=_lyrics(request['settings']),
-                              instrumental=request['settings'].get('instrumental', True),
-                              duration=plan['duration'], seed=request['seed'],
-                              inference_steps=50, guidance_scale=7.0, shift=3.0,
+    if cover:
+        accompaniment,accompaniment_sha=_make_accompaniment(request,root,output,torch)
+        conditioning=_cover_params(request,accompaniment)
+    else:
+        fields=musical_fields(request['settings'],plan['metadata'])
+        fields.setdefault('vocal_language','unknown')
+        conditioning=dict(audio_codes=plan['audio_codes'],caption=request['prompt'],
+                          lyrics=_lyrics(request['settings']),instrumental=request['settings'].get('instrumental',True),
+                          duration=plan['duration'],**fields)
+    params = GenerationParams(**conditioning, seed=request['seed'], inference_steps=50, guidance_scale=7.0, shift=3.0,
                               thinking=False, use_cot_metas=False, use_cot_caption=False,
-                              use_cot_language=False, enable_normalization=True,
-                              normalization_db=-1.0, **fields)
+                              use_cot_language=False, enable_normalization=True, normalization_db=-1.0)
     config = GenerationConfig(batch_size=1, use_random_seed=False,
                               seeds=[request['seed']], audio_format='wav')
+    lineage=({'coverSourceSha256':request[COVER_SOURCE_KEY],'accompanimentSha256':accompaniment_sha}
+             if cover else {'lmResultSha256':plan_sha})
     write_json_new(output.parent / 'generation-settings.json',
-                   {'requestSha256': request['request_sha256'], 'lmResultSha256': plan_sha,
+                   {'requestSha256': request['request_sha256'], **lineage,
                     'init': settings, 'params': asdict(params), 'config': asdict(config)})
     handler = resident.get('renderer') if resident is not None else None
     started = time.monotonic()
@@ -429,7 +567,7 @@ def run_render(request, root, output, resident=None):
         generated = generated_root / generated
     if generated.resolve() != generated or not generated.is_relative_to(generated_root) or not generated.is_file() or generated.stat().st_nlink != 1:
         raise ValueError('HQ_GENERATED_OUTPUT_PATH_INVALID')
-    duration = wav_details(generated, plan['duration'])
+    duration = wav_details(generated, conditioning['duration'])
     # Copy into a new output only. Preserve the runtime's generated file and
     # never remove/overwrite unrelated inputs or any earlier job's output.
     with generated.open('rb') as source, output.open('xb') as dest:
@@ -437,11 +575,11 @@ def run_render(request, root, output, resident=None):
         dest.flush(); os.fsync(dest.fileno())
     output_bytes = output.read_bytes()
     write_json_new(output.parent / 'render-result.json',
-                   {'schemaVersion': 'ace-hq-render.v1', 'success': True,
+                   {'schemaVersion': 'ace-hq-cover-result.v1' if cover else 'ace-hq-render.v1', 'success': True,
                     'profileVersion': PROFILE_VERSION, 'requestSha256': request['request_sha256'],
                     'model': DIT_MODEL, 'modelRevision': DIT_REVISION,
                     'runtimeRevision': RUNTIME_REVISION, 'backend': 'mps', 'dtype': 'float32',
-                    'lmResultSha256': plan_sha, 'audioSha256': sha256(output_bytes),
+                    **lineage, 'audioSha256': sha256(output_bytes),
                     'audioBytes': len(output_bytes), 'sampleRate': 48000, 'channels': 2,
                     'durationSeconds': duration, 'seed': request['seed'],
                     'elapsedSeconds': time.monotonic() - started})

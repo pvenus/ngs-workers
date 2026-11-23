@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {mkdtempSync,rmSync,realpathSync,chmodSync} from 'node:fs';
 import {join} from 'node:path';
 import {tmpdir} from 'node:os';
+import separationGolden from './vendor/planner/audio-separate.v1.fixture.json' with {type:'json'};
 import {PlannerStore,buildPlan} from './vendor/planner/planner.mjs';
 import {canonical,sha} from './vendor/planner/envelope.mjs';
 import {AudioDefinitelyRejected,runAudioFromPath,nextAudioFromPath,audioResultRef} from './audio-worker.mjs';
@@ -298,4 +299,45 @@ test('invalid lyric output fails before caption, render or publish',async t=>{
   adapters:{bgm:async()=>assert.fail('should not render')}});
  assert.equal(output.code,'AUDIO_LYRIC_FAILED');assert.equal(output.providerCode,'AUDIO_LYRIC_OUTPUT_INVALID');
  assert.equal(f.get().status,'failed');
+});
+
+test('vendored separation request and sole worker task agree with canonical Planner golden',()=>{
+ assert.deepEqual(buildPlan(separationGolden.row),separationGolden.plan);
+});
+test('separation uses exact typed source from PDS and publishes one new WAV without Codex/prompt',async t=>{
+ const {db,dbPath,store}=fixture(t);
+ const src=wav(64);src.writeInt16LE(21,44);
+ const output=wav(64.05);output.writeInt16LE(203,46);
+ const payload={schemaVersion:'ngs.audio-separate.v1',projectId:'binari',sourceOfficialRequestId:'request.official.'+sha('source'),sourceSha256:sha(src)};
+ const row={officialRequestId:'request.official.'+sha('separate'),registeredAt:1000,projectId:'binari',
+  requestType:'audio.separate',schemaVersion:payload.schemaVersion,payload,payloadSha256:sha(canonical(payload)),status:'registered'};
+ store.stage(row);store.acknowledge(row.officialRequestId);
+ const target=buildPlan(row).tasks[0];
+ assert.equal(nextAudioFromPath(dbPath),null);
+ assert.equal(nextAudioFromPath(dbPath,{generate:false,separate:true}).taskId,target.id);
+ const outputRef=audioResultRef('binari',row.officialRequestId);
+ let writes=0,renders=0;
+ const run=async(mode)=>runAudioFromPath({dbPath,taskId:target.id,officialRequestId:row.officialRequestId,
+  pds:{readSeparate:async claim=>{
+   assert.equal(claim.taskId,target.id);
+   return {sourceOfficialRequestId:payload.sourceOfficialRequestId,sourceSha256:payload.sourceSha256,
+    bytes:src.length,mimeType:'audio/wav',wav:mode==='wrong source'?Buffer.alloc(src.length):src};
+  },publishSeparate:async(claim,wav)=>{
+   writes++;assert.equal(claim.officialRequestId,row.officialRequestId);
+   assert.deepEqual(wav,{mimeType:'audio/wav',sha256:sha(output),bytes:output.length,base64:output.toString('base64')});
+   return {ok:true,resultRef:outputRef};
+  }},adapters:{separate:async args=>{
+   renders++;assert.deepEqual(args,{sourceSha256:sha(src),sourceWav:src});
+   return {wav:mode==='wrong length'?wav(63):mode==='original'?src:output};
+  }},composeCaption:()=>assert.fail('no text prompt path'),composeLyrics:()=>assert.fail('no lyric path')});
+ assert.equal((await run('wrong source')).state,'failed');assert.equal(renders,0);assert.equal(writes,0);
+ const age=()=>db.prepare('UPDATE workflow_tasks SET updated_at=? WHERE task_id=?').run(Date.now()-601_000,target.id);
+ age();
+ assert.equal((await run('wrong length')).state,'failed');assert.equal(writes,0);
+ age();
+ assert.equal((await run('original')).state,'failed');assert.equal(writes,0);
+ age();
+ assert.equal((await run('valid')).state,'completed');assert.deepEqual([renders,writes],[3,1]);
+ assert.equal(db.prepare('SELECT result_ref FROM workflow_tasks WHERE task_id=?').get(target.id).result_ref,outputRef);
+ assert.equal(sha(src),payload.sourceSha256);
 });

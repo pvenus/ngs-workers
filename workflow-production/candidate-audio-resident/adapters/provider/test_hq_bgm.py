@@ -98,6 +98,44 @@ class HQTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError,'INPUT_INVALID'):
                 hq.render_hq({**cmd,'durationSeconds':30},'fixture',connect=c)
 
+    def test_cover_uses_exact_source_bytes_and_rejects_retimed_or_original_audio(self):
+        import io
+        def sample(seconds,value):
+            b=io.BytesIO()
+            with wave.open(b,'wb') as w:
+                w.setparams((2,2,48000,0,'NONE',''))
+                w.writeframes(bytes((value,0,value,0))*round(seconds*48000))
+            return b.getvalue()
+        src=sample(64,1);digest=sha256(src).hexdigest()
+        command={'kind':'separate','sourceSha256':digest,'wavBase64':base64.b64encode(src).decode()}
+        with TemporaryDirectory() as p:
+            for duration,sample_out,accepted in ((64.025,4,True),(64.2,4,False),(64,1,False)):
+                generated=sample(duration,sample_out)
+                scratch=[]
+                def cover(config,root,prompt,wanted,seed,model,wav,stop,**kw):
+                    scratch.append(root)
+                    self.assertEqual(prompt,None)
+                    self.assertEqual(wanted,64)
+                    self.assertEqual(model,hq.HQ_PROFILE)
+                    self.assertEqual(kw,{'timeout':1100,'cover_sha256':digest})
+                    self.assertEqual((root/'source.wav').read_bytes(),src)
+                    self.assertEqual((root/'source.wav').stat().st_mode&0o777,0o600)
+                    wav.write_bytes(generated)
+                    return dict(synthetic_test_artifact=False,model=model,runtime_commit=hq.RUNTIME_REV,
+                        weights_snapshot=hq.XL_REV,cover_source_sha256=digest,accompaniment_sha256='5'*64,
+                        audio_sha256=sha256(generated).hexdigest(),duration_seconds=duration)
+                connect=lambda *_:(SimpleNamespace(generate_music=cover),{'schema':'private.music-hq-boundary.v1','artifact_root':str(Path(p).resolve())})
+                if accepted:
+                    returned=hq.render_cover_hq(command,'test fixture',connect=connect)
+                    self.assertEqual(base64.b64decode(returned['wavBase64']),generated)
+                    self.assertEqual((returned['bpm'],returned['bpmBasis']),(None,'unavailable'))
+                else:
+                    with self.assertRaisesRegex(ValueError,'AUDIO_HQ_COVER_PROOF_INVALID'):
+                        hq.render_cover_hq(command,'test fixture',connect=connect)
+                self.assertEqual(len(scratch),1);self.assertFalse(scratch[0].exists())
+            with self.assertRaisesRegex(ValueError,'HQ_COVER_SOURCE_INVALID'):
+                hq.render_cover_hq({**command,'sourceSha256':'4'*64},'fixture',connect=lambda *_:self.fail())
+
     def test_mismatched_proof_and_no_turbo_fallback(self):
         with TemporaryDirectory() as p:
             c,invoked=renderer(self,Path(p).resolve(),80,True)

@@ -85,3 +85,34 @@ go to ACE-Step. Both vocal modes require automatic duration. Failure to obtain
 valid generated lyrics fails the existing task before any rendering or
 publication; the worker does not substitute the caption, silently strip lyrics,
 or log them.
+
+
+## Exact existing-song instrumental request
+
+`audio.separate` / `ngs.audio-separate.v1` binds an existing official song ID
+and the claimed published WAV SHA-256; it accepts no prompt or exposed tuning.
+The resident worker authenticates the separate PDS read and WAV asset using the
+exact running claim, validates the bytes/duration and generates once per
+worker attempt. Only one new PCM16 WAV is published to the new official request.
+The original never appears in a write body. A changed original, equal output
+digest, invalid WAV or result differing from the actual input duration by more
+than 100 ms is refused without padding, time stretching or text-only fallback.
+PDS resolves the new title and lineage; BPM is unmeasured.
+
+The one existing HQ provider uses CPU Hybrid Demucs of the approved local
+TorchAudio release, then runs ACE-Step XL-SFT Cover from only the combined
+drums/bass/other tracks, with a fixed instrumental arrangement caption,
+`[Instrumental]`, cover strength 0.8 and no direct source-noise blend. This
+request never asks the caption/lyrics composer or the ACE language planning
+stage. Vocal suppression is an intent/conditioning policy, not an auditory
+guarantee; verify voice absence and musical fidelity by listening.
+
+The deployer must separately enroll the reviewed TorchAudio `hdemucs_high_trained.pt`
+original checkpoint at `<HQ runtime>/cache/separation/hdemucs_high_trained.pt`,
+with a sibling `pin.json` containing exactly
+`{"schemaVersion":"ace-hq-hdemucs-pin.v1","checkpointSha256":"<verified SHA-256>"}`.
+The directory is owner-private (0700), both files regular owner-only (0600),
+with no symlinks, and the separator checks the model hash before loading tensor
+weights from the pinned file. No code downloads package/checkpoint artifacts or
+falls back to the original vocal recording. An unprovisioned separator fails
+the separation lane explicitly; standard BGM does not require it.

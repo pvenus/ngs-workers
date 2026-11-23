@@ -19,7 +19,7 @@ with wave.open(media,'wb') as w:
 print(json.dumps({"wavBase64":base64.b64encode(media.getvalue()).decode(),"bpm":80,"bpmBasis":"model"}))
 `);
  const adapters=createAudioAdapters({helper,hqBinding:join(root,'unused')});
- assert.deepEqual(Object.keys(adapters),['bgm']);
+ assert.deepEqual(Object.keys(adapters),['bgm','separate']);
  const input={kind:'bgm',title:'Title',prompt:'Daegeum piano.',durationSeconds:10};
  const result=await adapters.bgm(input);
  assert.equal(result.wav.readUInt32LE(24),48000);
@@ -106,7 +106,7 @@ mark('idle-close')
 test('resident child starts lazily, reuses exact worker, resets idle and never evicts during downstream task work',async t=>{
  const {adapter,lifecycle,logs,see,spawns}=await residentFixture(t);
  const {warmIdleMs}=await import('./audio-resident-bridge.mjs');
- assert.equal(warmIdleMs,5*60*1000);assert.equal(spawns(),0);assert.deepEqual(Object.keys(adapter),['bgm']);
+ assert.equal(warmIdleMs,5*60*1000);assert.equal(spawns(),0);assert.deepEqual(Object.keys(adapter),['bgm','separate']);
  lifecycle.beginTask();
  assert.equal((await adapter.bgm(fixtureInput)).bpm,80);
  await sleep(85); // Native task returned; PDS publication is still reserved.
@@ -170,12 +170,21 @@ def render_hq(value,binding,cancelled,*,connect):
   w.setparams((2,2,48000,0,'NONE',''))
   w.writeframes(b'\\0\\0\\0\\0'*12)
  return {'wavBase64':base64.b64encode(b.getvalue()).decode(),'bpm':80,'bpmBasis':'model'}
+def render_cover_hq(value,binding,cancelled,*,connect):
+ import hashlib
+ assert set(value)=={'kind','sourceSha256','wavBase64'}
+ assert hashlib.sha256(base64.b64decode(value['wavBase64'])).hexdigest()==value['sourceSha256']
+ result=render_hq(value,binding,cancelled,connect=connect)
+ return {**result,'bpm':None,'bpmBasis':'unavailable'}
 `);
  const adapter=createAudioAdapters({helper,hqBinding:trace,resident:true}),lifecycle=adapter[audioLifecycle];
  t.after(async()=>{await lifecycle.close();await rm(root,{force:true,recursive:true});});
- lifecycle.beginTask();assert.equal((await adapter.bgm(fixtureInput)).bpm,80);lifecycle.endTask();
+ const {createHash}=await import('node:crypto');
+ lifecycle.beginTask();const first=await adapter.bgm(fixtureInput);assert.equal(first.bpm,80);lifecycle.endTask();
  lifecycle.beginTask();assert.equal((await adapter.bgm({...fixtureInput,title:'second'})).bpm,80);lifecycle.endTask();
- assert.equal(await readFile(trace,'utf8'),'load\ngenerate\ngenerate\n');
+ const sourceSha256=createHash('sha256').update(first.wav).digest('hex');
+ lifecycle.beginTask();assert.equal((await adapter.separate({sourceSha256,sourceWav:first.wav})).bpmBasis,'unavailable');lifecycle.endTask();
+ assert.equal(await readFile(trace,'utf8'),'load\ngenerate\ngenerate\ngenerate\n');
  await lifecycle.close();
- assert.equal(await readFile(trace,'utf8'),'load\ngenerate\ngenerate\nunload\n');
+ assert.equal(await readFile(trace,'utf8'),'load\ngenerate\ngenerate\ngenerate\nunload\n');
 });

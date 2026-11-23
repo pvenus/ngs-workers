@@ -1,0 +1,44 @@
+{
+  "submit": {
+    "sourceId": "local",
+    "requestType": "audio.separate",
+    "idempotencyKey": "fixture-audio-separate",
+    "payload": {
+      "schemaVersion": "ngs.audio-separate.v1",
+      "projectId": "binari",
+      "sourceOfficialRequestId": "request.official.1eac0721cffe9ba510b86916a7dc0707499356b1d4b54748340b64319b37a680",
+      "sourceSha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    }
+  },
+  "row": {
+    "officialRequestId": "request.official.150833221da21224de22a20b7bd274b613052124f877043946313c4ecde0f2df",
+    "projectId": "binari",
+    "requestType": "audio.separate",
+    "schemaVersion": "ngs.audio-separate.v1",
+    "payload": {
+      "schemaVersion": "ngs.audio-separate.v1",
+      "projectId": "binari",
+      "sourceOfficialRequestId": "request.official.1eac0721cffe9ba510b86916a7dc0707499356b1d4b54748340b64319b37a680",
+      "sourceSha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    },
+    "payloadSha256": "ce4b4b4e7db356d9ea19cd00b11763c91eafdfd92c8a0437c522e47b4146b0bd",
+    "status": "registered",
+    "registeredAt": 1795290003000
+  },
+  "plan": {
+    "payload": "{\"projectId\":\"binari\",\"schemaVersion\":\"ngs.audio-separate.v1\",\"sourceOfficialRequestId\":\"request.official.1eac0721cffe9ba510b86916a7dc0707499356b1d4b54748340b64319b37a680\",\"sourceSha256\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"}",
+    "tasks": [
+      {
+        "id": "workflow.task.55546e30164c5be57cbea1ca43ff4887bb338c555338da4fe598eb68f5948acf",
+        "key": "audio_separate",
+        "type": "audio.separate",
+        "workerType": "audio",
+        "dependsOn": null,
+        "input": {
+          "sourceOfficialRequestId": "request.official.1eac0721cffe9ba510b86916a7dc0707499356b1d4b54748340b64319b37a680",
+          "sourceSha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        }
+      }
+    ]
+  }
+}

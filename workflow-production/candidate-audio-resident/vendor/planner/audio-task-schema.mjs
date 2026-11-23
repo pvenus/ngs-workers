@@ -1,5 +1,6 @@
 /** Narrow lossless extension of the original workflow task worker CHECK. */
-export const RETRY_COUNT_COLUMN="retry_count INTEGER NOT NULL DEFAULT 0 CHECK(retry_count BETWEEN 0 AND 3)";
+export const WORKFLOW_TASK_MAX_RETRIES=3;
+export const RETRY_COUNT_COLUMN=`retry_count INTEGER NOT NULL DEFAULT 0 CHECK(retry_count BETWEEN 0 AND ${WORKFLOW_TASK_MAX_RETRIES})`;
 const live='workflow_tasks',stage='workflow_tasks_audio_stage';
 const oldWorkers="'file','document','image','animation','postprocess'";
 const columns='task_id,official_request_id,task_key,task_type,worker_type,task_input,result_ref,updated_at,depends_on_task_id,status,retry_count';

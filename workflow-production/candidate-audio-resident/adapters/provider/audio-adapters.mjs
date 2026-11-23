@@ -4,7 +4,7 @@ import {homedir} from 'node:os';
 import {isAbsolute,join,normalize} from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {createResidentBridge,audioLifecycle,warmIdleMs} from './audio-resident-bridge.mjs';
-import {maxAudioBytes} from '../../audio-wav.mjs';
+import {digest,maxAudioBytes} from '../../audio-wav.mjs';
 import {audioDuration,audioVocalTextLimit} from '../../vendor/planner/audio-generate-envelope.mjs';
 
 const defaultHelper=fileURLToPath(new URL('./audio-hq-cli.py',import.meta.url));
@@ -105,7 +105,15 @@ export function createAudioAdapters({
   if(bridge)return await bridge.request(bytes,signal);
   return await launch(pythonPath,['-I','-B',helper,hqBinding],bytes,signal,spawnProcess);
  };
- const result={bgm};
+ const separate=async(input,{signal}={})=>{
+  if(!input||Object.keys(input).sort().join(',')!=='sourceSha256,sourceWav'||!Buffer.isBuffer(input.sourceWav)||
+     input.sourceWav.length<44||input.sourceWav.length>maxAudioBytes||input.sourceSha256!==digest(input.sourceWav))
+   throw fail('AUDIO_ONE_INPUT_INVALID');
+  const bytes=Buffer.from(JSON.stringify({kind:'separate',sourceSha256:input.sourceSha256,wavBase64:input.sourceWav.toString('base64')}));
+  if(bridge)return await bridge.request(bytes,signal);
+  return await launch(pythonPath,['-I','-B',helper,hqBinding],bytes,signal,spawnProcess);
+ };
+ const result={bgm,separate};
  if(bridge)Object.defineProperty(result,audioLifecycle,{value:Object.freeze(bridge)});
  return Object.freeze(result);
 }

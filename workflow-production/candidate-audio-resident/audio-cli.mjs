@@ -15,7 +15,7 @@ export function parseArgs(args){
 }
 export async function residentAudio({dbPath,pds,adapters,composeCaption,composeLyrics,signal,log=console.log,pause=delay}){
  assertDatabasePath(dbPath);
- const hasBgm=typeof adapters?.bgm==='function',base={dbPath,pds,adapters,composeCaption,composeLyrics,signal};
+ const hasBgm=typeof adapters?.bgm==='function',hasSeparate=typeof adapters?.separate==='function',base={dbPath,pds,adapters,composeCaption,composeLyrics,signal};
  const lifecycle=adapters?.[audioLifecycle];
  let ready=false,pulsing=false,last;
  const pulse=async()=>{
@@ -30,9 +30,11 @@ export async function residentAudio({dbPath,pds,adapters,composeCaption,composeL
    let r;
    try{
     const previouslyReady=ready;
-    ready=hasBgm&&await pds.capability(signal);
+    const generationReady=hasBgm&&await pds.capability(signal);
+    const separationReady=hasSeparate&&await pds.capabilitySeparate(signal);
+    ready=generationReady||separationReady;
     if(ready&&!previouslyReady)void pulse();
-    const target=ready&&!signal.aborted&&nextAudioFromPath(dbPath);
+    const target=ready&&!signal.aborted&&nextAudioFromPath(dbPath,{generate:generationReady,separate:separationReady});
     if(target){
      lifecycle?.beginTask();
      try{r=await runAudioFromPath({...base,...target});}

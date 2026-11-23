@@ -114,10 +114,10 @@ def hq_available(config):
         return False
 
 
-def generate_music(config, artifacts, prompt, duration, seed, model, output, cancelled, *, timeout=1100, settings=None):
+def generate_music(config, artifacts, prompt, duration, seed, model, output, cancelled, *, timeout=1100, settings=None, cover_sha256=None):
     paths, artifact = validate_config(config, artifacts)
     hq = config.get('schema') == 'private.music-hq-boundary.v1'
-    if (model == 'acestep-xl-sft-lm4b') != hq:
+    if (model == 'acestep-xl-sft-lm4b') != hq or (cover_sha256 is not None and (not hq or prompt is not None or settings is not None)):
         raise ValueError('BOUNDARY_PROFILE_BINDING_MISMATCH')
     if artifact == paths['artifact_root']:
         raise ValueError('BOUNDARY_REQUEST_DIRECTORY_REQUIRED')
@@ -143,6 +143,8 @@ def generate_music(config, artifacts, prompt, duration, seed, model, output, can
                 validate_lock_fd(legacy_fd, config['legacy_lock'])
             backend = make_backend(config, paths, artifact, (fd, legacy_fd), recheck, timeout)
             try:
+                if cover_sha256 is not None:
+                    return backend.generate_cover(duration,seed,output,cancelled,cover_sha256)
                 return backend.generate(prompt, duration, seed, model, output, cancelled, settings)
             except Exception as exc:
                 # The separately pinned AudioForge package has its own exception
@@ -189,12 +191,15 @@ def resident_music(config):
         from .hq_bridge import make_backend
         backend=make_backend(config,paths,root,tuple(locks),recheck,1100,resident=True)
         try:
-            def generate(bound_config,artifact,prompt,duration,seed,model,output,cancelled,*,timeout=1100,settings=None):
+            def generate(bound_config,artifact,prompt,duration,seed,model,output,cancelled,*,timeout=1100,settings=None,cover_sha256=None):
                 if bound_config is not config or model!='acestep-xl-sft-lm4b' or timeout!=1100:
                     raise ValueError('BOUNDARY_PROFILE_BINDING_MISMATCH')
                 _, target=validate_config(config,artifact)
                 if target.parent!=root or not target.name.startswith('content.workflow-bgm-') or output!=target/'audio.wav':
                     raise ValueError('BOUNDARY_REQUEST_DIRECTORY_REQUIRED')
+                if cover_sha256 is not None:
+                    if prompt is not None or settings is not None:raise ValueError('BOUNDARY_PROFILE_BINDING_MISMATCH')
+                    return backend.generate_cover(duration,seed,output,cancelled,cover_sha256)
                 return backend.generate(prompt,duration,seed,model,output,cancelled,settings)
             yield generate
         finally:
