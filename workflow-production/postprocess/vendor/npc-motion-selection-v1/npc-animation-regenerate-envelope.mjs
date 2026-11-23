@@ -1,5 +1,5 @@
 /** Immutable intent for selected motion regeneration on a pre-existing NPC. */
-import {canonical,validateMotionSelection} from './envelope.mjs';
+import {canonical,maxPayloadBytes,validateMotionSelection} from './envelope.mjs';
 
 export const npcAnimationRegenerateType='npc.animation.regenerate';
 export const npcAnimationRegenerateSchema='ngs.npc-animation.regenerate.v1';
@@ -13,5 +13,7 @@ export function validateNpcAnimationRegenerate(value,projectId){
   value.schemaVersion!==npcAnimationRegenerateSchema||typeof value.npcId!=='string'||
   value.npcId.trim()!==value.npcId||!owner.test(value.npcId))throw bad();
  try{validateMotionSelection(value.motionSelection);}catch{throw bad();}
- return canonical(value);
+ const payload=canonical(value);
+ if(Buffer.byteLength(payload)>maxPayloadBytes)throw bad();
+ return payload;
 }
