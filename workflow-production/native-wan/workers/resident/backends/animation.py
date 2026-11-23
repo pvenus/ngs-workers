@@ -6,7 +6,7 @@ With that lease, an idle engine may outlive a job; unload confirms its stop.
 """
 import copy,hashlib,json,os,re,signal,stat,subprocess,time,urllib.request,tempfile,shutil
 from pathlib import Path
-from .animation_wan import run
+from .animation_wan import WAN_CHECKPOINT, run
 from ..contracts import PROFILES, ExecutionStopUnconfirmed
 
 
@@ -24,6 +24,11 @@ def binding(path):
  # Installed Python may be an owner-selected symlink; resolve before checking.
  checked(python.resolve())
  if not python.is_absolute()or not os.access(python,os.X_OK)or not(root/'main.py').is_file():raise ValueError('ANIMATION_BINDING_DENIED')
+ # Never admit this release with a partial download or silently fall back to bf16 weights.
+ try:
+  checkpoint=checked(root/'models'/'diffusion_models'/WAN_CHECKPOINT)
+  if checkpoint.stat().st_size==0:raise ValueError('empty')
+ except (OSError,ValueError):raise ValueError('ANIMATION_INT8_CHECKPOINT_UNAVAILABLE')from None
  assets=Path(__file__).with_name('animation_assets')
  return {'comfyRoot':root,'python':python,'bootstrap':assets/'bootstrap.py','base':assets/'sample.api.json'}
 

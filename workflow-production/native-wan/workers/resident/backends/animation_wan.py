@@ -1,5 +1,9 @@
 """Owned offline Wan process. Fresh request conditioning, single-cycle reference, no legacy cached text."""
 import copy,hashlib,json,pathlib,shutil,subprocess,sys,time,urllib.request,urllib.error
+
+WAN_MODEL='wan_animate_2_distill_int8_convrot'
+WAN_CHECKPOINT=WAN_MODEL+'.safetensors'
+
 class ComfyHTTPError(urllib.error.HTTPError):
  """Keep existing HTTP/URL retry semantics, expose no URL or response content."""
  def __init__(self,label,status):
@@ -48,7 +52,7 @@ def _main_model_anchors(sample):
  # in the graph. Keep the same model+patched model keys in each phase without
  # adding any dependency that would execute a fresh model load outside sample.
  loader=sample.get('1');patch=sample.get('18')
- if (loader!={'class_type':'UNETLoader','inputs':{'unet_name':'wan_animate_2_distill_bf16.safetensors','weight_dtype':'default'}}
+ if (loader!={'class_type':'UNETLoader','inputs':{'unet_name':WAN_CHECKPOINT,'weight_dtype':'default'}}
      or patch!={'class_type':'ModelSamplingSD3','inputs':{'model':['1',0],'shift':5.0}}):
   raise ValueError('ANIMATION_RETAINED_MODEL_GRAPH_CHANGED')
  return {'1':loader,'18':patch}
@@ -151,7 +155,7 @@ def run(root,job,session,cancel,*,decoded_output=None):
    receipt=decoded_output(root,job,fit)
   else:
    output=root/'animation.mp4';session.encode(['/opt/homebrew/bin/ffmpeg','-y','-v','error','-framerate',str(job['fps']),'-i',str(directory/'%05d.png'),'-frames:v',str(job['frameCount']),'-c:v','libx264','-pix_fmt','yuv420p','-movflags','+faststart',str(output)],cancel)
-   data=output.read_bytes();receipt={'path':str(output),'sha256':hashlib.sha256(data).hexdigest(),'bytes':len(data),'mimeType':'video/mp4','seconds':time.monotonic()-start,'model':'wan_animate_2_distill_bf16','modelCalls':1,'conditioningCalls':1,'frameCount':len(frames),'fps':job['fps'],'cycleCount':1,'visualCycleVerified':False,'referenceFit':fit}
+   data=output.read_bytes();receipt={'path':str(output),'sha256':hashlib.sha256(data).hexdigest(),'bytes':len(data),'mimeType':'video/mp4','seconds':time.monotonic()-start,'model':WAN_MODEL,'modelCalls':1,'conditioningCalls':1,'frameCount':len(frames),'fps':job['fps'],'cycleCount':1,'visualCycleVerified':False,'referenceFit':fit}
   q=api('/queue')
   if q.get('queue_running')or q.get('queue_pending'):raise ValueError('ANIMATION_EXECUTION_NOT_IDLE')
   session.terminal={'engineRequestId':job['requestId'],**session.last_phase,'queue':q,'artifactSha256':receipt['sha256']}

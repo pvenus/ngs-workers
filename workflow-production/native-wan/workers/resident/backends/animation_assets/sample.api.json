@@ -3,7 +3,7 @@
     "1": {
       "class_type": "UNETLoader",
       "inputs": {
-        "unet_name": "wan_animate_2_distill_bf16.safetensors",
+        "unet_name": "wan_animate_2_distill_int8_convrot.safetensors",
         "weight_dtype": "default"
       }
     },
