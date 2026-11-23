@@ -1,6 +1,6 @@
-// Selection v1 foreground projection of the canonical workflow planner.
+// Selected NPC foreground projection of the canonical workflow planner.
 // Media tasks stay in their own role and are not reconstructed here.
-import {canonical,sha,validateOneStop,isReplaceSchema,isSelectionSchema} from './envelope.mjs';
+import {canonical,sha,validateOneStop,isReplaceSchema,isSelectionSchema,isPoseSelectionSchema,motionPoseRegistry,motionSelectionPoses} from './envelope.mjs';
 export {isSelectionSchema};
 const fields=['officialRequestId','projectId','requestType','schemaVersion','payload','payloadSha256','status','registeredAt'];
 export function buildPlan(row){
@@ -21,9 +21,17 @@ export function buildPlan(row){
  add('planning_portrait_art','npc.plan-portrait-art','document','planning_overview');
  add('planning_representative','npc.plan-representative','document','planning_portrait_art');
  add('portrait_representative','npc.portrait-representative','image','planning_representative');
- add('planning_idle','npc.plan-idle','document','planning_representative');
- add('portrait_idle_reference','npc.portrait-idle-reference','image','planning_idle',{imageStyle:'pixel-sprite.v1'});
- add('portrait_pixel_idle_reference','npc.portrait-pixel','postprocess','portrait_idle_reference',{posePreset:'idle',direction:null});
- for(const direction of ['n','ne','e','se','s','sw','w','nw'])add('portrait_'+direction,'npc.portrait-direction','image','portrait_pixel_idle_reference',{direction,imageStyle:'pixel-sprite.v1'});
+ const required=new Set(['idle',...(isPoseSelectionSchema(row.schemaVersion)?row.payload.motionSelection.map(r=>r.posePreset):[])]);
+ const poses=motionSelectionPoses.filter(pose=>required.has(pose));
+ for(const pose of poses){
+  const lane=motionPoseRegistry[pose],center='portrait_pixel_'+pose+'_reference';
+  add(lane.planKey,lane.planType,'document','planning_representative');
+  add(lane.referenceKey,lane.referenceType,'image',lane.planKey,{imageStyle:'pixel-sprite.v1'});
+  add(center,'npc.portrait-pixel','postprocess',lane.referenceKey,{posePreset:pose,direction:null});
+ }
+ for(const direction of ['n','ne','e','se','s','sw','w','nw'])for(const pose of poses){
+  const lane=motionPoseRegistry[pose];
+  add(lane.directionPrefix+direction,lane.directionType,'image','portrait_pixel_'+pose+'_reference',{direction,imageStyle:'pixel-sprite.v1'});
+ }
  return {payload,tasks};
 }

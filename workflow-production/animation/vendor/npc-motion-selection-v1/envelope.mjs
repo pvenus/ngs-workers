@@ -3,14 +3,32 @@ import {createHash} from 'node:crypto';
 
 export const requestType='npc.workflow',schemaVersion='ngs.npc-one-stop.v1',replaceSchemaVersion='ngs.npc-one-stop.replace.v1';
 export const selectionSchemaVersion='ngs.npc-one-stop.selection.v1',
- selectionReplaceSchemaVersion='ngs.npc-one-stop.selection.replace.v1';
+ selectionReplaceSchemaVersion='ngs.npc-one-stop.selection.replace.v1',
+ poseSelectionSchemaVersion='ngs.npc-one-stop.selection.v2',
+ poseSelectionReplaceSchemaVersion='ngs.npc-one-stop.selection.replace.v2';
 export const legacyOneStopSchemas=Object.freeze([schemaVersion,replaceSchemaVersion]);
-export const selectionSchemas=Object.freeze([selectionSchemaVersion,selectionReplaceSchemaVersion]);
+export const poseSelectionSchemas=Object.freeze([poseSelectionSchemaVersion,poseSelectionReplaceSchemaVersion]);
+export const selectionSchemas=Object.freeze([selectionSchemaVersion,selectionReplaceSchemaVersion,...poseSelectionSchemas]);
 export const oneStopSchemas=Object.freeze([...legacyOneStopSchemas,...selectionSchemas]);
 export const isSelectionSchema=schema=>selectionSchemas.includes(schema);
-export const isReplaceSchema=schema=>schema===replaceSchemaVersion||schema===selectionReplaceSchemaVersion;
+export const isPoseSelectionSchema=schema=>poseSelectionSchemas.includes(schema);
+export const isReplaceSchema=schema=>schema===replaceSchemaVersion||schema===selectionReplaceSchemaVersion||schema===poseSelectionReplaceSchemaVersion;
 export const motionPresetIdPattern='^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$';
-export const motionSelectionPoses=Object.freeze(['idle','combat']);
+// Pose capabilities are registered once for all motion presets. v2 expands
+// only the requested poses; v1 retains its deployed idle appearance graph.
+export const motionPoseRegistry=Object.freeze({
+ idle:Object.freeze({
+  planKey:'planning_idle',planType:'npc.plan-idle',
+  referenceKey:'portrait_idle_reference',referenceType:'npc.portrait-idle-reference',
+  directionPrefix:'portrait_',directionType:'npc.portrait-direction',
+ }),
+ combat:Object.freeze({
+  planKey:'planning_combat',planType:'npc.plan-combat',
+  referenceKey:'portrait_combat_reference',referenceType:'npc.portrait-combat-reference',
+  directionPrefix:'portrait_combat_',directionType:'npc.portrait-combat-direction',
+ }),
+});
+export const motionSelectionPoses=Object.freeze(Object.keys(motionPoseRegistry));
 const motionPresetId=new RegExp(motionPresetIdPattern);
 const assetSetHash=/^[a-f0-9]{64}$/;
 const selectionFields=['presetId','posePreset','assetSetSha256'];
@@ -62,9 +80,14 @@ export function validateOneStop(value,projectId){
  if(!keys(c,['npcId','name','slug','role','actId','chapterId'])||
     !['npcId','slug','actId','chapterId'].every(k=>ident(c[k]))||
     !fits(c.name,1,60)||!c.name.trim()||!fits(c.role,1,300)||!c.role.trim())throw invalid();
- if(isReplaceSchema(value.schemaVersion)&&
-  (!/^(?:npc|character)\.[A-Za-z0-9][A-Za-z0-9._-]*$/.test(c.npcId)||
-   !/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(c.slug)))throw invalid();
+ const replace=isReplaceSchema(value.schemaVersion);
+ if(c.npcId.startsWith('character.')){
+  // Imported, enrolled NPCs keep their canonical legacy owner ID on replacement.
+  if(!replace||c.npcId.length<12||c.npcId.length>90||!/^character\.[a-z0-9]+(?:[-._][a-z0-9]+)*$/.test(c.npcId)||
+     c.slug!==c.npcId.slice('character.'.length)||
+     !['act1','act01'].includes(c.actId)||!/^(?:ch|chapter0)[1-5]$/.test(c.chapterId))throw invalid();
+ }else if(!/^npc\.[A-Za-z0-9][A-Za-z0-9._-]*$/i.test(c.npcId)||
+   (replace&&!/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(c.slug)))throw invalid();
  if(selected)validateMotionSelection(value.motionSelection);
  else {
   if(Object.hasOwn(value,'motionPresets')&&(!keys(value.motionPresets,['walk','run'])||

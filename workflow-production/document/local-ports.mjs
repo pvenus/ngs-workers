@@ -7,6 +7,7 @@ export const portraitArtPath='/v1/npcs/ownership/workflow-plan-portrait-art';
 export const representativePath='/v1/npcs/ownership/workflow-plan-representative';
 export const planningAddPath='/v1/npcs/planning/workflow-add';
 export const planningUpdatePath='/v1/npcs/planning/workflow-update';
+export const combatPath='/v1/npcs/ownership/workflow-plan-combat';
 export const idlePath='/v1/npcs/ownership/workflow-plan-idle';
 export const conceptCategoryPath='/v1/concept/category-workflow';
 export const heartbeatPath='/api/service-heartbeat';
@@ -18,7 +19,8 @@ const routes={
  'npc.plan-representative':{path:representativePath+'?inputMode=folder-snapshot',schema:'workflow.representative-plan-write.v1'},
  'npc.planning.add':{path:planningAddPath,schema:'workflow.npc-planning-add-write.v1'},
  'npc.planning.update':{path:planningUpdatePath,schema:'workflow.npc-planning-update-write.v1'},
- 'npc.plan-idle':{path:idlePath+'?inputMode=folder-snapshot',schema:'workflow.idle-plan-write.v1'}
+ 'npc.plan-idle':{path:idlePath+'?inputMode=folder-snapshot',schema:'workflow.idle-plan-write.v1'},
+ 'npc.plan-combat':{path:combatPath+'?inputMode=folder-snapshot',schema:'workflow.combat-plan-write.v1'}
 };
 function claimOf(command,claimStamp){
  if(!Number.isSafeInteger(claimStamp)||claimStamp<0)throw Error('WORKFLOW_DOCUMENT_CLAIM_STAMP_INVALID');
@@ -118,6 +120,14 @@ export function localPorts({transport=requestLocalJson}={}){
   async readIdle(command,claimStamp){
    return await transport({port:8030,path:idlePath+'/read',method:'POST',
     body:{claim:claimOf(command,claimStamp),inputMode:'folder-snapshot'},deadline:5000});
+  },
+  async readCombat(command,claimStamp){
+   return await transport({port:8030,path:combatPath+'/read',method:'POST',
+    body:{claim:claimOf(command,claimStamp),inputMode:'folder-snapshot'},deadline:5000,responseLimit:512*1024});
+  },
+  async publishCombat(command,claimStamp,basis){
+   return await transport({port:8030,path:combatPath,method:'POST',
+    body:{claim:claimOf(command,claimStamp),basis,artifact:JSON.parse(command.artifact)},deadline:120000});
   },
   async publishIdle(command,claimStamp,basis){
    return await transport({port:8030,path:idlePath,method:'POST',

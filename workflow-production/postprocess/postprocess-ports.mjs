@@ -49,7 +49,7 @@ export function postprocessPorts({transport=raw,heartbeatTransport=requestLocalJ
   }catch{return false;}},
   async heartbeat(signal){try{return (await heartbeatTransport({port:8090,path:'/api/service-heartbeat',method:'POST',
         body:{serverName:'postprocess-worker'},deadline:5000,signal})).ok===true;}catch{return false;}},
-  async read({claim,motion,direction,predecessorTaskId,posePreset,motionPosePreset,assetSetSha256}){
+  async read({claim,motion,direction,predecessorTaskId,posePreset,motionPosePreset,assetSetSha256,sourcePortraitStage}){
    if(posePreset!==undefined){
     const v=await json(portraitRoute+'/read',{claim},30000);
     if(!exact(v,['posePreset','direction','source'])||v.posePreset!==posePreset||v.direction!==direction||
@@ -65,7 +65,7 @@ export function postprocessPorts({transport=raw,heartbeatTransport=requestLocalJ
    if(motionPosePreset!==undefined){
     if(!exact(v,['direction','motion','sequence','posePreset','assetSetSha256'])||
        v.posePreset!==motionPosePreset||v.assetSetSha256!==assetSetSha256||
-       s.sourceBindingHash!==sha(JSON.stringify([claim.officialRequestId,'portrait_'+direction,motion,motionPosePreset,assetSetSha256])))
+       s.sourceBindingHash!==sha(JSON.stringify([claim.officialRequestId,sourcePortraitStage??('portrait_'+direction),motion,motionPosePreset,assetSetSha256])))
       throw Error('POSTPROCESS_PDS_SELECTED_SOURCE_BINDING');
    }
    return s;

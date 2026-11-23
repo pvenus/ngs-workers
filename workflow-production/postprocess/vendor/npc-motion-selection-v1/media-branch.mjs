@@ -1,14 +1,14 @@
 /** Exact projection of Planner's selected NPC media branch, without side effects. */
-import {canonical,sha,validateOneStop,isSelectionSchema,motionSelectionSlot} from './envelope.mjs';
-import {npcAnimationRegenerateType as regenerateType,npcAnimationRegenerateSchema as regenerateSchema,
+import {canonical,sha,validateOneStop,isSelectionSchema,motionSelectionSlot,isPoseSelectionSchema,motionPoseRegistry,selectionSchemas,poseSelectionSchemas} from './envelope.mjs';
+import {npcAnimationRegenerateType as regenerateType,npcAnimationRegenerateSchema as regenerateSchema,npcAnimationRegeneratePoseSchema as regeneratePoseSchema,npcAnimationRegenerateSchemas as regenerateSchemas,
  validateNpcAnimationRegenerate} from './npc-animation-regenerate-envelope.mjs';
-export {canonical,isSelectionSchema,regenerateType,regenerateSchema};
-export const isRegenerateRun=(type,schema)=>type===regenerateType&&schema===regenerateSchema;
+export {canonical,isSelectionSchema,selectionSchemas,poseSelectionSchemas,motionPoseRegistry,regenerateType,regenerateSchema,regeneratePoseSchema,regenerateSchemas};
+export const isRegenerateRun=(type,schema)=>type===regenerateType&&regenerateSchemas.includes(schema);
 export const isSelectedMediaRun=(type,schema)=>isRegenerateRun(type,schema)||type==='npc.workflow'&&isSelectionSchema(schema);
 
 const id=/^request\.official\.[a-f0-9]{64}$/;
 const keyPattern=/^(animation|frames)_motion_([a-f0-9]{16})_(n|ne|e|se|s|sw|w|nw)$/;
-const pixelPattern=/^portrait_pixel_idle_(reference|n|ne|e|se|s|sw|w|nw)$/;
+const pixelPattern=/^portrait_pixel_([a-z][a-z0-9-]*)_(reference|n|ne|e|se|s|sw|w|nw)$/;
 const need=ok=>{if(!ok)throw Error('SELECTED_MOTION_TASK_BINDING');};
 
 export function selectedMotionBranch(row,key){
@@ -24,24 +24,36 @@ export function selectedMotionBranch(row,key){
  const npcId=regenerate?payload.npcId:payload.character.npcId;
  const stableId=k=>'workflow.task.'+sha(canonical([row.official_request_id,k]));
  const task=(k,type,workerType,parent,input)=>({id:stableId(k),key:k,type,workerType,dependsOn:parent===null?null:stableId(parent),input});
- const portraitDirection=direction=>task('portrait_'+direction,'npc.portrait-direction','image','portrait_pixel_idle_reference',
-  {npcId,direction,imageStyle:'pixel-sprite.v1'});
+ const poseSelection=isPoseSelectionSchema(row.schema_version);
+ const requestedPoses=new Set(['idle',...(poseSelection?payload.motionSelection.map(r=>r.posePreset):[])]);
+ const portraitDirection=(pose,direction)=>{
+  const lane=motionPoseRegistry[pose];
+  return task(lane.directionPrefix+direction,lane.directionType,'image','portrait_pixel_'+pose+'_reference',
+   {npcId,direction,imageStyle:'pixel-sprite.v1'});
+ };
+ const portraitPixel=(pose,direction,parent)=>task('portrait_pixel_'+pose+'_'+(direction??'reference'),
+  'npc.portrait-pixel','postprocess',parent.key,{npcId,posePreset:pose,direction});
  if(pixel){
-  const direction=pixel[1]==='reference'?null:pixel[1];
-  const parent=direction===null?task('portrait_idle_reference','npc.portrait-idle-reference','image','planning_idle',
-   {npcId,imageStyle:'pixel-sprite.v1'}):portraitDirection(direction);
-  return {target:task(key,'npc.portrait-pixel','postprocess',parent.key,{npcId,posePreset:'idle',direction}),parent,payload};
+  const pose=pixel[1],direction=pixel[2]==='reference'?null:pixel[2];
+  need(requestedPoses.has(pose)&&Object.hasOwn(motionPoseRegistry,pose));
+  const lane=motionPoseRegistry[pose];
+  const parent=direction===null?task(lane.referenceKey,lane.referenceType,'image',lane.planKey,
+   {npcId,imageStyle:'pixel-sprite.v1'}):portraitDirection(pose,direction);
+  return {target:portraitPixel(pose,direction,parent),parent,payload};
  }
  const [,lane,slot,direction]=found;
  const s=payload.motionSelection.filter(x=>motionSelectionSlot(x.presetId)===slot);
  need(s.length===1);
  const {presetId:motion,posePreset,assetSetSha256}=s[0];
- const portrait=regenerate?null:portraitDirection(direction),portraitKey=portrait?.key??null,animationKey='animation_motion_'+slot+'_'+direction;
+ const raw=regenerate?null:portraitDirection(poseSelection?posePreset:'idle',direction);
+ const portrait=raw&&poseSelection?portraitPixel(posePreset,direction,raw):raw;
+ const portraitKey=portrait?.key??null,animationKey='animation_motion_'+slot+'_'+direction;
+ const sourcePortraitStage=(poseSelection||row.schema_version===regeneratePoseSchema?motionPoseRegistry[posePreset].directionPrefix:'portrait_')+direction;
  const common={npcId,direction,motion,posePreset,assetSetSha256};
  const animation=task(animationKey,'npc.animation-native-png','animation',portraitKey,{...common,output:'native-png'});
  const frames=task('frames_motion_'+slot+'_'+direction,'npc.frames-postprocess','postprocess',animationKey,
   {...common,input:'native-png'});
- return {target:lane==='animation'?animation:frames,parent:lane==='animation'?portrait:animation,payload};
+ return {target:lane==='animation'?animation:frames,parent:lane==='animation'?portrait:animation,payload,sourcePortraitStage};
 }
 
 export function matchesMotionTask(row,task){

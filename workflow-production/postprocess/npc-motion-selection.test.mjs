@@ -91,6 +91,20 @@ test('PDS read binds selected projection and raw source lineage, never routes to
  out={...out,sequence:{...seq,posePreset:'idle'}};
  await assert.rejects(p.read(binding),/POSTPROCESS_PDS_SOURCE_BINDING/);
 });
+test('pose v2 postprocess rejects legacy idle lineage as a combat source',async()=>{
+ const {row,tasks}=cases[0],t=tasks.find(t=>t.type==='npc.frames-postprocess'&&t.input.posePreset==='combat');
+ const {npcId,motion,posePreset:motionPosePreset,direction,assetSetSha256}=t.input;
+ const binding={claim:{officialRequestId:row.officialRequestId,npcId},motion,motionPosePreset,direction,assetSetSha256,
+  predecessorTaskId:t.dependsOn,sourcePortraitStage:'portrait_combat_'+direction};
+ let stage='portrait_'+direction;
+ const p=postprocessPorts({transport:async()=>Buffer.from(JSON.stringify({direction,motion,posePreset:motionPosePreset,assetSetSha256,
+  sequence:{schemaVersion:'ngs.animation-native-png-sequence.v1',npcId,presetId:motion,posePreset:motionPosePreset,direction,
+   requestId:t.dependsOn,frameCount:2,frames:[{},{}],
+   sourceBindingHash:sha(canonical([row.officialRequestId,stage,motion,motionPosePreset,assetSetSha256]))}}))});
+ await assert.rejects(p.read(binding),/POSTPROCESS_PDS_SELECTED_SOURCE_BINDING/);
+ stage=binding.sourcePortraitStage;
+ assert.equal((await p.read(binding)).posePreset,'combat');
+});
 test('matches Planner golden media for replacement and new generation',()=>{
  for(const {row,tasks} of cases){
   const watched=tasks.filter(t=>t.workerType==='postprocess');

@@ -12,7 +12,7 @@ def wire_numbers(value):
     if type(value) is dict: return {k: wire_numbers(v) for k,v in value.items()}
     return value
 
-def process(root, claim, motion, direction, raw, model_digest, alpha_runner, *, pose_preset="idle", asset_set_sha256=None):
+def process(root, claim, motion, direction, raw, model_digest, alpha_runner, *, pose_preset="idle", asset_set_sha256=None, source_portrait_stage=None):
     from workers.resident.backends.animation_native_png import BINDING_KEYS, validate_native_png_manifest
     from workers.resident.backends.frame_native_manifests import build_alpha_manifest, manifest_hash
     from workers.resident.backends.frame_processing import process_set
@@ -25,8 +25,12 @@ def process(root, claim, motion, direction, raw, model_digest, alpha_runner, *, 
         raise ValueError('POSTPROCESS_SOURCE_SCOPE')
     if asset_set_sha256 is not None:
         import re
+        legacy_stage='portrait_'+direction
+        stage = source_portrait_stage if source_portrait_stage is not None else legacy_stage
+        if (not isinstance(stage,str) or stage not in (legacy_stage, 'portrait_'+pose_preset+'_'+direction)):
+            raise ValueError('POSTPROCESS_SELECTED_SOURCE_HASH')
         if (not isinstance(asset_set_sha256,str) or not re.fullmatch('[a-f0-9]{64}',asset_set_sha256)
-            or raw['sourceBindingHash']!=manifest_hash([claim['officialRequestId'],'portrait_'+direction,motion,pose_preset,asset_set_sha256])):
+            or raw['sourceBindingHash']!=manifest_hash([claim['officialRequestId'],stage,motion,pose_preset,asset_set_sha256])):
             raise ValueError('POSTPROCESS_SELECTED_SOURCE_HASH')
     validate_native_png_manifest(raw, values, original, frame_count=raw['frameCount'], fps=raw['fps'])
     raw_path = f"canonical-files/binari/npcs/{claim['npcId']}/animation-sequences/{pose_preset}/{motion}/{direction}.json"
@@ -62,5 +66,5 @@ if __name__=='__main__':
     if not re.fullmatch('[a-f0-9]{64}',model_digest): raise ValueError('POSTPROCESS_MODEL_DIGEST_REQUIRED')
     root = Path(sys.argv[1]); data = json.loads((root/'input.json').read_text())
     out = process(root, data['claim'], data['motion'], data['direction'], data['sequence'],model_digest,run_alpha,
-                  pose_preset=data.get('motionPosePreset','idle'),asset_set_sha256=data.get('assetSetSha256'))
+                  pose_preset=data.get('motionPosePreset','idle'),asset_set_sha256=data.get('assetSetSha256'),source_portrait_stage=data.get('sourcePortraitStage'))
     (root/'output.json').write_text(json.dumps(out,allow_nan=False))

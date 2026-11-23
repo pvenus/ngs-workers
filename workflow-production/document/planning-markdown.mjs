@@ -4,6 +4,7 @@ const headings={
  'npc.plan-portrait-art':['이미지 제작 지시','인물 외형','복장과 색','화풍과 표현 금지','확정과 제안'],
  'npc.plan-representative':['포즈 제작 지시','대표 자세와 표정','카메라와 구도','검수 기준'],
  'npc.plan-idle':['포즈 제작 지시','유지할 외형','정지 자세','방향별 가림','검수 기준'],
+ 'npc.plan-combat':['포즈 제작 지시','유지할 외형','전투 자세','방향별 가림','검수 기준'],
 };
 export const planningHeadings=Object.freeze(Object.fromEntries(
  Object.entries(headings).map(([operation,sections])=>[operation,Object.freeze(sections)])));

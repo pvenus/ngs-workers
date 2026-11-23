@@ -12,12 +12,13 @@ import {validatePlanningMarkdown} from './planning-markdown.mjs';
 import {presetArtifact} from './preset.mjs';
 import {readPlanningSources,assertCurrentPlanning} from './planning-input.mjs';
 import {buildPlan as buildSelectionPlan,isSelectionSchema} from './vendor/planner-npc-motion-selection-v1/planner.mjs';
+import {motionPoseRegistry} from './vendor/planner-npc-motion-selection-v1/envelope.mjs';
 import {canonical,sha} from './vendor/planner-89c7568/envelope.mjs';
 
 const validId=(v)=>typeof v==='string'&&/^workflow\.task\.[a-f0-9]{64}$/.test(v);
 const CONCEPT='concept.category-generate',UPDATE='npc.planning.update',ADD='npc.planning.add';
 const PRESET='npc.preset', OVERVIEW='npc.plan-overview', ART='npc.plan-portrait-art',
- REPRESENTATIVE='npc.plan-representative', IDLE='npc.plan-idle';
+ REPRESENTATIVE='npc.plan-representative', IDLE=motionPoseRegistry.idle.planType, COMBAT=motionPoseRegistry.combat.planType;
 const contracts={
  [ADD]:{key:'planning_add',port:'PlanningAdd',artifact:'workflow.npc-planning-add-markdown.v1'},
  [UPDATE]:{key:'planning_update',port:'PlanningUpdate',artifact:'workflow.npc-planning-update-markdown.v1'},
@@ -29,8 +30,10 @@ const contracts={
    artifact:'workflow.npc-portrait-art-plan-artifact.v1',upstream:[['overviewContent',OVERVIEW]]},
  [REPRESENTATIVE]:{key:'planning_representative',role:'portrait.representative',category:'portrait.representative',
    port:'Representative',artifact:'workflow.npc-representative-plan-artifact.v1',upstream:[['portraitArtContent',ART]]},
- [IDLE]:{key:'planning_idle',role:'portrait.idle',category:'portrait.idle',port:'Idle',
+ [IDLE]:{key:motionPoseRegistry.idle.planKey,role:'portrait.idle',category:'portrait.idle',port:'Idle',
    artifact:'workflow.npc-idle-plan-artifact.v1',upstream:[['portraitArtContent',ART],['representativeContent',REPRESENTATIVE]]},
+ [COMBAT]:{key:motionPoseRegistry.combat.planKey,role:'portrait.combat',category:'portrait.combat',port:'Combat',
+   artifact:'workflow.npc-combat-plan-artifact.v1',upstream:[['portraitArtContent',ART],['representativeContent',REPRESENTATIVE]]},
 };
 const taskKey=(officialRequestId,key)=>'workflow.task.'+sha(canonical([officialRequestId,key]));
 const targetCategory=(officialRequestId,operation)=>'category.preset.'+
@@ -93,7 +96,8 @@ function claim(db,taskId,officialRequestId,operation){
    payloadSha256:row.payload_sha256,operation,
    predecessorReceiptRef:row.parent_result_ref??null});
   db.exec('COMMIT');
-  return {row,stamp,command,payload,fourDoc};
+  const selectedPlanningRoles=plan.tasks.filter(task=>task.workerType==='document'&&contracts[task.type]?.role).map(task=>contracts[task.type].role);
+  return {row,stamp,command,payload,fourDoc,selectedPlanningRoles};
  }catch(e){db.exec('ROLLBACK');throw e;}
 }
 function verifiedPreset(receipt,command){
@@ -271,7 +275,7 @@ export async function runSelectedDocument({db,taskId,officialRequestId,pds,opera
  const unresolved={state:'requires_reconciliation',taskId,code:operation===PRESET?'WORKFLOW_PRESET_RECONCILIATION_REQUIRED':'WORKFLOW_PLAN_RECONCILIATION_REQUIRED'};
  try{
   let artifact,basis;
-  if(operation===PRESET)artifact=canonical(presetArtifact(selected.payload,taskId));
+  if(operation===PRESET)artifact=canonical(presetArtifact(selected.payload,taskId,{selectedPlanningRoles:selected.selectedPlanningRoles}));
   else if(operation===ADD)artifact=canonical(await generatePlanningAdd(selected,pds,render,withPlanningSnapshot,signal));
   else if(operation===UPDATE)artifact=canonical(await generatePlanningUpdate(selected,pds,render,withPlanningSnapshot,signal));
   else if(operation===CONCEPT)artifact=canonical({schemaVersion:spec.artifact,categoryId:selected.command.categoryId,

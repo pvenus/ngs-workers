@@ -1,9 +1,10 @@
 import {probePresetDatabase,runDocumentFromPath} from './worker.mjs';
 
+import {motionPoseRegistry} from './vendor/planner-npc-motion-selection-v1/envelope.mjs';
 import {nextWorkflowTaskFromPath} from './workflow-ready.mjs';
 
 const CONCEPT='concept.category-generate',UPDATE='npc.planning.update',ADD='npc.planning.add';
-const PRESET='npc.preset',OVERVIEW='npc.plan-overview',ART='npc.plan-portrait-art',REP='npc.plan-representative',IDLE='npc.plan-idle';
+const PRESET='npc.preset',OVERVIEW='npc.plan-overview',ART='npc.plan-portrait-art',REP='npc.plan-representative',IDLE='npc.plan-idle',COMBAT='npc.plan-combat';
 const supported=Object.freeze([
  {workerType:'document',taskType:CONCEPT,taskKey:'category_generate',predecessorKey:null},
  {workerType:'document',taskType:CONCEPT,taskKey:'category_generate',predecessorKey:'category_delete'},
@@ -13,7 +14,7 @@ const supported=Object.freeze([
  {workerType:'document',taskType:ART,taskKey:'planning_portrait_art',predecessorKey:'planning_overview'},
  {workerType:'document',taskType:REP,taskKey:'planning_representative',predecessorKey:'planning_portrait_art'},
  {workerType:'document',taskType:REP,taskKey:'planning_representative',predecessorKey:'preset'},
- {workerType:'document',taskType:IDLE,taskKey:'planning_idle',predecessorKey:'planning_representative'},
+ ...Object.values(motionPoseRegistry).map(({planKey,planType})=>({workerType:'document',taskType:planType,taskKey:planKey,predecessorKey:'planning_representative'})),
  {workerType:'document',taskType:UPDATE,taskKey:'planning_update',predecessorKey:null},
  {workerType:'document',taskType:ADD,taskKey:'planning_add',predecessorKey:null},
 ]);
@@ -22,7 +23,7 @@ export function parseArgs(args){
  if(args.at(-2)==='--audit-dir'&&args.at(-1).startsWith('/')){
   auditDirectory=args.at(-1);args=args.slice(0,-2);
  }
- const explicit=args.at(-2)==='--operation'&&[OVERVIEW,ART,REP,IDLE,CONCEPT,UPDATE,ADD].includes(args.at(-1))?args.at(-1):null;
+ const explicit=args.at(-2)==='--operation'&&[OVERVIEW,ART,REP,IDLE,COMBAT,CONCEPT,UPDATE,ADD].includes(args.at(-1))?args.at(-1):null;
  if(auditDirectory!==undefined&&(!explicit||args[0]!=='--execute'))throw Error('DOCUMENT_WORKER_EXPLICIT_MODE_REQUIRED');
  if(explicit)args=args.slice(0,-2);
  const op=explicit?{operation:explicit,...(auditDirectory?{auditDirectory}:{})}:{};

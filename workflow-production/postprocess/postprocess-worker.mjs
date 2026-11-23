@@ -1,7 +1,7 @@
 import {DatabaseSync} from 'node:sqlite';
 import {directions,buildPlan,portraitPixelTaskType,pixelImageStyle} from './vendor/planner-pixel-chain/planner.mjs';
 import {canonical} from './vendor/planner-f24d23a/envelope.mjs';
-import {isSelectedMediaRun,regenerateType,regenerateSchema,selectedMotionBranch,matchesMotionTask} from './vendor/npc-motion-selection-v1/media-branch.mjs';
+import {isSelectedMediaRun,selectionSchemas,regenerateType,regenerateSchemas,motionPoseRegistry,selectedMotionBranch,matchesMotionTask} from './vendor/npc-motion-selection-v1/media-branch.mjs';
 import {assertDatabasePath,protectSchema,nextWorkflowTaskFromPath,markWorkflowTaskFailed,workflowTaskEligibleSql,workflowTaskRetrySetSql} from './workflow-ready.mjs';
 
 import {FramesDefinitelyRejected} from './postprocess-ports.mjs';
@@ -10,11 +10,10 @@ const TYPE='npc.frames-postprocess',WORKER='postprocess';
 const frameScopes=['walk','run'].flatMap(m=>directions.map(d=>Object.freeze({
  workerType:WORKER,taskType:TYPE,taskKey:'frames_'+m+'_'+d,predecessorKey:'animation_'+m+'_'+d,
 })));
-const pixelScopes=['idle','combat'].flatMap(pose=>[null,...directions].map(d=>Object.freeze({
+const pixelScopes=Object.entries(motionPoseRegistry).flatMap(([pose,lane])=>[null,...directions].map(d=>Object.freeze({
  workerType:WORKER,taskType:portraitPixelTaskType,
  taskKey:'portrait_pixel_'+pose+'_'+(d??'reference'),
- predecessorKey:pose==='idle'?(d?'portrait_'+d:'portrait_idle_reference'):
-  'portrait_combat_'+(d??'reference'),
+ predecessorKey:d?lane.directionPrefix+d:lane.referenceKey,
 })));
 const id=/^workflow\.task\.[a-f0-9]{64}$/;
 const official=/^request\.official\.[a-f0-9]{64}$/;
@@ -31,9 +30,9 @@ function checked(db,taskId,requestId,state,stamp){
  if(!row||!task||(!claiming&&task.status!==state)||![TYPE,portraitPixelTaskType].includes(task.task_type)||task.worker_type!==WORKER||task.result_ref!==null||
     (stamp!==undefined&&task.updated_at!==stamp))return null;
  const selected=isSelectedMediaRun(row.request_type,row.schema_version);
- let target,parent,plan;
+ let target,parent,plan,sourcePortraitStage;
  if(selected){
-  ({target,parent}=selectedMotionBranch(row,task.task_key));
+  ({target,parent,sourcePortraitStage}=selectedMotionBranch(row,task.task_key));
   plan={payload:row.payload};
  }else{
   plan=buildPlan({officialRequestId:requestId,projectId:row.project_id,requestType:row.request_type,
@@ -47,7 +46,7 @@ function checked(db,taskId,requestId,state,stamp){
  if(pixel){
   const {posePreset,direction}=target.input;
   const slot=pixelScopes.find(v=>v.taskKey===target.key);
-  expect(slot&&['idle','combat'].includes(posePreset)&&(direction===null||directions.includes(direction))&&
+  expect(slot&&Object.hasOwn(motionPoseRegistry,posePreset)&&(direction===null||directions.includes(direction))&&
    parent?.key===slot.predecessorKey&&parent.workerType==='image'&&parent.input.imageStyle===pixelImageStyle&&
    (parent.input.direction??null)===direction&&parent.input.npcId===target.input.npcId,
    'POSTPROCESS_PORTRAIT_SOURCE_BINDING_INVALID');
@@ -58,7 +57,7 @@ function checked(db,taskId,requestId,state,stamp){
  const dep=db.prepare('SELECT * FROM workflow_tasks WHERE task_id=? AND official_request_id=?').get(target.dependsOn,requestId);
  if(!dep||dep.status!=='completed')return null;
  expect(matchesMotionTask(dep,parent),'POSTPROCESS_PREDECESSOR_BINDING_INVALID');
- return {task,row,dep,input:target.input,pixel,selected};
+ return {task,row,dep,input:target.input,pixel,selected,sourcePortraitStage};
 }
 function nextSelectedPostprocess(dbPath){
  assertDatabasePath(dbPath);
@@ -69,11 +68,11 @@ function nextSelectedPostprocess(dbPath){
    FROM workflow_tasks t JOIN workflow_runs r USING(official_request_id)
    JOIN workflow_tasks p ON p.task_id=t.depends_on_task_id AND p.official_request_id=t.official_request_id
    WHERE r.state='planned' AND r.reason IS NULL AND r.project_id='binari'
-   AND ((r.request_type='npc.workflow' AND r.schema_version IN ('ngs.npc-one-stop.selection.v1','ngs.npc-one-stop.selection.replace.v1'))
-        OR (r.request_type=? AND r.schema_version=?))
+   AND ((r.request_type='npc.workflow' AND r.schema_version IN (${selectionSchemas.map(()=>'?')}))
+        OR (r.request_type=? AND r.schema_version IN (${regenerateSchemas.map(()=>'?')})))
    AND ${workflowTaskEligibleSql('t')} AND t.result_ref IS NULL AND t.worker_type=? AND t.task_type=?
    AND t.task_key GLOB 'frames_motion_*' AND p.status='completed' AND p.worker_type='animation'
-   ORDER BY r.registered_at,r.official_request_id,t.task_key LIMIT 1`).get(regenerateType,regenerateSchema,WORKER,TYPE);
+   ORDER BY r.registered_at,r.official_request_id,t.task_key LIMIT 1`).get(...selectionSchemas,regenerateType,...regenerateSchemas,WORKER,TYPE);
   if(!row)return null;
   const {target}=selectedMotionBranch(row,row.task_key);
   expect(target.id===row.task_id,'POSTPROCESS_TASK_BINDING_INVALID');
@@ -111,7 +110,7 @@ export async function runPostprocessFromPath({dbPath,taskId,officialRequestId,pd
     payloadSha256:found.row.payload_sha256,claimStamp:stamp});
    const binding=Object.freeze({claim,direction:found.input.direction,predecessorTaskId:found.dep.task_id,
     ...(found.pixel?{posePreset:found.input.posePreset}:{motion:found.input.motion,...(found.selected?
-     {motionPosePreset:found.input.posePreset,assetSetSha256:found.input.assetSetSha256}:{})})});
+     {motionPosePreset:found.input.posePreset,assetSetSha256:found.input.assetSetSha256,sourcePortraitStage:found.sourcePortraitStage}:{})})});
    return {found,stamp,binding};
   });
   if(!selected)return {state:'not_claimable',taskId};

@@ -9,7 +9,7 @@ import {setTimeout as delay} from 'node:timers/promises';
 import {fileURLToPath} from 'node:url';
 import {createWarmAnimation,spawnAnimationChannel} from './animation-warm.mjs';
 import {choosePresetFrames,executePresetFrames,presetFramePorts} from './preset-frame-worker.mjs';
-import {isSelectedMediaRun,isRegenerateRun,regenerateType,regenerateSchema,selectedMotionBranch,matchesMotionTask} from './vendor/npc-motion-selection-v1/media-branch.mjs';
+import {isSelectedMediaRun,isRegenerateRun,selectionSchemas,poseSelectionSchemas,regenerateType,regenerateSchemas,selectedMotionBranch,matchesMotionTask} from './vendor/npc-motion-selection-v1/media-branch.mjs';
 import {assertDatabasePath,protectSchema,nextWorkflowTaskFromPath,markWorkflowTaskFailed,workflowTaskEligibleSql,workflowTaskRetrySetSql} from './workflow-ready.mjs';
 
 const path='/v1/npcs/ownership/workflow-animation',type='npc.animation-native-png';
@@ -61,10 +61,10 @@ function chooseSelected(dbPath){
    WHERE r.state='planned' AND r.reason IS NULL AND r.project_id='binari'
    AND ${workflowTaskEligibleSql('t')} AND t.result_ref IS NULL AND t.worker_type='animation' AND t.task_type=?
    AND t.task_key GLOB 'animation_motion_*' AND (
-    (r.request_type='npc.workflow' AND r.schema_version IN ('ngs.npc-one-stop.selection.v1','ngs.npc-one-stop.selection.replace.v1')
-      AND p.status='completed' AND p.worker_type='image')
-    OR (r.request_type=? AND r.schema_version=? AND t.depends_on_task_id IS NULL))
-   ORDER BY r.registered_at,r.official_request_id,t.task_key LIMIT 1`).get(type,regenerateType,regenerateSchema);
+    (r.request_type='npc.workflow' AND r.schema_version IN (${selectionSchemas.map(()=>'?')})
+      AND p.status='completed' AND p.worker_type=CASE WHEN r.schema_version IN (${poseSelectionSchemas.map(()=>'?')}) THEN 'postprocess' ELSE 'image' END)
+    OR (r.request_type=? AND r.schema_version IN (${regenerateSchemas.map(()=>'?')}) AND t.depends_on_task_id IS NULL))
+   ORDER BY r.registered_at,r.official_request_id,t.task_key LIMIT 1`).get(type,...selectionSchemas,...poseSelectionSchemas,regenerateType,...regenerateSchemas);
   if(!row)return;
   const {target,parent}=selectedMotionBranch(row,row.task_key);
   insist(target.id===row.task_id,'ANIMATION_DB_TARGET');
@@ -89,10 +89,10 @@ function claim(db,t){
   ${selected?'LEFT ':''}JOIN workflow_tasks p ON p.task_id=t.depends_on_task_id AND p.official_request_id=t.official_request_id
   WHERE r.state='planned' AND ${workflowTaskEligibleSql('t')} AND t.result_ref IS NULL AND t.worker_type='animation'
    AND t.task_type=? AND t.task_id=? AND t.official_request_id=? AND t.task_key=? AND
-   ${selected?"((? IS NULL AND r.request_type=? AND r.schema_version=? AND t.depends_on_task_id IS NULL) OR (p.task_key=? AND p.status='completed'))":
+   ${selected?`((? IS NULL AND r.request_type=? AND r.schema_version IN (${regenerateSchemas.map(()=>'?')}) AND t.depends_on_task_id IS NULL) OR (p.task_key=? AND p.status='completed'))`:
      "(p.task_key=? AND p.status='completed')"}`);
  return transaction(db,()=>{
-  const args=selected?[t.parent,regenerateType,regenerateSchema,t.parent]:[t.parent];
+  const args=selected?[t.parent,regenerateType,...regenerateSchemas,t.parent]:[t.parent];
   const r=s.get(type,t.taskId,t.officialRequestId,t.key,...args);
   if(!r)return null;
   const params=JSON.parse(r.task_input), intent=JSON.parse(r.payload);

@@ -44,11 +44,16 @@ const layoutGuidance={
   'Use both the shared portrait-art plan and current representative pose plan. Keep the exact accepted face, hair, age, body proportions, clothing and palette; list what is inherited separately from the new pose. Do not redesign the character.',
   'In 포즈 제작 지시, give the concise idle-only visual delta: natural neutral full-body standing pose, feet and center of gravity, hands, head and gaze, and garment coverage. State a directional occlusion only when grounded in the applicable rule; strict side stationary occlusion is not a walking/running restriction. Do not add scene elements.',
  ],
+ 'npc.plan-combat':[
+  'Use the shared portrait-art and representative pose plans as the character and costume authorities. Define a single stable battle-ready full-body stance with a readable center of gravity, hand placement, silhouette and garment coverage.',
+  'In 포즈 제작 지시, provide only the combat pose delta. Carry forward exactly the approved face, outfit, palette and equipment. If no weapon or accessory is approved, do not invent one. Do not describe an attack in motion or add scenery, effects, text or extra figures.',
+ ],
 };
 const masterScopeGuidance={
  'npc.plan-overview':'Master character guidance governs identity, persona and mutable state. Master expression is narrative-tone guidance here; do not turn visual or scene advice into approved facts.',
  'npc.plan-portrait-art':'Master character guidance preserves identity. From expression prioritize visual style, prohibitions, common art and NPC scope. Scene image directions are not isolated-portrait instructions.',
  'npc.plan-representative':'Master character guidance preserves identity. Expression informs the pose and readability within the exact accepted portrait-art design; do not replay scene instructions or redesign.',
+ 'npc.plan-combat':'Master character guidance preserves identity. Expression informs the combat silhouette, readiness and directional readability without changing equipment or motion rules.',
  'npc.plan-idle':'Master character guidance preserves identity. Expression informs neutral pose, silhouette and readability within the exact earlier art and representative plans; do not apply scene directions or change motion rules.',
 };
 const updateType='npc.planning.update',addType='npc.planning.add';
@@ -59,6 +64,7 @@ const upstreamKeys={
  'npc.plan-portrait-art':['overviewContent'],
  'npc.plan-representative':['portraitArtContent'],
  'npc.plan-idle':['portraitArtContent','representativeContent'],
+ 'npc.plan-combat':['portraitArtContent','representativeContent'],
 };
 function structuredHeader(operation){
  return [

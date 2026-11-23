@@ -9,25 +9,39 @@ import {presetArtifact} from './preset.mjs';
 import {resolvePlanningDocument} from './planning-document-storage.mjs';
 import {preparePlanningSources,readPlanningSources} from './planning-input.mjs';
 import {buildPlan as buildSelectionPlan,isSelectionSchema} from './vendor/planner-npc-motion-selection-v1/planner.mjs';
+import {motionPoseRegistry} from './vendor/planner-npc-motion-selection-v1/envelope.mjs';
 import {canonical,sha} from './vendor/planner-f24d23a/envelope.mjs';
 
 const validId=(v)=>typeof v==='string'&&/^workflow\.task\.[a-f0-9]{64}$/.test(v);
 export const PORTRAIT='npc.portrait-representative',IDLE_PORTRAIT='npc.portrait-idle-reference',DIRECTION_PORTRAIT='npc.portrait-direction';
-export const imageOperations=Object.freeze([PORTRAIT,IDLE_PORTRAIT,DIRECTION_PORTRAIT]);
+export const COMBAT_REFERENCE_PORTRAIT=motionPoseRegistry.combat.referenceType,COMBAT_DIRECTION_PORTRAIT=motionPoseRegistry.combat.directionType;
+const poseStages=Object.entries(motionPoseRegistry).flatMap(([pose,lane])=>[
+ [lane.referenceType,{pose,lane,stage:'reference'}],[lane.directionType,{pose,lane,stage:'direction'}],
+]);
+const portraitStages=Object.fromEntries(poseStages);
+export const imageOperations=Object.freeze([PORTRAIT,...poseStages.map(([op])=>op)]);
 const PRESET='npc.preset', REPRESENTATIVE='npc.plan-representative';
 const pixelCenterKey='portrait_pixel_idle_reference';
+const poseFor=operation=>portraitStages[operation]?.pose;
+const directionOperation=operation=>portraitStages[operation]?.stage==='direction';
+const referenceOperation=operation=>portraitStages[operation]?.stage==='reference';
+const centerFor=operation=>'portrait_pixel_'+poseFor(operation)+'_reference';
+const directionKey=(operation,d)=>portraitStages[operation].lane.directionPrefix+d;
 const contracts={
  [PRESET]:{key:'preset',worker:'document',receipt:'workflow.preset-publication-receipt.v1'},
  [REPRESENTATIVE]:{key:'planning_representative',worker:'document'},
  [PORTRAIT]:{key:'portrait_representative',worker:'image',parent:'planning_representative'},
- [IDLE_PORTRAIT]:{key:'portrait_idle_reference',worker:'image',parent:'planning_idle'},
- [DIRECTION_PORTRAIT]:{worker:'image',parent:'portrait_idle_reference'},
+ ...Object.fromEntries(poseStages.map(([operation,{pose,lane,stage}])=>[operation,stage==='reference'?
+  {key:lane.referenceKey,worker:'image',parent:lane.planKey}:
+  {worker:'image',parent:pose==='idle'?lane.referenceKey:centerFor(operation)}])),
 };
 const idleImagePrerequisite=Object.freeze({taskKey:'portrait_representative',taskType:PORTRAIT,workerType:'image'});
 const imageArtifacts={
  [PORTRAIT]:'workflow.npc-representative-portrait-artifact.v1',
  [IDLE_PORTRAIT]:'workflow.npc-idle-reference-portrait-artifact.v1',
  [DIRECTION_PORTRAIT]:'workflow.npc-direction-portrait-artifact.v1',
+ [COMBAT_REFERENCE_PORTRAIT]:'workflow.npc-combat-reference-portrait-artifact.v1',
+ [COMBAT_DIRECTION_PORTRAIT]:'workflow.npc-combat-direction-portrait-artifact.v1',
 };
 const ready=(retry,idle)=>`SELECT t.task_id,t.task_key,t.task_input,t.depends_on_task_id,
   t.updated_at AS task_updated_at,
@@ -50,25 +64,25 @@ function claim(db,taskId,officialRequestId,operation){
  try{
   const role=contracts[operation].worker;
   const canRetry=role==='image';
-  const idle=operation===IDLE_PORTRAIT,query=ready(canRetry,idle);
+  const reference=referenceOperation(operation),query=ready(canRetry,reference);
   const primary=[taskId,officialRequestId,operation,role];
-  if(idle)primary.push('workflow.task.'+sha(canonical([officialRequestId,idleImagePrerequisite.taskKey])));
+  if(reference)primary.push('workflow.task.'+sha(canonical([officialRequestId,idleImagePrerequisite.taskKey])));
   const row=db.prepare(query).get(...primary);
   if(!row){db.exec('COMMIT');return null;}
   const taskInput=JSON.parse(row.task_input);
   const pixel=taskInput.imageStyle===pixelImageStyle;
-  if(pixel&&![IDLE_PORTRAIT,DIRECTION_PORTRAIT].includes(operation))throw Error('WORKFLOW_PORTRAIT_STYLE_INVALID');
+  if((pixel&&!referenceOperation(operation)&&!directionOperation(operation))||(!pixel&&poseFor(operation)!==undefined&&poseFor(operation)!=='idle'))throw Error('WORKFLOW_PORTRAIT_STYLE_INVALID');
   const build=isSelectionSchema(row.schema_version)?buildSelectionPlan:pixel?buildPixelPlan:buildPlan;
   const plan=build({officialRequestId:row.official_request_id,projectId:row.project_id,
    requestType:row.request_type,schemaVersion:row.schema_version,payload:JSON.parse(row.payload),
    payloadSha256:row.payload_sha256,status:'registered',registeredAt:row.registered_at},{pixelPortraits:pixel});
   const expected=plan.tasks.find(t=>t.id===taskId&&t.type===operation&&t.workerType===role&&
-   (operation===DIRECTION_PORTRAIT?directions.includes(t.input.direction)&&t.key==='portrait_'+t.input.direction:t.key===contracts[operation].key));
+   (directionOperation(operation)?directions.includes(t.input.direction)&&t.key===directionKey(operation,t.input.direction):t.key===contracts[operation].key));
   if(!expected||expected.id!==taskId||row.task_key!==expected.key||row.payload!==plan.payload||
       row.task_input!==canonical(expected.input)||row.depends_on_task_id!==expected.dependsOn||
       !Number.isSafeInteger(row.task_updated_at)||row.task_updated_at<0)throw Error('WORKFLOW_PRESET_BINDING_INVALID');
-  if(pixel&&operation===DIRECTION_PORTRAIT){
-   const prior=plan.tasks.find(t=>t.key===pixelCenterKey);
+  if(pixel&&directionOperation(operation)){
+   const prior=plan.tasks.find(t=>t.key===centerFor(operation));
    const actual=db.prepare('SELECT task_key,task_type,worker_type,task_input,depends_on_task_id,status FROM workflow_tasks WHERE official_request_id=? AND task_id=?').get(officialRequestId,expected.dependsOn);
    if(!prior||!actual||actual.task_key!==prior.key||actual.task_type!==portraitPixelTaskType||
     actual.worker_type!=='postprocess'||actual.status!=='completed'||actual.task_input!==canonical(prior.input)||
@@ -127,14 +141,14 @@ function finish(db,selected,resultRef){
  }catch(e){db.exec('ROLLBACK');throw e;}
 }
 
-function currentBasis(value,payload,contentKey,extra=[],pixelReference=false){
+function currentBasis(value,payload,contentKey,extra=[],pixelReference=null){
  if(!exact(value,['basis','character',contentKey,...extra])||!exact(value.character,Object.keys(payload.character))||
   canonical(value.character)!==canonical(payload.character))throw Error('WORKFLOW_PLAN_CHARACTER_CHANGED');
  const b=value.basis;
  const portrait=contentKey==='planningContent';
  const hex64=value=>typeof value==='string'&&/^[a-f0-9]{64}$/.test(value);
  if(!exact(b,portrait?(pixelReference?['categoryId','referenceStage','referenceAssetId']:['categoryId']):['sourceVersion','revision','generationId','categoryId'])||
-  (pixelReference&&(b.referenceStage!==pixelCenterKey||typeof b.referenceAssetId!=='string'||!/^[a-f0-9]{64}\.png$/.test(b.referenceAssetId)))||
+  (pixelReference&&(b.referenceStage!==pixelReference||typeof b.referenceAssetId!=='string'||!/^[a-f0-9]{64}\.png$/.test(b.referenceAssetId)))||
   (!portrait&&(!Number.isSafeInteger(b.revision)||b.revision<0||!hex64(b.sourceVersion)||
    typeof b.generationId!=='string'||!/^[a-f0-9]{48}$/.test(b.generationId)))||
   typeof b.categoryId!=='string'||!/^category\.preset\.[a-f0-9]{32}$/.test(b.categoryId))
@@ -158,7 +172,7 @@ function portraitInput(sources,payload,basis,planningContent,operation,officialR
   throw Error('WORKFLOW_PORTRAIT_PLAN_REQUIRED');
  const doc=resolvePlanningDocument(sources,basis.categoryId);
  if(!doc)throw Error('WORKFLOW_PORTRAIT_PLAN_REQUIRED');
- if(!doc||doc.id!==basis.categoryId||doc.planningRole!==(operation===PORTRAIT?'portrait.representative':'portrait.idle')||doc.content!==planningContent)
+ if(!doc||doc.id!==basis.categoryId||doc.planningRole!==(operation===PORTRAIT?'portrait.representative':'portrait.'+poseFor(operation))||doc.content!==planningContent)
   throw Error('WORKFLOW_PORTRAIT_PLAN_CHANGED');
  const {character,intent,sourceRefs}=payload;
  const presetTask='workflow.task.'+sha(canonical([officialRequestId,'preset']));
@@ -171,7 +185,7 @@ function portraitInput(sources,payload,basis,planningContent,operation,officialR
   if(art?.id!==artId||art.planningRole!=='portrait.art'||typeof art.content!=='string'||
    !art.content.trim()||[...art.content].length>16000)throw Error('WORKFLOW_PORTRAIT_ART_REQUIRED');
   const artDirection=validatePlanningMarkdown(art.content,'npc.plan-portrait-art')['이미지 제작 지시'];
-  const poseOperation=operation===PORTRAIT?'npc.plan-representative':'npc.plan-idle';
+  const poseOperation=operation===PORTRAIT?'npc.plan-representative':portraitStages[operation].lane.planType;
   const poseDirection=validatePlanningMarkdown(planningContent,poseOperation)['포즈 제작 지시'];
   return {character:{...character},artDirection,poseDirection,...extra};
  }
@@ -220,13 +234,13 @@ async function runSelected({db,taskId,officialRequestId,pds,operation=PRESET,ren
   else if(image){
    phase('reading-current-basis');
    const input=await pds.readPortrait(selected.command,selected.stamp,signal);
-   const needsReference=operation!==PORTRAIT,needsDirection=operation===DIRECTION_PORTRAIT;
-   const pixelReference=selected.pixel&&needsDirection;
+   const needsReference=operation!==PORTRAIT,needsDirection=directionOperation(operation);
+   const pixelReference=selected.pixel&&needsDirection?centerFor(operation):null;
    basis=currentBasis(input,selected.payload,'planningContent',needsDirection?['reference','direction']:needsReference?['reference']:[],pixelReference);
    if(needsDirection&&input.direction!==selected.expected.input.direction)throw Error('WORKFLOW_PORTRAIT_DIRECTION_CHANGED');
    const extra=needsReference?{reference:portraitReference(input.reference),...(needsDirection?{direction:input.direction}:{})}:{};
    if(pixelReference&&extra.reference.assetId!==basis.referenceAssetId)throw Error('WORKFLOW_PORTRAIT_PIXEL_REFERENCE_CHANGED');
-   if(selected.pixel)Object.assign(extra,{imageStyle:pixelImageStyle,posePreset:'idle'});
+   if(selected.pixel)Object.assign(extra,{imageStyle:pixelImageStyle,posePreset:poseFor(operation)});
    const npcId=selected.payload.character.npcId;
    phase('verifying-source-folders');
    const resultImage=await withPlanningSnapshot({npcId,signal},async snapshot=>{
@@ -306,9 +320,9 @@ export const runPresetFromPath=options=>runDocumentFromPath({...options,operatio
 export function nextPortraitFromPath(dbPath){
  for(const operation of imageOperations){
   const {key,parent}=contracts[operation];
-  for(const taskKey of key?[key]:directions.map(value=>'portrait_'+value)){
+  for(const taskKey of key?[key]:directions.map(value=>directionKey(operation,value))){
    const candidate=predecessorKey=>nextWorkflowTaskFromPath(dbPath,{workerType:'image',taskType:operation,taskKey,predecessorKey,
-    ...(operation===IDLE_PORTRAIT?{alsoCompleted:idleImagePrerequisite}:{})});
+    ...(referenceOperation(operation)?{alsoCompleted:idleImagePrerequisite}:{})});
    const target=candidate(parent)??(operation===DIRECTION_PORTRAIT?candidate(pixelCenterKey):null);
    if(target)return {...target,operation};
   }

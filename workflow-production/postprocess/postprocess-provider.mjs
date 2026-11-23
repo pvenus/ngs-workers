@@ -39,7 +39,7 @@ export async function createPostprocessRenderer({configPath,modelPinsPath,worker
    child.once('close',code=>{clearTimeout(timer);if(code===0)resolveRun();else reject(Error('POSTPROCESS_PROVIDER_FAILED'));});
   });
  }
- return async(sequence,{claim,motion,direction,posePreset,motionPosePreset,assetSetSha256})=>{
+ return async(sequence,{claim,motion,direction,posePreset,motionPosePreset,assetSetSha256,sourcePortraitStage})=>{
   if(posePreset!==undefined){
    const root=await mkdtemp(join(tmpdir(),'workflow-postprocess-pixel-'));
    try{
@@ -60,7 +60,7 @@ export async function createPostprocessRenderer({configPath,modelPinsPath,worker
   const cleanup=()=>rm(root,{recursive:true,force:true});
   try{
    await mkdir(join(root,'raw'),{mode:0o700});
-   await writeFile(join(root,'input.json'),JSON.stringify({claim,motion,direction,sequence,...(motionPosePreset===undefined?{}:{motionPosePreset,assetSetSha256})}),{mode:0o600,flag:'wx'});
+   await writeFile(join(root,'input.json'),JSON.stringify({claim,motion,direction,sequence,...(motionPosePreset===undefined?{}:{motionPosePreset,assetSetSha256,sourcePortraitStage})}),{mode:0o600,flag:'wx'});
    for(const [i,frame] of sequence.frames.entries()){
     if(frame.index!==i)fail('POSTPROCESS_SOURCE_ORDER');
     const raw=await pds.fetchAsset(claim,frame);

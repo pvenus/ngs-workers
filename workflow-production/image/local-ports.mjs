@@ -4,6 +4,8 @@ import {exact} from './vendor/planner-f24d23a/planner.mjs';
 export const presetPath='/v1/npcs/ownership/workflow-preset';
 export const representativePath='/v1/npcs/ownership/workflow-plan-representative';
 export const portraitPath='/v1/npcs/ownership/workflow-portrait-representative';
+export const combatReferencePortraitPath='/v1/npcs/ownership/workflow-portrait-combat-reference';
+export const combatDirectionPortraitPath='/v1/npcs/ownership/workflow-portrait-combat-direction';
 export const idlePortraitPath='/v1/npcs/ownership/workflow-portrait-idle-reference';
 export const directionPortraitPath='/v1/npcs/ownership/workflow-portrait-direction';
 export const motionImagePath='/v1/motion-presets/workflow-convert-2d';
@@ -13,6 +15,8 @@ const routes={
  'npc.portrait-representative':{path:portraitPath,schema:'workflow.representative-portrait-write.v1'},
  'npc.portrait-idle-reference':{path:idlePortraitPath,schema:'workflow.idle-reference-portrait-write.v1'},
  'npc.portrait-direction':{path:directionPortraitPath,schema:'workflow.direction-portrait-write.v1'},
+ 'npc.portrait-combat-reference':{path:combatReferencePortraitPath,schema:'workflow.combat-reference-portrait-write.v1'},
+ 'npc.portrait-combat-direction':{path:combatDirectionPortraitPath,schema:'workflow.combat-direction-portrait-write.v1'},
  'npc.preset':{path:presetPath,schema:'workflow.preset-publication-receipt.v1'},
  'npc.plan-representative':{path:representativePath+'?inputMode=folder-snapshot',schema:'workflow.representative-plan-write.v1'}
 };

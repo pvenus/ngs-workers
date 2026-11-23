@@ -6,9 +6,15 @@ import {tmpdir} from 'node:os';
 import {DatabaseSync} from 'node:sqlite';
 import {choose,claim,execute} from './animation-cli.mjs';
 import {canonical,selectedMotionBranch} from './vendor/npc-motion-selection-v1/media-branch.mjs';
-import {sha} from './vendor/npc-motion-selection-v1/envelope.mjs';
+import {buildPlan as documentProjection} from '../document/vendor/planner-npc-motion-selection-v1/planner.mjs';
+import {buildPlan as fileProjection} from '../file/vendor/planner-npc-motion-selection-v1/planner.mjs';
+import {buildPlan as imageProjection} from '../image/vendor/planner-npc-motion-selection-v1/planner.mjs';
+import {presetArtifact} from '../document/preset.mjs';
+import {sha,motionSelectionSlot} from './vendor/npc-motion-selection-v1/envelope.mjs';
 
 const cases=JSON.parse(readFileSync(new URL('./vendor/npc-motion-selection-v1/golden-media.fixture.json',import.meta.url)));
+const poseCases=JSON.parse(readFileSync(new URL('./vendor/npc-motion-selection-v1/npc-one-stop-motion-selection.v2.fixture.json',import.meta.url))).cases;
+const regeneratePoseGolden=JSON.parse(readFileSync(new URL('./vendor/npc-motion-selection-v1/npc-animation-regenerate.v2.fixture.json',import.meta.url)));
 const regenerateGolden=JSON.parse(readFileSync(new URL('./vendor/npc-motion-selection-v1/npc-animation-regenerate.v1.fixture.json',import.meta.url)));
 const regenerateCase=()=>({row:regenerateGolden.row,tasks:regenerateGolden.plan.tasks.filter(t=>t.workerType==='animation')});
 const generationId='a'.repeat(48),resultBasisSha256='6'.repeat(64);
@@ -16,7 +22,8 @@ const title='npc-animation workflow fixture';
 const dummyPNG=Buffer.from('not production pixels');
 const dummyMP4=Buffer.from('not production video');
 function fixture(t,which=0){
- const {row,tasks}=which==='regenerate'?regenerateCase():cases[which];
+ const {row,tasks}=which==='regenerate'?regenerateCase():which==='pose'?poseCases[0]:
+  which==='regen-pose'?{row:regeneratePoseGolden.row,tasks:regeneratePoseGolden.plan.tasks.filter(t=>t.workerType==='animation')}:cases[which];
  const root=realpathSync(mkdtempSync(join(tmpdir(),'npc-motion-selection-'))),path=join(root,'workflow.sqlite');
  const db=new DatabaseSync(path);chmodSync(path,0o600);
  t.after(()=>{db.close();rmSync(root,{recursive:true,force:true});});
@@ -135,4 +142,143 @@ test('regen rejects a missing, stale-shaped or tampered basis and does not inven
  f.db.prepare("UPDATE workflow_tasks SET depends_on_task_id=? WHERE task_id=?").run(other.id,target.taskId);
  assert.equal(claim(f.db,target),null);
  assert.equal(f.status(target.key),'pending');
+});
+
+
+const dbRow=(row)=>({official_request_id:row.officialRequestId,request_type:row.requestType,project_id:row.projectId,
+ schema_version:row.schemaVersion,state:'planned',reason:null,payload:canonical(row.payload),payload_sha256:row.payloadSha256,registered_at:row.registeredAt});
+
+test('pose v2 worker projections agree with exact Planner golden task bytes',()=>{
+ for(const {row,tasks} of poseCases){
+  const d=dbRow(row);
+  for(const projection of [documentProjection,imageProjection,fileProjection]){
+   const got=projection(row);
+   assert.equal(got.payload,d.payload);
+   assert.deepEqual(got.tasks,tasks.filter(t=>t.workerType==='document'||t.workerType==='image'||
+    t.workerType==='file'||t.key==='portrait_pixel_idle_reference'||t.key==='portrait_pixel_combat_reference'));
+  }
+  for(const task of tasks.filter(t=>t.key.includes('_motion_')||t.key.startsWith('portrait_pixel_'))){
+   const branch=selectedMotionBranch(d,task.key);
+   assert.deepEqual(branch.target,task);
+   assert.deepEqual(branch.parent,tasks.find(t=>t.id===task.dependsOn));
+  }
+ }
+ const {row,plan}=regeneratePoseGolden;
+ for(const target of plan.tasks){
+  const branch=selectedMotionBranch(dbRow(row),target.key);
+  assert.deepEqual(branch.target,target);
+  assert.deepEqual(branch.parent,plan.tasks.find(t=>t.id===target.dependsOn)??null);
+  assert.equal(branch.sourcePortraitStage,(target.input.posePreset==='combat'?'portrait_combat_':'portrait_')+target.input.direction);
+ }
+});
+
+test('two arbitrarily named combat presets share one same-direction final pixel step',()=>{
+ const row=structuredClone(poseCases[0].row);
+ row.payload.motionSelection.push({presetId:'neutral-sounding-alias',posePreset:'combat',assetSetSha256:'4'.repeat(64)});
+ row.payloadSha256=sha(canonical(row.payload));
+ for(const d of ['n','se','w']){
+  const a=selectedMotionBranch(dbRow(row),'animation_motion_'+motionSelectionSlot('sword-attack-flat')+'_'+d);
+  const b=selectedMotionBranch(dbRow(row),'animation_motion_'+motionSelectionSlot('neutral-sounding-alias')+'_'+d);
+  const idle=selectedMotionBranch(dbRow(row),'animation_motion_'+motionSelectionSlot('run-2d')+'_'+d);
+  assert.deepEqual(a.parent,b.parent);assert.equal(a.parent.key,'portrait_pixel_combat_'+d);
+  assert.notDeepEqual(a.parent,idle.parent);assert.equal(idle.parent.key,'portrait_pixel_idle_'+d);
+  assert.equal(a.sourcePortraitStage,'portrait_combat_'+d);
+ }
+ const head=documentProjection(row).tasks;
+ assert.equal(head.filter(t=>t.key==='planning_combat').length,1);
+ const role='portrait.combat';
+ const next=presetArtifact(row.payload,head.find(t=>t.key==='preset').id,{selectedPlanningRoles:[role]});
+ assert.equal(next.profile.planningCategories.filter(v=>v.planningRole===role).length,1);
+ const legacy=presetArtifact(row.payload,head.find(t=>t.key==='preset').id);
+ assert.equal(legacy.profile.planningCategories.some(v=>v.planningRole===role),false);
+ assert.equal(legacy.presetRegistrySha256,next.presetRegistrySha256);
+});
+
+test('animation v2 waits for exact final matching pose pixel and refuses tampered pose before any claim',t=>{
+ const f=fixture(t,'pose');
+ f.finish('portrait_combat_n');
+ f.finish('portrait_pixel_idle_ne');
+ const idle=choose(f.path);
+ assert(idle&&idle.motion==='run-2d'&&idle.direction==='ne');
+ f.finish(idle.key);
+ assert.equal(choose(f.path),undefined);
+ f.finish('portrait_pixel_combat_n');
+ const target=choose(f.path);
+ assert.equal(target.parent,'portrait_pixel_combat_n');
+ f.db.prepare("UPDATE workflow_tasks SET task_input=json_set(task_input,'$.posePreset','idle') WHERE task_key='portrait_pixel_combat_n'").run();
+ assert.throws(()=>claim(f.db,target),/ANIMATION_DB_SELECTED_TARGET/);
+ assert.equal(f.status(target.key),'pending');
+});
+
+test('animation-only v2 consumes existing combat asset without preparing any portrait task',async t=>{
+ const f=fixture(t,'regen-pose');
+ const target=choose(f.path);
+ assert(target&&target.parent===null);
+ const calls=await send(f);
+ assert(calls.includes('/v1/npcs/ownership/workflow-animation'));
+ assert.equal(f.status(target.key),'completed');
+});
+
+test('combat chain consumes exact art/pose documents, representative PNG and combat center correction',async t=>{
+ const {runDocumentFromPath}=await import('../document/worker.mjs');
+ const {planningHeadings}=await import('../document/planning-markdown.mjs');
+ const {runPortraitFromPath,nextPortraitFromPath}=await import('../image/worker.mjs');
+ const {nextPostprocessFromPath,runPostprocessFromPath}=await import('../postprocess/postprocess-worker.mjs');
+ const f=fixture(t,'pose'), {row,tasks}=f, task=key=>tasks.find(x=>x.key===key);
+ const {projectId,officialRequestId,payload:{character}}=row;
+ const definition=(op)=>'# NPC fixture\n'+planningHeadings[op].map((h,i)=>'## '+h+'\n'+op+' 내용 '+i).join('\n');
+ const category=(key)=>'category.preset.'+sha(canonical(['npc.standard','3',task('preset').id,key])).slice(0,32);
+ const art=definition('npc.plan-portrait-art'),rep=definition('npc.plan-representative'),combat=definition('npc.plan-combat');
+ const repPng=Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVR4nGNgAAIAAAUAAXpeqz8AAAAASUVORK5CYII=','base64');
+ const pixelPng=Buffer.concat([repPng,Buffer.from('different-corrected-pixel')]);
+ const reference=bytes=>({base64:bytes.toString('base64'),sha256:sha(bytes),assetId:sha(bytes)+'.png'});
+ const statAsset=bytes=>({sha256:sha(bytes),assetId:sha(bytes)+'.png',mimeType:'image/png',bytes:bytes.length});
+ const dir=join(f.root,'snapshot');mkdirSync(dir,{mode:0o700});
+ mkdirSync(join(dir,'planning'),{mode:0o700});mkdirSync(join(dir,'concept'),{mode:0o700});
+ const files=[];
+ for(const [key,role,content] of [['portrait-art','portrait.art',art],['portrait.representative','portrait.representative',rep],['portrait.combat','portrait.combat',combat]]){
+  const id=category(key),path=id+'.json',file=join(dir,'planning',path),text=canonical({id,planningRole:role,content});
+  writeFileSync(file,text,{mode:0o600});files.push({scope:'binari/npcs/'+character.npcId+'/planning',path,file,sha256:sha(text),size:Buffer.byteLength(text)});
+ }
+ const master='{}',file=join(dir,'concept','master.json');writeFileSync(file,master,{mode:0o600});
+ files.push({scope:'binari/concept',file,path:'master.json',sha256:sha(master),size:2});
+ const snapshot=async(_,fn)=>fn({root:dir,files});
+ let stage;
+ const withBase=key=>({dbPath:f.path,officialRequestId,taskId:task(key).id,withPlanningSnapshot:snapshot});
+ const cat=category('portrait.combat');
+ f.finish('planning_portrait_art');f.finish('planning_representative');
+ const doc=await runDocumentFromPath({...withBase('planning_combat'),operation:'npc.plan-combat',pds:{
+  async readCombat(){return {character,basis:{categoryId:cat},presetContext:canonical({creationBasis:{},planningPreset:{},
+   category:{id:cat,planningRole:'portrait.combat',content:''},chapters:[],status:'active'}),portraitArtContent:art,representativeContent:rep};},
+  async publishCombat(cmd,_,basis){const dto=JSON.parse(cmd.artifact);assert.equal(dto.schemaVersion,'workflow.npc-combat-plan-artifact.v1');
+   assert.equal(dto.categoryId,basis.categoryId);assert.equal(dto.content,combat);stage='planned';return {ok:true};}},
+  render:async(input,opts)=>{assert(opts.fourDoc);assert.equal(input.portraitArtContent,art);assert.equal(input.representativeContent,rep);return combat;}});
+ assert.equal(doc.state,'completed');assert.equal(stage,'planned');
+ const center=()=>runPortraitFromPath({...withBase('portrait_combat_reference'),operation:'npc.portrait-combat-reference',pds:{
+  async readPortrait(){return {character,basis:{categoryId:cat},planningContent:combat,reference:reference(repPng)};},
+  async publishPortrait(cmd){assert.equal(JSON.parse(cmd.artifact).schemaVersion,'workflow.npc-combat-reference-portrait-artifact.v1');stage='center';return {ok:true};}},
+  render:async input=>{assert.equal(input.posePreset,'combat');assert.equal(input.reference.assetId,reference(repPng).assetId);
+   assert.match(input.poseDirection,/npc.plan-combat/);return repPng;}});
+ assert.equal((await center()).state,'not_claimable');
+ f.finish('portrait_representative');
+ assert.equal((await center()).state,'completed');assert.equal(stage,'center');
+ assert.equal(nextPostprocessFromPath(f.path,{frames:false})?.taskId,task('portrait_pixel_combat_reference').id);
+ const correction=await runPostprocessFromPath({...withBase('portrait_pixel_combat_reference'),pds:{
+  async read(input){assert.equal(input.posePreset,'combat');assert.equal(input.direction,null);return statAsset(repPng);},
+  async publish(input,_,{artifact}){assert.equal(input.posePreset,'combat');assert.equal(artifact.sourceAssetId,reference(repPng).assetId);
+   stage='corrected';return {ok:true};}},
+  render:async source=>({artifact:{sourceAssetId:source.assetId,base64:pixelPng.toString('base64')}})});
+ assert.equal(correction.state,'completed');assert.equal(stage,'corrected');
+ assert.equal(nextPortraitFromPath(f.path).operation,'npc.portrait-combat-direction');
+ const dirOp=referenceStage=>runPortraitFromPath({...withBase('portrait_combat_n'),operation:'npc.portrait-combat-direction',pds:{
+  async readPortrait(){return {character,basis:{categoryId:cat,referenceStage,referenceAssetId:reference(pixelPng).assetId},
+   planningContent:combat,reference:reference(pixelPng),direction:'n'};},
+  async publishPortrait(cmd){assert.equal(JSON.parse(cmd.artifact).schemaVersion,'workflow.npc-combat-direction-portrait-artifact.v1');
+   stage='direction';return {ok:true};}},render:async input=>{assert.equal(input.posePreset,'combat');assert.equal(input.direction,'n');
+   assert.equal(input.reference.assetId,reference(pixelPng).assetId);return repPng;}});
+ assert.equal((await dirOp('portrait_pixel_idle_reference')).state,'failed');
+ assert.equal(stage,'corrected');
+ f.db.prepare("UPDATE workflow_tasks SET updated_at=? WHERE task_key='portrait_combat_n'").run(Date.now()-601_000);
+ assert.equal((await dirOp('portrait_pixel_combat_reference')).state,'completed');
+ assert.equal(stage,'direction');
 });
