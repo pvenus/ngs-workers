@@ -7,12 +7,13 @@ import unittest
 from unittest.mock import patch
 import wave
 
+from audioforge import ace_hq_runner as runner
 from audioforge import hq_backend as hq
 from audioforge import hq_contract as contract
 
 
 class TargetDuration(unittest.TestCase):
-    def run_case(self, drafts, *, duration=None, target=True, fail_attempt=None):
+    def run_case(self, drafts, *, duration=None, target=True, fail_attempt=None, no_qualified=False):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp).resolve()
             backend = object.__new__(hq.HQBackend)
@@ -69,6 +70,11 @@ class TargetDuration(unittest.TestCase):
                         backend.generate('caption',duration,42,contract.MODEL,out,lambda:False,settings)
                     self.assertFalse(out.exists())
                     return None, calls
+                if no_qualified:
+                    with self.assertRaisesRegex(ValueError, 'HQ_LM_FULL_DURATION_NOT_MET'):
+                        backend.generate('caption', duration, 42, contract.MODEL, out, lambda:False, settings)
+                    self.assertFalse(out.exists())
+                    return None, calls
                 proof = backend.generate('caption',duration,42,contract.MODEL,out,lambda:False,settings)
             self.assertEqual(proof, json.loads((out.parent / 'audio.hq/completion.json').read_text()))
             self.assertTrue(out.is_file())
@@ -83,13 +89,55 @@ class TargetDuration(unittest.TestCase):
         self.assertEqual(calls[-1][2:], calls[1][2:])
         self.assertEqual(proof['duration_seconds'], 60)
 
-    def test_longest_short_plan_keeps_first_on_tie(self):
-        proof, calls = self.run_case([36, 55, 51, 55, 48])
-        self.assertEqual([x[0] for x in calls], ['plan']*5+['render'])
-        self.assertEqual(len({x[2] for x in calls[:-1]}),5)
-        self.assertEqual(calls[-1][1:], calls[1][1:])
-        self.assertEqual(proof['plan_attempt'],2)
-        self.assertEqual(proof['duration_seconds'],55)
+    def test_short_plans_exhaust_attempts_without_render_or_publication(self):
+        proof, calls = self.run_case([36, 55, 51, 55, 48], no_qualified=True)
+        self.assertEqual([x[0] for x in calls], ['plan']*5)
+        self.assertEqual(len({x[2] for x in calls}),5)
+        self.assertIsNone(proof)
+
+    def test_scoped_duration_vocabulary_preserves_exact_lyrics_and_restores_resident_on_error(self):
+        for cap in (95, 360):
+            with self.subTest(cap=cap):
+                request = dict(duration=None, seed=44, prompt='Caption',
+                    settings=dict(instrumental=False, lyrics='  첫 줄\n둘째 줄  \n', target_duration_seconds=60))
+                spec = {'min':10,'max':cap}
+                values = [str(i) for i in range(10,cap+1)]
+                old_tree = {'prior':1}
+                processor = SimpleNamespace(max_duration=cap, field_specs={'duration':spec},
+                    valid_duration_values=values, duration_prefix_tree=old_tree,
+                    _build_numeric_prefix_tree=lambda v, **_: {value:True for value in v})
+                lm = SimpleNamespace(constrained_processor=processor)
+                with self.assertRaisesRegex(RuntimeError, 'fixture failure'):
+                    with runner.scoped_lm_duration_vocabulary(lm, request):
+                        self.assertEqual(spec, {'min':60,'max':min(cap,120)})
+                        self.assertEqual(processor.max_duration,min(cap,120))
+                        self.assertEqual(processor.valid_duration_values, [str(i) for i in range(60,min(cap,120)+1)])
+                        self.assertNotIn('59',processor.duration_prefix_tree)
+                        self.assertIn('60',processor.duration_prefix_tree)
+                        options=runner.lm_options(request)
+                        self.assertTrue(options['use_constrained_decoding'])
+                        self.assertTrue(options['use_cot_metas'])
+                        self.assertEqual(options['lyrics'],request['settings']['lyrics'])
+                        self.assertNotIn('duration',options['user_metadata'])
+                        self.assertIsNone(options['target_duration'])
+                        raise RuntimeError('fixture failure')
+                self.assertEqual(spec, {'min':10,'max':cap})
+                self.assertEqual(processor.max_duration,cap)
+                self.assertIs(processor.valid_duration_values,values)
+                self.assertIs(processor.duration_prefix_tree,old_tree)
+                normal = {**request,'settings':{'instrumental':True}}
+                with runner.scoped_lm_duration_vocabulary(lm,normal):
+                    self.assertEqual(spec,{'min':10,'max':min(cap,120)})
+                    self.assertIn('21',processor.duration_prefix_tree)
+                self.assertIs(processor.duration_prefix_tree,old_tree)
+
+    def test_no_full_length_when_existing_hardware_cap_below_target(self):
+        processor = SimpleNamespace(max_duration=55, field_specs={'duration':{'min':10,'max':55}},
+            valid_duration_values=[], duration_prefix_tree={}, _build_numeric_prefix_tree=lambda *_a, **_k: self.fail())
+        lm=SimpleNamespace(constrained_processor=processor)
+        with self.assertRaisesRegex(RuntimeError, 'HQ_LM_AUTO_DURATION_CAP_UNAVAILABLE'):
+            with runner.scoped_lm_duration_vocabulary(lm,dict(duration=None,settings={'target_duration_seconds':60})):
+                self.fail('must not sample')
 
     def test_operational_failure_does_not_publish_earlier_short_plan(self):
         _, calls = self.run_case([50],fail_attempt=2)

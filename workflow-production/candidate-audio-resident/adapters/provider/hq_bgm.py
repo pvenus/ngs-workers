@@ -92,6 +92,8 @@ def _proof(working,proof,duration,seed,wav,actual,text,target=None):
             raise ValueError('AUDIO_HQ_HUMMING_PROOF_MISMATCH')
     elif planned!=duration:
         raise ValueError('AUDIO_HQ_TEMPO_PROOF_MISMATCH')
+    if target is not None and (planned<target or actual<target):
+        raise ValueError('AUDIO_HQ_FULL_DURATION_NOT_MET')
     model_bpm=metadata.get('bpm');render_bpm=params.get('bpm')
     if model_bpm is None and render_bpm is None:return {'bpm':None,'bpmBasis':'unavailable'}
     if (type(model_bpm) not in (int,float) or not math.isfinite(model_bpm) or int(model_bpm)!=model_bpm

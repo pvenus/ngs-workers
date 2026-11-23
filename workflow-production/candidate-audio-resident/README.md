@@ -4,15 +4,15 @@ The only audio model configured for this worker is ACE-Step 1.5 XL-SFT + LM 4B H
 one official `audio.generate` / `audio_generate` / `audio` task, acknowledged by
 Request Service and bound to the exact Planner payload, whose only accepted
 kind is `bgm`. Fixed duration is 10–30 seconds; `durationSeconds: null`
-activates the HQ model’s own duration plan, with optional `text` for humming.
-Optional `targetDurationSeconds: 60` applies only to this automatic mode. The
-HQ provider can try up to five plans and render the first one that reaches
-the target, or the longest valid one if none reaches it. The published single
-WAV uses its measured actual length, with no padding or strict 60s minimum.
-The worker logs target, measured duration and whether the target was reached
-after successful publication; the Filex media schema remains unchanged.
-The model’s output must fit the bounded 10–120s WAV contract; no clamp or fixed
-input is sent for auto length. Exact Planner audio envelope from `e5db988`.
+activates the HQ model’s own duration plan, with optional `text` for exact lyrics.
+Optional `targetDurationSeconds: 60` enables full-length mode for automatic
+duration. The HQ provider restricts the model's duration vocabulary before
+composition to 60 seconds through the existing maximum (120 seconds or the
+runtime's lower hardware bound). The LM still selects the length. Up to five
+plans are permitted, but only a qualifying plan is rendered; a short plan or
+WAV is never published as a full-length result. Plain automatic and fixed
+requests keep their existing duration behavior. The model’s output must fit
+the bounded 10–120s WAV contract. Exact Planner audio envelope from `e5db988`.
 
 The CLI accepts explicit owner-managed paths and config:
 `audio-cli.mjs --run --db <private workflow sqlite> --adapter-module <trusted absolute module> --adapter-config <trusted absolute binding>`.

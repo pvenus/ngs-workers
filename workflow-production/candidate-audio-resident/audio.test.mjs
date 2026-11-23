@@ -240,18 +240,29 @@ test('resident loop retains one private bridge for full caption/render/publish a
  assert.deepEqual(events,[...Array(2)].flatMap(()=>['begin','read','caption','render','publish','end']).concat('closed'));
 });
 
-test('automatic target passes exact 60 and publishes a valid shorter result with factual duration',async t=>{
+test('full-length target preserves literal lyrics and publishes only results of at least 60 seconds',async t=>{
  const {add}=fixture(t);
  assert.throws(()=>add({durationSeconds:10,targetDurationSeconds:60}),/NGS_AUDIO_GENERATE_PAYLOAD_INVALID/);
  assert.throws(()=>add({durationSeconds:null,targetDurationSeconds:59}),/NGS_AUDIO_GENERATE_PAYLOAD_INVALID/);
- const f=add({durationSeconds:null,targetDurationSeconds:60});
- const run=await f.run({adapters:{bgm:async input=>{
-  assert.equal(input.targetDurationSeconds,60);
-  assert.equal(input.durationSeconds,null);
-  return result(wav(52));
- }}});
- assert.equal(run.state,'completed');
- assert.deepEqual([run.targetDurationSeconds,run.actualDurationSeconds,run.targetReached],[60,52,false]);
+ const text='  첫 줄\n둘째 줄  \n';
+ for(const seconds of [52,60]){
+  const f=add({durationSeconds:null,targetDurationSeconds:60,text});
+  let published=0;
+  const run=await f.run({pds:{read:async()=>source,publish:async()=>{
+   published++;return {ok:true,resultRef:audioResultRef('binari',f.row.officialRequestId)};
+  }},adapters:{bgm:async input=>{
+   assert.equal(input.targetDurationSeconds,60);
+   assert.equal(input.durationSeconds,null);assert.equal(input.text,text);
+   return result(wav(seconds));
+  }}});
+  if(seconds===52){
+   assert.equal(run.state,'failed');assert.equal(run.code,'AUDIO_FULL_DURATION_NOT_MET');
+   assert.equal(f.get().status,'failed');assert.equal(f.get().result_ref,null);assert.equal(published,0);
+  }else{
+   assert.equal(run.state,'completed');assert.equal(published,1);
+   assert.deepEqual([run.targetDurationSeconds,run.actualDurationSeconds,run.targetReached],[60,60,true]);
+  }
+ }
 });
 
 

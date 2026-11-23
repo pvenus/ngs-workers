@@ -112,6 +112,10 @@ export async function runAudioFromPath({dbPath,taskId,officialRequestId,pds,adap
     (Number.isSafeInteger(outcome.bpm)&&outcome.bpm>=30&&outcome.bpm<=300&&outcome.bpmBasis==='model')),code);
    code='AUDIO_WAV_INVALID';
    const verified=validateWavWithDuration(outcome.wav,input.kind,found.payload.durationSeconds);
+   if(targetDurationSeconds!==undefined&&verified.duration<targetDurationSeconds){
+    code='AUDIO_FULL_DURATION_NOT_MET';
+    throw Error(code);
+   }
    const artifact=Object.freeze({...verified.artifact,bpm:outcome.bpm});
    const sourceBinding=Object.freeze({conceptId:source.conceptId,sectionSha256:source.sectionSha256});
    const resultRef=audioResultRef(claim.projectId,claim.officialRequestId);

@@ -4,6 +4,7 @@ CLI: python ace_hq_runner.py plan|render REQUEST_JSON
 The parent owns admission, runtime/hash validation, locks, resource guards and
 waiting for the planning process to exit before starting the renderer.
 """
+from contextlib import contextmanager
 from dataclasses import asdict
 import hashlib
 import json
@@ -121,22 +122,47 @@ def resolved_duration(request, metadata):
     return value
 
 
-def configure_lm_duration_capacity(lm, request):
+@contextmanager
+def scoped_lm_duration_vocabulary(lm, request):
+    """Bind the pinned ACE numeric FSM to this request before CoT sampling."""
     if request['duration'] is not None:
+        yield
         return
-    # Enforce transport capacity in the vendor's constrained metadata vocabulary
-    # before composition. Target remains None, so the LM decides the actual length.
     processor = getattr(lm, 'constrained_processor', None)
     existing_max = getattr(processor, 'max_duration', None)
-    if type(existing_max) is not int or existing_max < 10:
+    specs = getattr(processor, 'field_specs', None)
+    spec = specs.get('duration') if isinstance(specs, dict) else None
+    if (type(existing_max) is not int or not isinstance(spec, dict)
+            or type(spec.get('min')) is not int or spec.get('max') != existing_max
+            or not hasattr(processor, 'valid_duration_values')
+            or not hasattr(processor, 'duration_prefix_tree')
+            or not callable(getattr(processor, '_build_numeric_prefix_tree', None))):
         raise RuntimeError('HQ_LM_AUTO_DURATION_CAP_UNAVAILABLE')
-    maximum = min(existing_max, AUTO_MAX_SECONDS)
-    update = getattr(processor, 'set_max_duration', None)
-    if not callable(update):
+    lower = max(spec['min'], request['settings'].get('target_duration_seconds', 10))
+    upper = min(existing_max, AUTO_MAX_SECONDS)
+    if lower > upper:
         raise RuntimeError('HQ_LM_AUTO_DURATION_CAP_UNAVAILABLE')
-    update(maximum)
-    if processor.max_duration != maximum:
-        raise RuntimeError('HQ_LM_AUTO_DURATION_CAP_UNAVAILABLE')
+    prior_spec = dict(spec)
+    prior_values = processor.valid_duration_values
+    prior_tree = processor.duration_prefix_tree
+    try:
+        values = [str(value) for value in range(lower, upper + 1)]
+        tree = processor._build_numeric_prefix_tree(
+            values, context_prefix_for_matching='duration:',
+            context_prefix_for_tokenization='duration: ')
+        if not tree:
+            raise RuntimeError('HQ_LM_AUTO_DURATION_CAP_UNAVAILABLE')
+        spec.update(min=lower, max=upper)
+        processor.max_duration = upper
+        processor.valid_duration_values = values
+        processor.duration_prefix_tree = tree
+        yield
+    finally:
+        spec.clear()
+        spec.update(prior_spec)
+        processor.max_duration = existing_max
+        processor.valid_duration_values = prior_values
+        processor.duration_prefix_tree = prior_tree
 
 
 def lm_options(request):
@@ -269,10 +295,10 @@ def run_plan(request, root, output, resident=None):
             lm.constrained_processor.set_max_duration(native_max)
         random.seed(request['seed']); np.random.seed(request['seed'])
         torch.manual_seed(request['seed']); mx.random.seed(request['seed'])
-        configure_lm_duration_capacity(lm, request)
         options = lm_options(request)
         write_json_new(output.parent / 'lm-options.json', options)
-        raw = lm.generate_with_stop_condition(**options)
+        with scoped_lm_duration_vocabulary(lm, request):
+            raw = lm.generate_with_stop_condition(**options)
         if not isinstance(raw, dict) or raw.get('success') is not True:
             raise RuntimeError('HQ_LM_GENERATION_FAILED')
         codes = validate_codes(raw.get('audio_codes'))
@@ -315,6 +341,8 @@ def read_plan(request, output):
         raise ValueError('HQ_LM_METADATA_INVALID')
     musical_fields(request['settings'], plan['metadata'])
     planned = resolved_duration(request, plan['metadata'])
+    if planned < request['settings'].get('target_duration_seconds', 0):
+        raise ValueError('HQ_LM_FULL_DURATION_NOT_MET')
     if type(plan.get('duration')) is not type(planned) or plan['duration'] != planned:
         raise ValueError('HQ_PLANNER_BINDING_MISMATCH:duration')
     return plan, sha256(raw)

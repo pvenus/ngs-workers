@@ -11,7 +11,7 @@ import hq_bgm as hq
 
 COMMAND={'kind':'bgm','title':'테스트','prompt':'Daegeum and piano answer one another.', 'durationSeconds':10}
 
-def renderer(t,folder,bpm=None,drift=False,auto=False,text="",duration_drift=False,target_attempt=None,inconsistent_seed=False):
+def renderer(t,folder,bpm=None,drift=False,auto=False,text="",duration_drift=False,target_attempt=None,inconsistent_seed=False,target_seconds=72):
     invoked=[]
     def generate(config,root,prompt,duration,seed,model,wav,stop,**options):
         invoked.append(root)
@@ -23,7 +23,7 @@ def renderer(t,folder,bpm=None,drift=False,auto=False,text="",duration_drift=Fal
             settings['target_duration_seconds']=60
             seed=(seed+(target_attempt-1)*0x9e3779b9)&0x7fffffff
         t.assertEqual(options['settings'],settings)
-        actual=52 if target_attempt is not None else 73 if auto else 10
+        actual=target_seconds if target_attempt is not None else 73 if auto else 10
         with wave.open(str(wav),'wb') as out:
             out.setparams((2,2,48000,0,'NONE','not compressed'))
             out.writeframes(b'\x01\x00\x01\x00'*(48000*actual))
@@ -79,16 +79,20 @@ class HQTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError,'INPUT_INVALID'):
                 hq.render_hq({**cmd,'durationSeconds':30},'fixture',connect=c)
 
-    def test_target_fallback_accepts_bound_selected_short_attempt(self):
+    def test_full_target_accepts_bound_long_attempt_and_refuses_short_wav(self):
         import io
         with TemporaryDirectory() as p:
-            cmd={**COMMAND,'durationSeconds':None,'targetDurationSeconds':60}
-            c,_=renderer(self,Path(p).resolve(),80,auto=True,target_attempt=3)
+            text='  아아, 떠나소서.\n그대 가시는 길.  '
+            cmd={**COMMAND,'durationSeconds':None,'targetDurationSeconds':60,'text':text}
+            c,_=renderer(self,Path(p).resolve(),80,auto=True,text=text,target_attempt=3)
             output=hq.render_hq(cmd,'fixture',connect=c)
             with wave.open(io.BytesIO(base64.b64decode(output['wavBase64'])),'rb') as wav:
-                self.assertEqual(wav.getnframes()/wav.getframerate(),52)
+                self.assertEqual(wav.getnframes()/wav.getframerate(),72)
+            c,_=renderer(self,Path(p).resolve(),80,auto=True,text=text,target_attempt=3,target_seconds=52)
+            with self.assertRaisesRegex(ValueError,'FULL_DURATION_NOT_MET'):
+                hq.render_hq(cmd,'fixture',connect=c)
             for attempt,wrong_seed in [(3,True),(6,False)]:
-                c,_=renderer(self,Path(p).resolve(),80,auto=True,target_attempt=attempt,inconsistent_seed=wrong_seed)
+                c,_=renderer(self,Path(p).resolve(),80,auto=True,text=text,target_attempt=attempt,inconsistent_seed=wrong_seed)
                 with self.assertRaisesRegex(ValueError,'AUTO_DURATION_PROOF_MISMATCH'):
                     hq.render_hq(cmd,'fixture',connect=c)
             with self.assertRaisesRegex(ValueError,'INPUT_INVALID'):

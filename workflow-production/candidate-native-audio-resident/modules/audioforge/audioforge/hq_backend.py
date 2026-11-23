@@ -447,7 +447,7 @@ class HQBackend:
                 if shutil.disk_usage(self.root).free < 10 * 1024**3:
                     raise RuntimeError('HQ_DISK_LOW_STOP')
                 deadline = time.monotonic() + self.timeout
-                best = None
+                selected = None
                 for attempt in range(1, 2 if target is None else TARGET_PLAN_ATTEMPTS + 1):
                     stage_dir, request_path, request = prepare(attempt)
                     stage = self._stage('plan', request_path, fds, cancelled,
@@ -470,11 +470,12 @@ class HQBackend:
                         planned = resolved_auto_duration(metadata.get('duration'))
                     if type(plan.get('duration')) is not type(planned) or plan['duration'] != planned:
                         raise ValueError('HQ_PLAN_BINDING_MISMATCH:duration')
-                    if best is None or planned > best[0]:  # ties keep the earlier valid plan
-                        best = planned, attempt, stage_dir, request_path, request
                     if target is None or planned >= target:
+                        selected = planned, attempt, stage_dir, request_path, request
                         break
-                planned, selected_attempt, stage_dir, request_path, request = best
+                if selected is None:
+                    raise ValueError('HQ_LM_FULL_DURATION_NOT_MET')
+                planned, selected_attempt, stage_dir, request_path, request = selected
                 # One-shot plan exits. Resident planner replies only after the
                 # bound plan is fully written and its model invocation returned.
                 self.verify_runtime(self.root, deep=True)
