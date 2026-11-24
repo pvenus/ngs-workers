@@ -63,3 +63,25 @@ A14B는 Worker와 PDS/RS/Planner의 동일 계약을 함께 준비한 뒤에만 
 워커는 산출물과 접수 claim이 정확히 일치하는 PDS 확인을 받은 뒤에만 DB 완료를
 기록합니다. 게시 결과나 모델 프로세스 종료가 불명확할 때 생성 전체를 자동 반복하지
 않습니다.
+
+## 촛불 프랍의 명시적 헤드룸 입력 준비
+
+`prop-i2v-input-framing.py`의 `candle-headroom-v1`은 촛불 프랍을 위한
+선택형 입력 전처리입니다. 프로젝트 소유 원본 또는 이전 녹색 입력부터 별도의 RGB
+PNG를 만듭니다. 모델 출력 캔버스와 같은 512×352에서 원본 비율을 유지하고,
+원본 전체를 크롭 없이 78% 안에 맞춘 뒤 가운데로 정렬하고 바닥에서 12px 위에
+배치합니다. 빈 캔버스 또는 기존 입력의 투명 영역에만 #00FF00이 들어갑니다.
+기존 검정색을 키로 해석하거나 생성 결과를 배경 제거하지 않습니다.
+
+```sh
+# 기존 Wan 전용 가상환경의 Pillow가 설치된 Python 사용
+python prop-i2v-input-framing.py --preset candle-headroom-v1 \
+  --source existing-green-still.png --output new-framed-still.png
+python -m unittest test_prop_i2v_input_framing.py
+```
+
+출력 JSON에 양쪽 SHA-256과 실제 배치 좌표를 기록합니다. 이미 있는 파일은
+덮어쓰지 않습니다. 명시적으로 프랍 입력에 적용하기 위한 모듈이며, 공식 요청에
+새 필드나 임의 경로를 추가하지 않습니다. 시네마틱, NPC, 기존 프랍 런타임의
+기본 프레이밍은 전혀 바뀌지 않습니다. 정식 자동화를 추가하려면 승인된 프랍
+프리셋과 원본/파생 해시를 계약으로 묶고, 그때 기존 워커 입력 단계에 연결합니다.
