@@ -8,6 +8,8 @@ import {createHash} from 'node:crypto';
 import {setTimeout as delay} from 'node:timers/promises';
 import {fileURLToPath} from 'node:url';
 import {createWarmAnimation,spawnAnimationChannel} from './animation-warm.mjs';
+import {chooseI2V,executeI2V,i2vPorts} from './i2v-worker.mjs';
+import {createAnimationModelSwitch} from './i2v-model-switch.mjs';
 import {choosePresetFrames,executePresetFrames,presetFramePorts} from './preset-frame-worker.mjs';
 import {isSelectedMediaRun,isRegenerateRun,selectionSchemas,poseSelectionSchemas,regenerateType,regenerateSchemas,selectedMotionBranch,matchesMotionTask} from './vendor/npc-motion-selection-v1/media-branch.mjs';
 import {assertDatabasePath,protectSchema,nextWorkflowTaskFromPath,markWorkflowTaskFailed,workflowTaskEligibleSql,workflowTaskRetrySetSql} from './workflow-ready.mjs';
@@ -19,7 +21,7 @@ const provider=process.env.WORKFLOW_WAN_RELEASE, py=process.env.WORKFLOW_WAN_PYT
  binding=process.env.WORKFLOW_WAN_BINDING;
 const helper=fileURLToPath(new URL('./animation-native.py',import.meta.url));
 function insist(test,error){if(!test)throw Error(error);}
-async function local(route,{body,rawBody,port=8030,signal,timeout=30000,binary=false,maxJsonBytes,onRejected}={}){
+async function local(route,{body,rawBody,port=8030,signal,timeout=30000,binary=false,maxBinaryBytes,maxJsonBytes,onRejected}={}){
  insist(rawBody===undefined||Buffer.isBuffer(rawBody)&&body===undefined,'ANIMATION_PDS_REQUEST_TYPE');
  const response=await fetch('http://127.0.0.1:'+port+route,{method:body||rawBody?'POST':'GET',redirect:'error',
   headers:rawBody?{'Content-Type':'application/octet-stream'}:body?{'Content-Type':'application/json'}:{},
@@ -27,7 +29,15 @@ async function local(route,{body,rawBody,port=8030,signal,timeout=30000,binary=f
   signal:AbortSignal.any([AbortSignal.timeout(timeout),...(signal?[signal]:[])])});
  const recognizedReject=typeof onRejected==='function'&&response.status===422&&maxJsonBytes;
  insist(response.ok||recognizedReject,'ANIMATION_PDS_HTTP_'+response.status);
- if(binary)return Buffer.from(await response.arrayBuffer());
+ if(binary){
+  if(!maxBinaryBytes)return Buffer.from(await response.arrayBuffer());
+  insist(/^image\/png(?:\s*;|$)/i.test(response.headers.get('Content-Type')??'')&&response.body,'ANIMATION_PDS_RESPONSE_TYPE');
+  const size=response.headers.get('Content-Length');
+  insist(size===null||/^\d+$/.test(size)&&Number(size)<=maxBinaryBytes,'ANIMATION_PDS_RESPONSE_SIZE');
+  let total=0;const pieces=[];
+  for await(const chunk of response.body){total+=chunk.length;insist(total<=maxBinaryBytes,'ANIMATION_PDS_RESPONSE_SIZE');pieces.push(chunk);}
+  return Buffer.concat(pieces);
+ }
  if(maxJsonBytes){
   insist(/^application\/json(?:\s*;|$)/i.test(response.headers.get('Content-Type')??'')&&response.body,
    'ANIMATION_PDS_RESPONSE_TYPE');
@@ -262,17 +272,43 @@ if(process.argv[1]===fileURLToPath(import.meta.url)){
  const ping=()=>void local('/api/service-heartbeat',{body:{serverName:'animation-worker'},port:8090,signal}).catch(()=>{});
  const heart=setInterval(ping,60000);ping();
  const preset=presetFramePorts(local);
+ const i2v=i2vPorts(local);
+ // This opt-in is code availability, not proof of a usable model or owner target.
+ // Existing animation operation remains unchanged without the trusted binding.
+ const int8Binding=process.env.WORKFLOW_I2V_BINDING;
+ let i2vModel;
+ if(int8Binding){
+  try{
+   insist(int8Binding.startsWith('/'),'I2V_BINDING_INVALID');
+   const {readWanI2VBinding,createWanI2V}=await import('./i2v-wan.mjs');
+   i2vModel=createWanI2V({binding:await readWanI2VBinding(int8Binding)});
+  }catch{console.error(JSON.stringify({state:'not_ready',code:'I2V_BINDING_INVALID'}));}
+ }
  const warm=createWarmAnimation({launch:root=>spawnAnimationChannel({py,helper,provider,binding,root}),
   onIdleUnload:()=>console.log(JSON.stringify({state:'idle_model_unloaded'}))});
+ const modelSlot=createAnimationModelSwitch(warm,i2vModel);
  try{while(!signal.aborted){
   let idle=false;
   try{
    const legacy=choose(dbPath);
-   const t=legacy??choosePresetFrames(dbPath);
+   const legacyPreset=legacy?undefined:choosePresetFrames(dbPath);
+   const i2vTask=!legacy&&!legacyPreset&&i2vModel?chooseI2V(dbPath):null;
+   const t=legacy??legacyPreset??i2vTask;
    if(!t){
     idle=true; // At the timeout boundary a runnable job takes precedence.
     if(!await warm.idle())throw Error('ANIMATION_PROCESS_STOP_UNCONFIRMED');
+   }else if(i2vTask){
+    modelSlot.assertKnown();
+    insist(await i2v.ready(signal),'I2V_PDS_UNAVAILABLE');
+    const ready=await i2vModel.probe();
+    insist(ready?.ready===true&&ready.quantization==='q8_0','I2V_MODEL_UNAVAILABLE');
+    signal.throwIfAborted();
+    const result=await executeI2V(db,i2vTask,signal,{ports:i2v,renderer:{render:job=>modelSlot.runI2V(job)}});
+    if(result.state==='completed')console.log(JSON.stringify(result));
+    else if(result.state!=='stale')console.error(JSON.stringify(result));
+    idle=result.state==='stale'||result.rendererStop==='unknown';
    }else if(legacy){
+    modelSlot.enterWan();
     const r=await local(path,{signal});insist(r.enabled===true&&r.schemaVersion==='workflow.animation-write.v1','ANIMATION_PDS_UNAVAILABLE');
     if(warm.cold()){
      const preflight=await runNative('--probe',signal);insist(preflight.ready===true,'ANIMATION_MODEL_UNAVAILABLE');
@@ -280,6 +316,7 @@ if(process.argv[1]===fileURLToPath(import.meta.url)){
     signal.throwIfAborted();
     await execute(db,t,signal,warm);
    }else{
+    modelSlot.enterWan();
     insist(await preset.ready(signal),'PRESET_2D_PDS_UNAVAILABLE');
     if(warm.cold()){
      const preflight=await runNative('--probe',signal);insist(preflight.ready===true,'ANIMATION_MODEL_UNAVAILABLE');
