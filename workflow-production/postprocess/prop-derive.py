@@ -128,6 +128,32 @@ def pixelize(images,size):
     return out
 
 
+def trustworthy_static_rgba(raw,size):
+    """Apply the native cutout policy to the exact decoded provider image.
+
+    An alpha channel or painted checkerboard alone is not transparency. Match
+    the native image verifier's conservative foreground/background thresholds;
+    authentic edges are not thresholded or rematted on this path.
+    """
+    with Image.open(io.BytesIO(raw)) as im:
+        if im.mode!='RGBA' or im.size!=size:
+            return None
+        im.load()  # A header/partial decode cannot prove a native cutout.
+        alpha=im.getchannel('A')
+        w,h=size;pixels=w*h
+        hist=alpha.histogram()
+        if 100*hist[0]<pixels or 100*sum(hist[250:])<pixels:
+            return None
+        if any(alpha.getpixel(p)!=0 for p in ((0,0),(0,h-1),(w-1,0),(w-1,h-1))):
+            return None
+        border=sum(alpha.crop(box).histogram()[0] for box in
+                   ((0,0,w,1),(0,h-1,w,h),(0,1,1,h-1),(w-1,1,w,h-1)))
+        if 10*border<9*(2*w+2*h-4):
+            return None
+        return cleared(im.copy())
+
+
+
 def process(root,spec,matte):
     media=spec.get('media')
     if media is not None:
@@ -150,15 +176,28 @@ def process(root,spec,matte):
         return encode(out,durations)
     paths=[root/'raw'/f'frame-{i:08d}.png' for i in range(len(spec['frames']))]
     original=[p.read_bytes() for p in paths]
-    for row,raw in zip(spec['frames'],original):
-        check(len(raw)==row['bytes'] and hashlib.sha256(raw).hexdigest()==row['sha256'],'PROP_DERIVATION_INPUT_CHANGED')
-        with Image.open(io.BytesIO(raw)) as png:
-            check(png.format=='PNG' and png.size==(row['width'],row['height']) and png.n_frames==1)
-            png.verify()
     size=(spec['canvas']['width'],spec['canvas']['height'])
     duration=spec['frameDurationsMs'];kind=spec['kind']
     check(size[0]*size[1]*len(paths)<=MAX_PIXELS)
-    if kind=='detail':
+    check(kind=='detail','PROP_DERIVATION_KIND')
+    for row,raw in zip(spec['frames'],original):
+        check(len(raw)==row['bytes'] and hashlib.sha256(raw).hexdigest()==row['sha256'],'PROP_DERIVATION_INPUT_CHANGED')
+        try:
+            with Image.open(io.BytesIO(raw)) as png:
+                check(png.format=='PNG' and png.size==(row['width'],row['height']) and png.n_frames==1)
+                png.verify()
+        except Exception:
+            if not duration:raise ValueError('PROP_DERIVATION_STATIC_SOURCE_PNG_INVALID') from None
+            raise
+    if not duration:
+        check(len(paths)==1,'PROP_DERIVATION_STATIC_SOURCE_PNG_INVALID')
+        try:
+            native=trustworthy_static_rgba(original[0],size)
+        except Exception:
+            raise ValueError('PROP_DERIVATION_STATIC_SOURCE_PNG_INVALID') from None
+        check(native is not None,'PROP_DERIVATION_STATIC_NATIVE_ALPHA_REQUIRED')
+        images=[native]
+    else:
         try:
             mattes=matte(root,paths,spec['sourceHash'])
         except Exception as error:
@@ -173,32 +212,13 @@ def process(root,spec,matte):
             with Image.open(path) as im:
                 check(im.mode=='RGBA' and im.n_frames==1 and im.size==(row['width'],row['height']))
                 images.append(cleared(fit(cleared(im.copy()),size)))
-    else:raise ValueError('PROP_DERIVATION_KIND')
     check([p.read_bytes() for p in paths]==original,'PROP_DERIVATION_INPUT_CHANGED')
     return encode(images,duration)
 
 
 def pinned_matte(root,paths,source_hash):
     import os
-    if len(paths)==1:
-        # SAM tracking has no role on a single frame; use the same installed matting model.
-        import numpy as np
-        import torch
-        from videoforge_mcp.alpha_models import BiRefNetMatting
-        device='mps' if torch.backends.mps.is_available() else ('cuda' if torch.cuda.is_available() else 'cpu')
-        model=BiRefNetMatting(os.environ['FRAME_ALPHA_MATTING_MODEL'],device=device)
-        with Image.open(paths[0]) as im:
-            rgb=np.asarray(im.convert('RGB'))
-        alpha=np.asarray(model.predict(rgb),dtype=np.float32)
-        check(alpha.shape==rgb.shape[:2] and np.isfinite(alpha).all(),'PROP_DERIVATION_ALPHA_MODEL')
-        rgba=Image.fromarray(np.dstack((rgb,np.rint(np.clip(alpha,0,1)*255).astype('uint8'))),'RGBA')
-        # Learned mattes often have a faint nonzero probability across the
-        # entire background. Match existing hard-background cleanup without
-        # turning mid-alpha edge/shadow pixels fully opaque.
-        a=rgba.getchannel('A').point(lambda n:0 if n<16 else n)
-        rgba.putalpha(a)
-        target=root/'detail.png';rgba.save(target)
-        return [target]
+    check(len(paths)>=2,'PROP_DERIVATION_MATTE_BACKEND')
     from workers.resident.backends.frame_full_alpha_cli import run_alpha
     run_alpha(root,os.environ['WORKFLOW_POSTPROCESS_MODEL_DIGEST'],{'sourceSha256':source_hash})
     targets=sorted((root/'alpha').glob('frame-*.png'))
@@ -219,6 +239,8 @@ _EXIT={
     'PROP_DERIVATION_INPUT_CHANGED':36,
     'PROP_DERIVATION_APNG_ENCODE':37,
     'PROP_DERIVATION_PIXEL_FOREGROUND':38,
+    'PROP_DERIVATION_STATIC_NATIVE_ALPHA_REQUIRED':39,
+    'PROP_DERIVATION_STATIC_SOURCE_PNG_INVALID':40,
 }
 
 

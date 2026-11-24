@@ -54,12 +54,12 @@ if(!isAppend){
  assert.equal(result.state,'completed',JSON.stringify(result));
 
  const base=execFileSync(python,['-B','-c',`
- import sys
- from PIL import Image,ImageDraw
- im=Image.new('RGB',(40,32))
- ImageDraw.Draw(im).rectangle((10,8,29,22),fill=(int(sys.argv[1]),55,94))
- im.save(sys.stdout.buffer,format='PNG')
- `,operation==='prop.generate'?'90':'180']);
+import sys
+from PIL import Image,ImageDraw
+im=Image.new('RGBA',(40,32))
+ImageDraw.Draw(im).rectangle((10,8,29,22),fill=(int(sys.argv[1]),55,94,253))
+im.save(sys.stdout.buffer,format='PNG')
+`,operation==='prop.generate'?'90':'180']);
 
  const imagePds=imagePorts({transport:args=>imageJson({...args,port})});
  const image=nextPropBaseFromPath(dbPath);

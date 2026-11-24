@@ -72,20 +72,20 @@ result=code['process'](path,json.loads((path/'job.json').read_bytes()),matte)
   }};
 }
 
-function raw(width,height,index=0){
+function raw(width,height,index=0,mode='RGB'){
  return execFileSync(py,['-B','-c',`
 import sys
 from PIL import Image, ImageDraw
-w,h,i=map(int,sys.argv[1:])
-im=Image.new('RGB',(w,h));draw=ImageDraw.Draw(im)
-draw.rectangle((w//4+i,h//4,3*w//4+i,3*h//4),fill=(120+i,30,190))
+w,h,i=map(int,sys.argv[1:4]); mode=sys.argv[4]
+im=Image.new(mode,(w,h));draw=ImageDraw.Draw(im)
+draw.rectangle((w//4+i,h//4,3*w//4+i,3*h//4),fill=(120+i,30,190,253) if mode=='RGBA' else (120+i,30,190))
 im.save(sys.stdout.buffer,format='PNG')
-`,String(width),String(height),String(index)]);
+`,String(width),String(height),String(index),mode]);
 }
 const descriptor=(b,width,height)=>({sha256:sha(b),bytes:b.length,width,height,mediaType:'image/png'});
 const canvas=(width,height)=>({width,height});
 function setup(f,{tamper=()=>{},afterRender=()=>{}}={}){
- const stat=raw(80,64);const still=descriptor(stat,80,64);
+ const stat=raw(80,64,0,'RGBA');const still=descriptor(stat,80,64);
  if(f.by[propKeys.base]){
   f.complete(propKeys.design,'5'.repeat(64));
   f.complete(propKeys.base,still.sha256);
@@ -247,4 +247,69 @@ test('worker reports exact declared failure stage and fixed child classification
    assert.equal(staged.size,0);
    assert.equal(f.state(propKeys.detail).result_ref,null);
   }
+ });
+
+test('static native RGBA keeps petal opacity and soft edges; invalid cutouts fail without matting',
+ {skip:!hasPillow},async()=>{
+  execFileSync(py,['-B','-c',`
+import hashlib,io,runpy,sys,tempfile
+from pathlib import Path
+from PIL import Image,ImageDraw
+process=runpy.run_path(sys.argv[1])['process']
+root=Path(tempfile.mkdtemp())
+try:
+ (root/'raw').mkdir()
+ source=root/'raw'/'frame-00000000.png'; matte_calls=[]
+ def describe(raw,**extra):
+  return {'width':64,'height':48,'bytes':len(raw),'sha256':hashlib.sha256(raw).hexdigest(),**extra}
+ def fallback(root,paths,key):
+  matte_calls.append((paths,key))
+  raise AssertionError('Static matting must never be called')
+ def run_detail(im,*,coded=None,corrupt=False):
+  im.save(source)
+  if corrupt:source.write_bytes(source.read_bytes()[:-17])
+  original=source.read_bytes()
+  spec={'kind':'detail','canvas':{'width':64,'height':48},'frameDurationsMs':[],
+        'frames':[describe(original,index=0)],'sourceHash':'a'*64}
+  try:
+   encoded=process(root,spec,fallback)
+  except ValueError as err:
+   assert coded == str(err),(coded,str(err))
+   encoded=None
+  else:
+   assert coded is None
+  assert source.read_bytes()==original
+  return encoded
+ native=Image.new('RGBA',(64,48),(11,44,15,0))
+ ImageDraw.Draw(native).rectangle((12,12,40,30),fill=(145,99,42,253))
+ native.putpixel((11,13),(145,99,42,23))
+ detail=run_detail(native)
+ assert len(matte_calls)==0
+ out=Image.open(io.BytesIO(detail))
+ assert out.getchannel('A').tobytes()==native.getchannel('A').tobytes()
+ assert out.getpixel((20,20))==(145,99,42,253)
+ assert out.getpixel((11,13))==(145,99,42,23)
+ assert out.getpixel((0,0))==(0,0,0,0)
+ (root/'source.png').write_bytes(detail)
+ spec={'kind':'pixel','canvas':{'width':32,'height':24},'frameDurationsMs':[],'media':describe(detail)}
+ small=Image.open(io.BytesIO(process(root,spec,fallback)))
+ assert small.getpixel((10,10))[3]==255 and small.getpixel((0,0))[3]==0
+ # Header can declare RGBA even when blank, opaque, fake painted, clipped,
+ # or there are only translucent pixels and no solid foreground.
+ invalid='PROP_DERIVATION_STATIC_NATIVE_ALPHA_REQUIRED'
+ for mode,alpha in [('RGB',None),('RGBA',0),('RGBA',255),('RGBA',42)]:
+  base=Image.new(mode,(64,48),(11,44,15) if alpha is None else (11,44,15,alpha))
+  if alpha==255: ImageDraw.Draw(base).rectangle((10,10,20,20),fill=(180,180,180,255))
+  run_detail(base,coded=invalid)
+ cropped=native.copy();ImageDraw.Draw(cropped).line((0,5,0,43),fill=(145,99,42,253))
+ run_detail(cropped,coded=invalid)
+ no_solid=native.copy()
+ no_solid.putalpha(native.getchannel('A').point(lambda a:42 if a else 0))
+ run_detail(no_solid,coded=invalid)
+ run_detail(native,coded='PROP_DERIVATION_STATIC_SOURCE_PNG_INVALID',corrupt=True)
+ assert len(matte_calls)==0
+finally:
+ import shutil
+ shutil.rmtree(root)
+`,program]);
  });

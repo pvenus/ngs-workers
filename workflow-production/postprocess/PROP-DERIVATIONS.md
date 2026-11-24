@@ -81,3 +81,12 @@ The fixture supplies model-free Codex, diffusion and matting results
 but executes the production request claims, PNG verification, pixel
 derivation, PDS handlers, Filex publication and Planner readback. It does not
 open the real Planner database or installed model providers.
+
+
+A static detail PNG proven to contain the native renderer's genuine RGBA
+cutout retains its original visible RGB and entire alpha channel, including
+soft edges, instead of being rematted. The proof uses decoded foreground
+coverage and transparent background/corners/border; an alpha header alone
+does not qualify. An invalid static cutout fails explicitly and is never
+rematted. Pixel output still uses the verified detail. The installed matting
+model is used only for animated prop detail; NPC matting is unchanged.
