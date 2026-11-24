@@ -28,3 +28,28 @@
 - 원본 PNG의 알파는 영상 모델의 네이티브 출력 채널이 아닙니다. 본 단계는 디코딩한 8비트 RGB PNG들을 시간순으로 게시하고 매니페스트에 `alpha:"none"`으로 기록합니다. PNG라는 이유로 투명 결과로 표시하지 않습니다.
 - 투명이 필요하면 `animation_i2v` 결과를 입력으로 받은 독립 후처리 단계에서 관심영역/초기 마스크, 전경 분리, 프레임별 투명 영역 및 시간적 안정성을 검증하고 RGBA 결과를 게시합니다. 광원/불꽃만 들어 있는 검정 배경 효과에는 기존 luma 모드를 검토할 수 있지만, 촛대+불꽃 전체를 luma로 자르면 어두운 금속도 손실되므로 동일 공정으로 취급하지 않습니다.
 - 기존 NPC 후처리 API는 NPC·포즈·방향 계약에 묶여 직접 호출할 수 없습니다. 검증된 RGBA 결과가 없으면 원본 투명 정지 이미지를 퍼즐용 대체로 유지합니다.
+
+## 소품 파이프라인 연결 검증
+
+`propI2VRGBStage`는 승인된 `prop_motion` 작업의 RGB 프레임을
+`/v1/props/ownership/workflow-stage`용 매니페스트와 원본 바이트로 변환합니다.
+24fps × 45프레임은 누적 반올림으로 정확히 1,875ms가 되며, 재인코딩하지
+않습니다. 실제 PDS의 순서·해시·RGB 검증을 합성 프레임으로 통과했습니다.
+변환기만으로는 소품 Animation 워커를 시작하거나 요청을 실행하지 않습니다.
+
+공급할 독립 런타임의 고정 소스:
+
+- [QuantStack Q8_0](https://huggingface.co/QuantStack/Wan2.2-TI2V-5B-GGUF/blob/57437632ddd08bdcbd1508c866aa22e126ed51d2/Wan2.2-TI2V-5B-Q8_0.gguf):
+  `57bece983817ab2f957546683bb670f13be7d99022d45674840cd999a050ea8f`,
+  5,400,179,040 bytes.
+- [Comfy-Org Wan2.2 VAE](https://huggingface.co/Comfy-Org/Wan-2.2/blob/8441d066add15eae8d84f42aa6d9c45417973ce6/split_files/vae/wan2.2_vae.safetensors):
+  `e40321bd36b9709991dae2530eb4ac303dd168276980d3e9bc4b6e2b75fed156`.
+- [city96 ComfyUI-GGUF](https://github.com/city96/ComfyUI-GGUF/commit/6ea2651e7df66d7585f6ffee804b20e92fb38b8a):
+  고정 커밋 `6ea2651e7df66d7585f6ffee804b20e92fb38b8a`.
+- 기존 Comfy 런타임 Python을 바꾸지 않고 별도의 Python 환경에
+  [gguf 0.19.0](https://pypi.org/project/gguf/0.19.0/#files),
+  [protobuf 6.33.5](https://pypi.org/project/protobuf/6.33.5/#files)와
+  기존 설치에서 검증된 `sentencepiece`를 준비합니다.
+
+가중치나 Python 의존성이 공급되지 않으면 I2V 기능을 켜지 않습니다.
+소품의 정적 작업은 이 제한과 독립입니다.
