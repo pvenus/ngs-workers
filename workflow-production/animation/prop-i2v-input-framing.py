@@ -38,11 +38,13 @@ def prepare(source, preset):
         else:
             width, height = max(1, (cap_h * sw + sh // 2) // sh), cap_h
         left, top = (cw - width) // 2, ch - BOTTOM_MARGIN - height
-        # Resize RGBA in Pillow (premultiplied interpolation) before compositing.
-        # An already-green RGB source retains its green; opaque black stays untouched.
-        fitted = original.convert('RGBA').resize((width, height), Image.Resampling.LANCZOS)
+        # Composite at original resolution, then resize RGB. This matches the
+        # validated two-step experiment and makes native RGBA input equivalent
+        # to an already-green RGB still derived from the same alpha bytes.
+        matte = Image.alpha_composite(Image.new('RGBA', (sw, sh), (*KEY, 255)), original.convert('RGBA')).convert('RGB')
+        fitted = matte.resize((width, height), Image.Resampling.LANCZOS)
         canvas = Image.new('RGB', CANVAS, KEY)
-        canvas.paste(fitted, (left, top), fitted.getchannel('A'))
+        canvas.paste(fitted, (left, top))
 
     out = BytesIO()
     canvas.save(out, format='PNG')

@@ -4,6 +4,8 @@ Run with cwd at that isolated service tree; PYTHONPATH=data-service:filex-writer
 set WORKFLOW_PROP_TEST_PYTHON to a local Pillow interpreter. Planner inserts real workflow rows from the formal request fixture; the three worker modules run over live test-only PDS and
 Filex HTTP listeners. Only Codex, diffusion and BiRefNet are body fixtures; no model is called.
 """
+import base64
+import io
 import json
 import sqlite3
 import subprocess
@@ -71,7 +73,14 @@ s.close();""",str(self.db),oid2,json.dumps(payload,ensure_ascii=False),self.oid,
         self.assertEqual(self.api('/read',pin2)['manifest'],m2)
 
     def test_actual_worker_append_preserves_original_and_publishes_both_timed_lanes(self):
-        prior=make('a'); m1=prior['manifest']
+        self.exercise_worker_append()
+
+    def test_profile_runs_real_headroom_and_key_through_claim_scoped_workers(self):
+        self.exercise_worker_append('candle-chroma-headroom-v1')
+
+    def exercise_worker_append(self,profile=None):
+        prior=make('a',prop_id='candle-brass-petal-unlit-clean') if profile else make('a')
+        m1=prior['manifest']
         self.filex_writer(WRITER,{k:prior[k] for k in ('candidate','manifest','media')})
         source={k:v for k,v in self.pin(m1).items() if k!='propId'}
         marker=self.db.parent/'prop-animation-ready.json'
@@ -81,6 +90,7 @@ s.close();""",str(self.db),oid2,json.dumps(payload,ensure_ascii=False),self.oid,
         oid='request.official.'+'d'*64
         payload={'schemaVersion':'ngs.prop-animation-generate.v1','projectId':'binari','propId':m1['propId'],
                  'source':source,'motionId':'gentle-flicker','prompt':'Only the flame flickers'}
+        if profile:payload['renderProfile']=profile
         inserted=subprocess.run(['node','--input-type=module','-e',"""import {PlannerStore} from './workflow-planner/planner.mjs';
 import {canonical,sha} from './workflow-planner/envelope.mjs';
 const [db,id,raw]=process.argv.slice(1),payload=JSON.parse(raw);
@@ -89,7 +99,7 @@ s.stage({officialRequestId:id,requestType:'prop.animation.generate',projectId:'b
  payload,payloadSha256:sha(canonical(payload)),status:'registered',registeredAt:2});
 s.acknowledge(id);s.close();""",str(self.db),oid,json.dumps(payload)],capture_output=True,text=True,timeout=15)
         self.assertEqual(inserted.returncode,0,inserted.stderr)
-        child=subprocess.run(['node',str(DRIVER),str(self.db),oid,self.pds.rsplit(':',1)[1],'prop.animation.generate','gentle-flicker'],
+        child=subprocess.run(['node',str(DRIVER),str(self.db),oid,self.pds.rsplit(':',1)[1],'prop.animation.generate','gentle-flicker',*([profile] if profile else [])],
             capture_output=True,text=True,timeout=40)
         self.assertEqual(child.returncode,0,child.stderr)
         proof=json.loads(child.stdout)
@@ -104,6 +114,16 @@ s.acknowledge(id);s.close();""",str(self.db),oid,json.dumps(payload)],capture_ou
             self.assertEqual(c['media'][lane]['mediaType'],'image/apng')
             self.assertEqual(c['media'][lane]['frameDurationsMs'],[83,84,83])
             self.assertEqual(c['media'][lane]['width'],m1['media'][lane]['width'])
+        if profile:
+            from PIL import Image
+            for lane in ('detail','pixel'):
+                media=c['media'][lane]
+                image_bytes=base64.b64decode(self.props.read(pin,media['assetId'])['base64'],validate=True)
+                with Image.open(io.BytesIO(image_bytes)) as clip:
+                    self.assertEqual(clip.n_frames,3)
+                    self.assertEqual(clip.getpixel((0,0)),(0,0,0,0))
+                    r,g,b,a=clip.getpixel((clip.width//2,clip.height//2))
+                    self.assertTrue(r>240 and 40<g<180 and b<24 and a==255,(lane,r,g,b,a))
         with sqlite3.connect(self.db) as db:
             tasks=db.execute('SELECT status,result_ref,retry_count FROM workflow_tasks WHERE official_request_id=?',(oid,)).fetchall()
             self.assertEqual(len(tasks),4);self.assertTrue(all(x=='completed' and y and z==0 for x,y,z in tasks))

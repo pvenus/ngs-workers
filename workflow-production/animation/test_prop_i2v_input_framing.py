@@ -44,6 +44,10 @@ class TestPropI2VInputFraming(unittest.TestCase):
         src = Image.new('RGBA', (512, 352), (0, 0, 0, 0))
         ImageDraw.Draw(src).rectangle((90, 70, 420, 320), fill=(0, 0, 0, 255))
         out, info = framing.prepare(png(src), 'candle-headroom-v1')
+        # Exact same prepared model input from the unmodified native still or
+        # its previous full-scale green composite (including soft edges).
+        green = Image.alpha_composite(Image.new('RGBA',src.size,(0,255,0,255)),src).convert('RGB')
+        self.assertEqual(out,framing.prepare(png(green),'candle-headroom-v1')[0])
         with Image.open(BytesIO(out)) as img:
             self.assertEqual(img.getpixel((240, 160)), (0, 0, 0))
             self.assertEqual(img.getpixel((260, info['placedSource']['y'] + 10)), (0, 255, 0))

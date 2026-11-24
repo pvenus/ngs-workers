@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import {execFileSync} from 'node:child_process';
 import {mkdtemp,rm} from 'node:fs/promises';
 import {request} from 'node:http';
+import {createPropI2VInputFraming} from '../animation/prop-i2v-input-framing.mjs';
 import {DatabaseSync} from 'node:sqlite';
 import {choosePropAnimation,executePropAnimation,propAnimationPorts} from '../animation/prop-animation-worker.mjs';
 import {tmpdir} from 'node:os';
@@ -19,7 +20,7 @@ import {nextPropPackageFromPath,runPropPackageFromPath} from './prop-package-wor
 import {renderPropInScratch} from './prop-derivation-provider.mjs';
 import {propTaskId,propKeys} from './vendor/prop-composite/prop-generate-plan.mjs';
 
-const [dbPath,officialRequestId,rawPort,operation,label]=process.argv.slice(2);
+const [dbPath,officialRequestId,rawPort,operation,label,profile]=process.argv.slice(2);
 assert.ok(dbPath&&officialRequestId&&/^[1-9]\d{3,4}$/.test(rawPort)&&['prop.generate','prop.regenerate','prop.animation.generate'].includes(operation)&&label);
 const port=Number(rawPort);
 const python=process.env.WORKFLOW_PROP_TEST_PYTHON??'python3';
@@ -44,6 +45,8 @@ const transport=(path,{body,signal,type,limit,timeout})=>new Promise((resolve,re
 const pds=propStagePorts({transport});
 assert.equal(await pds.ready(),true);
 const isAppend=operation==='prop.animation.generate';
+const isChroma=profile!==undefined;
+assert.ok(!isChroma||isAppend&&profile==='candle-chroma-headroom-v1');
 if(!isAppend){
  const result=await runPropDesignFromPath({dbPath,officialRequestId,taskId:taskId(propKeys.design),operation:operation+'.design',
   pds:docPds,render:async input=>{
@@ -80,16 +83,19 @@ im.save(sys.stdout.buffer,format='PNG')
   assert.equal(await rawPorts.ready(),true);
   const raw=choosePropAnimation(dbPath);
   assert.deepEqual({...raw},{officialRequestId,taskId:taskId(propKeys.motion)});
-  const result=await executePropAnimation(db,raw,new AbortController().signal,{ports:rawPorts,renderer:{async render(job){
+  const result=await executePropAnimation(db,raw,new AbortController().signal,{ports:rawPorts,...(isChroma?{prepareInput:createPropI2VInputFraming(python)}:{}),renderer:{async render(job){
    assert.ok(job.source.length>50);assert.equal(job.motionPrompt,'Only the flame flickers');
+   if(isChroma)assert.deepEqual([job.source.readUInt32BE(16),job.source.readUInt32BE(20)],[512,352]);
    const frames=[60,100,160].map(color=>execFileSync(python,['-B','-c',`
 import sys
 from PIL import Image,ImageDraw
-im=Image.new('RGB',(32,32))
-ImageDraw.Draw(im).rectangle((8,8,23,23),fill=(int(sys.argv[1]),55,94))
+chroma=sys.argv[2]=='chroma'
+im=Image.new('RGB',(512,352) if chroma else (32,32),(0,255,0) if chroma else (0,0,0))
+ImageDraw.Draw(im).rectangle((128,110,383,310) if chroma else (8,8,23,23),
+                              fill=(255,int(sys.argv[1]),8) if chroma else (int(sys.argv[1]),55,94))
 im.save(sys.stdout.buffer,format='PNG')
-`,String(color)]));
-   return {frames,width:32,height:32,fps:12};
+`,String(color),isChroma?'chroma':'plain']));
+   return {frames,width:isChroma?512:32,height:isChroma?352:32,fps:12};
   }}});
   assert.equal(result.state,'completed',JSON.stringify(result));
   assert.equal(result.frameCount,3);
@@ -105,6 +111,7 @@ from pathlib import Path
 from PIL import Image
 code=runpy.run_path(sys.argv[1]); root=Path(sys.argv[2])
 def matte(root,paths,key):
+ if sys.argv[3]=='chroma': raise AssertionError('approved chroma cannot call learned matting')
  out=[]
  for i,src in enumerate(paths):
   p=root/('fixture-%d.png'%i)
@@ -113,7 +120,7 @@ def matte(root,paths,key):
   rgba.save(p);out.append(p)
  return out
 (root/'result.png').write_bytes(code['process'](root,json.loads((root/'job.json').read_bytes()),matte))
-`,program,directory]);
+`,program,directory,isChroma?'chroma':'plain']);
  }});}finally{await rm(scratch,{recursive:true,force:true});}
 };
 const derived={};
