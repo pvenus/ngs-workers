@@ -1,4 +1,36 @@
-# Official single-image I2V cinematic workflow
+# Official native PNG sequence cinematic workflow
+
+New sequence requests use `cinematic.sequence.generate` /
+`ngs.cinematic-sequence-generate.v1`. They are not MP4 requests.
+
+- Exact input: `{projectId,sourceSha256,motionPrompt,playback}` plus request
+  schema. The playback metadata preserves `durationFrames` (1–1440), a speed
+  curve `[{frame,rate}]` (rate 0–4), and a camera curve
+  `[{frame,zoom,x,y}]` (zoom 1–3, normalized x/y 0–1). Curves must start at
+  0 and have strictly increasing integer frames below the playback duration.
+- The existing exclusive Wan slot still renders **45 RGB PNGs at the native
+  24fps grid**, independent of the playback metadata. No FFmpeg, crop,
+  interpolation, matting, resizing, repack, or PNG re-encoding happens in
+  sequence publication. Display-time controls are stored, not burned in.
+- Exact worker task: `cinematic_sequence_render` /
+  `cinematic.sequence.generate.render`. It checks the full claim and source
+  SHA-256, validates every native PNG's byte length, CRC, RGB shape and hash,
+  then stages each PNG in order via the private PDS workflow sequence port.
+  Only the manifest's atomic visibility acknowledgment allows worker
+  completion at `binari/cinematics/sequences/<officialId>/manifest.json`.
+- Identical same-claim frame/manifest writes can retry once in-process on
+  transport uncertainty; unresolved publication stays fenced in progress
+  for reconciliation rather than re-running inference.
+- Separate private readiness `cinematic-sequence-animation-ready.json` checks
+  the pinned A14B model (not FFmpeg), updated every 30 seconds. Optional
+  owner binding `WORKFLOW_CINEMATIC_SEQUENCE_ANIMATION_READY_FILE` must use the
+  same filename. Model-stop uncertainty invalidates the shared slot and
+  all readiness proofs.
+
+## Legacy v1 MP4
+
+Historical requests and their already queued v1 jobs retain their own
+original format, readiness and publication routes.
 
 A full-scene artifact path, not a prop effect or NPC animation. The existing
 resident worker reads one approved storyboard PNG and its motion brief and uses

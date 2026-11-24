@@ -58,3 +58,19 @@ test('legacy 5B readiness does not enable the A14B-only resident',async t=>{
  assert.equal(await lease.refresh(),false);assert.equal(lease.ready(),false);
  await assert.rejects(lstat(path),{code:'ENOENT'});
 });
+
+test('sequence marker is independent from v1 encoder readiness and cannot overwrite it',async t=>{
+ const {cinematicSequenceReadiness}=await import('./prop-animation-readiness.mjs');
+ const dir=await realpath(await mkdtemp(join(tmpdir(),'sequence-animation-ready-')));
+ t.after(()=>rm(dir,{recursive:true,force:true}));
+ const v1=join(dir,'cinematic-animation-ready.json'),path=join(dir,'cinematic-sequence-animation-ready.json');
+ const probe=async()=>({ready:true,model:'wan2.2-i2v-a14b',quantization:'q4_k_m'});
+ const v2=cinematicSequenceReadiness({path,now:()=>46,assertKnown(){},probe});
+ assert.equal(await v2.refresh(),true);
+ assert.deepEqual(JSON.parse(await readFile(path)),{schemaVersion:'workflow.cinematic-sequence-animation-renderer-ready.v1',
+  provider:'wan-i2v-a14b-q4_k_m',checkedAt:46});
+ await assert.rejects(lstat(v1),{code:'ENOENT'});
+ const fails=cinematicSequenceReadiness({path:v1,now:()=>46,assertKnown(){},probe});
+ assert.equal(await fails.refresh(),false);
+ await v2.stop();await assert.rejects(lstat(path),{code:'ENOENT'});
+});

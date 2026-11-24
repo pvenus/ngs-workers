@@ -11,8 +11,9 @@ import {createWarmAnimation,spawnAnimationChannel} from './animation-warm.mjs';
 import {chooseI2V,executeI2V,i2vPorts} from './i2v-worker.mjs';
 import {createAnimationModelSwitch} from './i2v-model-switch.mjs';
 import {choosePropAnimation,executePropAnimation,propAnimationPorts} from './prop-animation-worker.mjs';
-import {confirmBindingPath,defaultPropBinding,propAnimationReadiness,cinematicAnimationReadiness} from './prop-animation-readiness.mjs';
+import {confirmBindingPath,defaultPropBinding,propAnimationReadiness,cinematicAnimationReadiness,cinematicSequenceReadiness} from './prop-animation-readiness.mjs';
 import {chooseCinematic,executeCinematic,cinematicPorts} from './cinematic-worker.mjs';
+import {chooseCinematicSequence,executeCinematicSequence,cinematicSequencePorts} from './cinematic-sequence-worker.mjs';
 import {createPropI2VInputFraming} from './prop-i2v-input-framing.mjs';
 import {probeCutsceneEncoder} from './cutscene-i2v.mjs';
 import {WAN_I2V_MODEL_ID,WAN_I2V_QUANTIZATION} from './i2v-wan-graph.mjs';
@@ -281,6 +282,7 @@ if(process.argv[1]===fileURLToPath(import.meta.url)){
  const i2v=i2vPorts(local);
  const prop=propAnimationPorts(local);
  const cinematic=cinematicPorts(local);
+ const sequence=cinematicSequencePorts(local);
  // Existing resident owns both model families. Fixed, private host binding
  // enables I2V only with the exact A14B high/low Q4_K_M pair and Wan 2.1 VAE.
  const override=process.env.WORKFLOW_I2V_A14B_BINDING;
@@ -308,7 +310,8 @@ if(process.argv[1]===fileURLToPath(import.meta.url)){
  const propReady=propAnimationReadiness({path:process.env.WORKFLOW_PROP_ANIMATION_READY_FILE,probe:probeModel,assertKnown});
  const cinematicReady=cinematicAnimationReadiness({path:process.env.WORKFLOW_CINEMATIC_ANIMATION_READY_FILE,assertKnown,
   probe:async()=>{const [proof]=await Promise.all([probeModel(),probeCutsceneEncoder()]);return proof;}});
- const allReadiness=[propReady,cinematicReady];
+ const sequenceReady=cinematicSequenceReadiness({path:process.env.WORKFLOW_CINEMATIC_SEQUENCE_ANIMATION_READY_FILE,probe:probeModel,assertKnown});
+ const allReadiness=[propReady,cinematicReady,sequenceReady];
  const pulseReadiness=()=>{for(const lifecycle of allReadiness)void lifecycle.refresh();};
  const readinessHeart=setInterval(pulseReadiness,30000);readinessHeart.unref();pulseReadiness();
  const invalidateReady=()=>Promise.all(allReadiness.map(lifecycle=>lifecycle.invalidate()));
@@ -320,7 +323,8 @@ if(process.argv[1]===fileURLToPath(import.meta.url)){
    const propTask=!legacy&&!legacyPreset&&propReady.ready()?choosePropAnimation(dbPath):null;
    const i2vTask=!legacy&&!legacyPreset&&!propTask&&i2vModel&&override?chooseI2V(dbPath):null;
    const cinematicTask=!legacy&&!legacyPreset&&!propTask&&!i2vTask&&cinematicReady.ready()?chooseCinematic(dbPath):null;
-   const t=legacy??legacyPreset??propTask??i2vTask??cinematicTask;
+   const sequenceTask=!legacy&&!legacyPreset&&!propTask&&!i2vTask&&!cinematicTask&&sequenceReady.ready()?chooseCinematicSequence(dbPath):null;
+   const t=legacy??legacyPreset??propTask??i2vTask??cinematicTask??sequenceTask;
    if(!t){
     idle=true; // At the timeout boundary a runnable job takes precedence.
     if(!await warm.idle())throw Error('ANIMATION_PROCESS_STOP_UNCONFIRMED');
@@ -348,6 +352,15 @@ if(process.argv[1]===fileURLToPath(import.meta.url)){
     insist(await cinematic.ready(signal),'CINEMATIC_PDS_UNAVAILABLE');
     signal.throwIfAborted();
     const result=await executeCinematic(db,cinematicTask,signal,{ports:cinematic,runI2V:job=>modelSlot.runI2V(job)});
+    if(result.state==='completed')console.log(JSON.stringify(result));
+    else if(result.state!=='stale')console.error(JSON.stringify(result));
+    if(result.rendererStop==='unknown')await invalidateReady();
+    idle=result.state==='stale'||result.rendererStop==='unknown';
+   }else if(sequenceTask){
+    modelSlot.assertKnown();
+    insist(await sequence.ready(signal),'CINEMATIC_SEQUENCE_PDS_UNAVAILABLE');
+    signal.throwIfAborted();
+    const result=await executeCinematicSequence(db,sequenceTask,signal,{ports:sequence,runI2V:job=>modelSlot.runI2V(job)});
     if(result.state==='completed')console.log(JSON.stringify(result));
     else if(result.state!=='stale')console.error(JSON.stringify(result));
     if(result.rendererStop==='unknown')await invalidateReady();

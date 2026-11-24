@@ -9,6 +9,7 @@ const base=join(homedir(),'Workspaces','Workers','runtime','prop-animation');
 export const defaultPropBinding=join(base,'i2v-a14b-binding.json');
 export const defaultPropReady=join(base,'prop-animation-ready.json');
 export const defaultCinematicReady=join(base,'cinematic-animation-ready.json');
+export const defaultSequenceReady=join(base,'cinematic-sequence-animation-ready.json');
 const code='PROP_ANIMATION_READINESS_PATH';
 const require=(ok)=>{if(!ok)throw Error(code);};
 async function check(path,leaf='prop-animation-ready.json'){
@@ -27,6 +28,9 @@ export function propAnimationReadiness(options){
 }
 export function cinematicAnimationReadiness(options){
  return runtimeReadiness(options,defaultCinematicReady,'cinematic-animation-ready.json','workflow.cinematic-animation-renderer-ready.v1');
+}
+export function cinematicSequenceReadiness(options){
+ return runtimeReadiness(options,defaultSequenceReady,'cinematic-sequence-animation-ready.json','workflow.cinematic-sequence-animation-renderer-ready.v1');
 }
 function runtimeReadiness({path=undefined,probe,assertKnown,now=Date.now},defaultPath,leaf,schemaVersion){
  if(path===undefined)path=defaultPath;

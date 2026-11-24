@@ -51,8 +51,9 @@ A14B는 Worker와 PDS/RS/Planner의 동일 계약을 함께 준비한 뒤에만 
 
 ## 산출물
 
-- **시네마틱**: `cinematic.generate` → 단일 `cinematic_render` →
-  원본 장면의 배경을 그대로 둔 무음 MP4. [계약과 검증](./CUTSCENE-I2V.md).
+- **시네마틱**: `cinematic.sequence.generate` → 단일 `cinematic_sequence_render` →
+  모델에서 나온 PNG 원본 프레임과 재생 메타데이터. 배경 제거·재인코딩 없음.
+  기존 `cinematic.generate` MP4는 구 요청 호환 경로입니다. [계약과 검증](./CUTSCENE-I2V.md).
 - **프랍 모션**: 정식 `prop.animation.generate.raw` → PDS에 원본 RGB →
   해당 프랍의 별도 후처리/패키지 워크플로. 기존 30M decoded-pixel 예산에
   맞춰 필요한 경우 원본 프레임 일부를 균등 선택하여 길이와 첫/끝을 보존합니다.
