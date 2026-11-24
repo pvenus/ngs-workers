@@ -1,7 +1,7 @@
 /** Read the validated PDS snapshot, bind it to the request, then render one prop image. */
 import {createHash} from 'node:crypto';
 
-export const propImageRequestSchema='ngs.prop-image-generate.local.v1';
+export const propImageRequestSchema='ngs.prop-image-generate.v1';
 export const propDesignContextSchema='ngs.prop-image-design.v1';
 const masterCategoryId='expression',propCategoryId='category.add.26710502f5713d99018b77a29384d5da';
 const exact=(v,ks)=>v!==null&&typeof v==='object'&&!Array.isArray(v)&&Object.keys(v).length===ks.length&&ks.every(k=>Object.hasOwn(v,k));

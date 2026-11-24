@@ -2,7 +2,7 @@ import {setTimeout as delay} from 'node:timers/promises';
 import {localPorts} from './local-ports.mjs';
 import {imageTick,parseImageArgs,startImageHeartbeat} from './image-runner.mjs';
 import {withPlanningSnapshot} from './planning-folders.mjs';
-import {createPortraitRenderer,createNeutralReferenceRenderer,probePortraitRenderer} from './portrait-renderer.mjs';
+import {createPortraitRenderer,createNeutralReferenceRenderer,createPropImageRenderer,probePortraitRenderer} from './portrait-renderer.mjs';
 
 try{
  const settings=parseImageArgs(process.argv.slice(2));
@@ -11,15 +11,16 @@ try{
  const stopOrDrain=()=>{if(settings.mode==='run')drain.abort();else stop.abort();};
  process.on('SIGINT',stopOrDrain);process.on('SIGTERM',stopOrDrain);
  const pds=localPorts(),providerReady=()=>probePortraitRenderer();
- let renderPort,neutralRenderPort,last;
+ let renderPort,neutralRenderPort,propRenderPort,last;
  const heartbeat=startImageHeartbeat({pds,signal});
  const onHealth=heartbeat.setReady;
  const render=(...args)=>(renderPort??=createPortraitRenderer())(...args);
  const renderNeutral=(...args)=>(neutralRenderPort??=createNeutralReferenceRenderer())(...args);
+ const renderProp=(...args)=>(propRenderPort??=createPropImageRenderer())(...args);
  const onPhase=phase=>console.error(JSON.stringify({service:'image-worker',phase}));
  do{
   let result;
-  try{result=await imageTick({...settings,pds,providerReady,render,renderNeutral,withPlanningSnapshot,signal,admissionSignal,onPhase,onHealth});}
+  try{result=await imageTick({...settings,pds,providerReady,render,renderNeutral,renderProp,withPlanningSnapshot,signal,admissionSignal,onPhase,onHealth});}
   catch{onHealth(false);result={state:'not_ready',code:'IMAGE_WORKER_OPERATION_FAILED'};}
   const line=JSON.stringify({service:'image-worker',...result});
   if(last!==line||settings.mode==='execute'){console.log(line);last=line;}
