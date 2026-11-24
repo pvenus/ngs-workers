@@ -7,6 +7,7 @@ import {randomUUID} from 'node:crypto';
 const base=join(homedir(),'Workspaces','Workers','runtime','prop-animation');
 export const defaultPropBinding=join(base,'i2v-binding.json');
 export const defaultPropReady=join(base,'prop-animation-ready.json');
+export const defaultCinematicReady=join(base,'cinematic-animation-ready.json');
 const code='PROP_ANIMATION_READINESS_PATH';
 const require=(ok)=>{if(!ok)throw Error(code);};
 async function check(path,leaf='prop-animation-ready.json'){
@@ -20,11 +21,18 @@ async function check(path,leaf='prop-animation-ready.json'){
 }
 export async function confirmBindingPath(path){await check(path,'i2v-binding.json');}
 
-export function propAnimationReadiness({path=defaultPropReady,probe,assertKnown,now=Date.now}){
+export function propAnimationReadiness(options){
+ return runtimeReadiness(options,defaultPropReady,'prop-animation-ready.json','workflow.prop-animation-renderer-ready.v1');
+}
+export function cinematicAnimationReadiness(options){
+ return runtimeReadiness(options,defaultCinematicReady,'cinematic-animation-ready.json','workflow.cinematic-animation-renderer-ready.v1');
+}
+function runtimeReadiness({path=undefined,probe,assertKnown,now=Date.now},defaultPath,leaf,schemaVersion){
+ if(path===undefined)path=defaultPath;
  let closed=false,pending,valid=false;
  async function clear(){
   valid=false;
-  try{await check(path);await unlink(path);}catch{/* expiry stays fail-closed after any filesystem uncertainty */}
+  try{await check(path,leaf);await unlink(path);}catch{/* expiry stays fail-closed after any filesystem uncertainty */}
  }
  function refresh(){
   if(closed)return Promise.resolve(false);
@@ -32,13 +40,13 @@ export function propAnimationReadiness({path=defaultPropReady,probe,assertKnown,
   pending=(async()=>{
    let stage;
    try{
-    await check(path);assertKnown();
+    await check(path,leaf);assertKnown();
     const ready=await probe();
     require(ready?.ready===true&&ready.model==='wan2.2-ti2v-5b'&&ready.quantization==='q8_0');
     assertKnown();require(!closed);
     const checkedAt=now();require(Number.isSafeInteger(checkedAt)&&checkedAt>0);
-    stage=join(dirname(path),'.prop-ready-'+randomUUID());
-    await writeFile(stage,JSON.stringify({schemaVersion:'workflow.prop-animation-renderer-ready.v1',
+    stage=join(dirname(path),'.animation-ready-'+randomUUID());
+    await writeFile(stage,JSON.stringify({schemaVersion,
       provider:'wan-ti2v-q8_0',checkedAt})+'\n',{mode:0o600,flag:'wx'});
     assertKnown();require(!closed);
     await rename(stage,path);stage=undefined;valid=true;return true;

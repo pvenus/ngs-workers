@@ -6,16 +6,25 @@ import {join} from 'node:path';
 import {tmpdir} from 'node:os';
 import {maxImageBytes, outputArtifact, png} from './i2v-worker.mjs';
 
-const MAX_MP4 = 8 * 1024 * 1024;
+export const MAX_CUTSCENE_MP4_BYTES = 8 * 1024 * 1024;
 const digest = bytes => createHash('sha256').update(bytes).digest('hex');
 function require(ok, code) { if (!ok) throw Error('CUTSCENE_' + code); }
 
-async function callEncoder(name, args, signal) {
+async function encoderPath(name) {
   require(name === 'ffmpeg' || name === 'ffprobe', 'ENCODER_SCOPE');
   const tool = await realpath('/opt/homebrew/bin/' + name);
   require(new RegExp('^/opt/homebrew/(?:bin/|Cellar/ffmpeg/[A-Za-z0-9._-]+/bin/)' + name + '$').test(tool), 'ENCODER_SCOPE');
   const s = await stat(tool);
   require(s.isFile() && [0, process.getuid()].includes(s.uid) && !(s.mode & 0o022) && (s.mode & 0o111), 'ENCODER_SCOPE');
+  return tool;
+}
+
+export async function probeCutsceneEncoder() {
+  await Promise.all([encoderPath('ffmpeg'), encoderPath('ffprobe')]);
+}
+
+async function callEncoder(name, args, signal) {
+  const tool = await encoderPath(name);
   const deadline = AbortSignal.any([signal, AbortSignal.timeout(120_000)]);
   deadline.throwIfAborted();
   return await new Promise((resolve, reject) => {
@@ -68,11 +77,15 @@ export async function encodeCutscene(output, dir, signal, invoke = callEncoder) 
     p.format?.format_name?.split(',').includes('mp4'), 'ENCODER_PROOF');
   const f = await open(path, 'r');
   let bytes;
-  try { const info = await f.stat(); require(info.isFile() && info.size >= 24 && info.size <= MAX_MP4, 'FILE_SIZE');
+  try { const info = await f.stat(); require(info.isFile() && info.size >= 24 && info.size <= MAX_CUTSCENE_MP4_BYTES, 'FILE_SIZE');
     bytes = await f.readFile(); require(bytes.length === info.size && bytes.toString('ascii',4,8) === 'ftyp', 'FILE_TYPE'); }
   finally { await f.close(); }
   return {bytes, sha256: digest(bytes), mimeType:'video/mp4', width,height,fps,frameCount:frames.length};
 }
+
+export const validCutscenePrompt = v => typeof v === 'string' && v.isWellFormed() && v === v.trim() &&
+  [...v].length >= 1 && [...v].length <= 1000 && Buffer.byteLength(v) <= 2000 &&
+  !/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f]|\bembedding:/iu.test(v);
 
 /**
  * The caller supplies the shared, serialized runtime (modelSlot.runI2V), never starts
@@ -83,9 +96,7 @@ export function createCutsceneRenderer({renderI2V, encode = encodeCutscene}) {
   return async function renderCutscene({source, motionPrompt, signal = new AbortController().signal}) {
     signal.throwIfAborted();
     png(source, maxImageBytes);
-    require(typeof motionPrompt === 'string' && motionPrompt.isWellFormed() && motionPrompt === motionPrompt.trim() &&
-      [...motionPrompt].length >= 1 && [...motionPrompt].length <= 1000 &&
-      !/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f]|\bembedding:/iu.test(motionPrompt), 'PROMPT');
+    require(validCutscenePrompt(motionPrompt), 'PROMPT');
     const sourceSha256 = digest(source);
     const dir = await mkdtemp(join(tmpdir(), 'workflow-cutscene-'));
     let cleanup = true;

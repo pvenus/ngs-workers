@@ -11,7 +11,9 @@ import {createWarmAnimation,spawnAnimationChannel} from './animation-warm.mjs';
 import {chooseI2V,executeI2V,i2vPorts} from './i2v-worker.mjs';
 import {createAnimationModelSwitch} from './i2v-model-switch.mjs';
 import {choosePropAnimation,executePropAnimation,propAnimationPorts} from './prop-animation-worker.mjs';
-import {confirmBindingPath,defaultPropBinding,propAnimationReadiness} from './prop-animation-readiness.mjs';
+import {confirmBindingPath,defaultPropBinding,propAnimationReadiness,cinematicAnimationReadiness} from './prop-animation-readiness.mjs';
+import {chooseCinematic,executeCinematic,cinematicPorts} from './cinematic-worker.mjs';
+import {probeCutsceneEncoder} from './cutscene-i2v.mjs';
 import {choosePresetFrames,executePresetFrames,presetFramePorts} from './preset-frame-worker.mjs';
 import {isSelectedMediaRun,isRegenerateRun,selectionSchemas,poseSelectionSchemas,regenerateType,regenerateSchemas,selectedMotionBranch,matchesMotionTask} from './vendor/npc-motion-selection-v1/media-branch.mjs';
 import {assertDatabasePath,protectSchema,nextWorkflowTaskFromPath,markWorkflowTaskFailed,workflowTaskEligibleSql,workflowTaskRetrySetSql} from './workflow-ready.mjs';
@@ -276,6 +278,7 @@ if(process.argv[1]===fileURLToPath(import.meta.url)){
  const preset=presetFramePorts(local);
  const i2v=i2vPorts(local);
  const prop=propAnimationPorts(local);
+ const cinematic=cinematicPorts(local);
  // Existing resident owns both model families. Fixed, private host binding
  // enables the new lane only when its real INT8 artifacts are ready.
  const override=process.env.WORKFLOW_I2V_BINDING;
@@ -292,10 +295,19 @@ if(process.argv[1]===fileURLToPath(import.meta.url)){
  const warm=createWarmAnimation({launch:root=>spawnAnimationChannel({py,helper,provider,binding,root}),
   onIdleUnload:()=>console.log(JSON.stringify({state:'idle_model_unloaded'}))});
  const modelSlot=createAnimationModelSwitch(warm,i2vModel);
- const propReady=propAnimationReadiness({path:process.env.WORKFLOW_PROP_ANIMATION_READY_FILE,
-  probe:()=>i2vModel?.probe(),assertKnown:()=>modelSlot.assertKnown()});
- const pulseProp=()=>void propReady.refresh();
- const propHeart=setInterval(pulseProp,30000);propHeart.unref();pulseProp();
+ let inFlightModelProbe;
+ const probeModel=()=>{
+  if(i2vModel&&!inFlightModelProbe)inFlightModelProbe=i2vModel.probe().finally(()=>{inFlightModelProbe=undefined;});
+  return inFlightModelProbe;
+ };
+ const assertKnown=()=>modelSlot.assertKnown();
+ const propReady=propAnimationReadiness({path:process.env.WORKFLOW_PROP_ANIMATION_READY_FILE,probe:probeModel,assertKnown});
+ const cinematicReady=cinematicAnimationReadiness({path:process.env.WORKFLOW_CINEMATIC_ANIMATION_READY_FILE,assertKnown,
+  probe:async()=>{const [proof]=await Promise.all([probeModel(),probeCutsceneEncoder()]);return proof;}});
+ const allReadiness=[propReady,cinematicReady];
+ const pulseReadiness=()=>{for(const lifecycle of allReadiness)void lifecycle.refresh();};
+ const readinessHeart=setInterval(pulseReadiness,30000);readinessHeart.unref();pulseReadiness();
+ const invalidateReady=()=>Promise.all(allReadiness.map(lifecycle=>lifecycle.invalidate()));
  try{while(!signal.aborted){
   let idle=false;
   try{
@@ -303,7 +315,8 @@ if(process.argv[1]===fileURLToPath(import.meta.url)){
    const legacyPreset=legacy?undefined:choosePresetFrames(dbPath);
    const propTask=!legacy&&!legacyPreset&&propReady.ready()?choosePropAnimation(dbPath):null;
    const i2vTask=!legacy&&!legacyPreset&&!propTask&&i2vModel&&override?chooseI2V(dbPath):null;
-   const t=legacy??legacyPreset??propTask??i2vTask;
+   const cinematicTask=!legacy&&!legacyPreset&&!propTask&&!i2vTask&&cinematicReady.ready()?chooseCinematic(dbPath):null;
+   const t=legacy??legacyPreset??propTask??i2vTask??cinematicTask;
    if(!t){
     idle=true; // At the timeout boundary a runnable job takes precedence.
     if(!await warm.idle())throw Error('ANIMATION_PROCESS_STOP_UNCONFIRMED');
@@ -314,7 +327,7 @@ if(process.argv[1]===fileURLToPath(import.meta.url)){
     const result=await executePropAnimation(db,propTask,signal,{ports:prop,renderer:{render:job=>modelSlot.runI2V(job)}});
     if(result.state==='completed')console.log(JSON.stringify(result));
     else if(result.state!=='stale')console.error(JSON.stringify(result));
-    if(result.rendererStop==='unknown')await propReady.invalidate();
+    if(result.rendererStop==='unknown')await invalidateReady();
     idle=result.state==='stale'||result.rendererStop==='unknown';
    }else if(i2vTask){
     modelSlot.assertKnown();
@@ -325,6 +338,15 @@ if(process.argv[1]===fileURLToPath(import.meta.url)){
     const result=await executeI2V(db,i2vTask,signal,{ports:i2v,renderer:{render:job=>modelSlot.runI2V(job)}});
     if(result.state==='completed')console.log(JSON.stringify(result));
     else if(result.state!=='stale')console.error(JSON.stringify(result));
+    idle=result.state==='stale'||result.rendererStop==='unknown';
+   }else if(cinematicTask){
+    modelSlot.assertKnown();
+    insist(await cinematic.ready(signal),'CINEMATIC_PDS_UNAVAILABLE');
+    signal.throwIfAborted();
+    const result=await executeCinematic(db,cinematicTask,signal,{ports:cinematic,runI2V:job=>modelSlot.runI2V(job)});
+    if(result.state==='completed')console.log(JSON.stringify(result));
+    else if(result.state!=='stale')console.error(JSON.stringify(result));
+    if(result.rendererStop==='unknown')await invalidateReady();
     idle=result.state==='stale'||result.rendererStop==='unknown';
    }else if(legacy){
     modelSlot.enterWan();
@@ -350,12 +372,12 @@ if(process.argv[1]===fileURLToPath(import.meta.url)){
    if(!signal.aborted)console.error(JSON.stringify({state:'not_ready',code:e.message}));
    // No runnable work could be taken this tick (e.g. PDS unavailable).
    idle=true;
-   try{modelSlot.assertKnown();}catch{await propReady.invalidate();}
+   try{modelSlot.assertKnown();}catch{await invalidateReady();}
    try{await warm.idle();}catch{/* preserve the prior readiness error */}
   }
   if(!signal.aborted)await delay(idle?warm.idleDelay(5000):0,undefined,{signal}).catch(e=>{if(e.name!=='AbortError')throw e;});
  }}finally{
-  clearInterval(propHeart);await propReady.stop();
+  clearInterval(readinessHeart);await Promise.all(allReadiness.map(lifecycle=>lifecycle.stop()));
   try{
    if(!await warm.shutdown())console.error(JSON.stringify({state:'requires_reconciliation',stage:'stop',code:'ANIMATION_PROCESS_STOP_UNCONFIRMED'}));
   }catch{console.error(JSON.stringify({state:'cleanup_failed',stage:'stop',code:'ANIMATION_SCRATCH_CLEANUP_FAILED'}));}
