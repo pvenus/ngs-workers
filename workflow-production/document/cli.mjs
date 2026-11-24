@@ -1,3 +1,5 @@
+import {createPropDesignRenderer} from './prop-design-renderer.mjs';
+import {isPropDesignOperation} from './prop-design-contract.mjs';
 import {setTimeout as delay} from 'node:timers/promises';
 import {parseArgs,watchOnce,executeOnce,documentTick} from './runner.mjs';
 import {localPorts} from './local-ports.mjs';
@@ -9,7 +11,7 @@ try{
  const signal=stop.signal;
  process.once('SIGINT',()=>stop.abort());process.once('SIGTERM',()=>stop.abort());
  const emit=x=>console.log(JSON.stringify({service:'document-worker',...x}));
- const rendererFor=operation=>createRepresentativeRenderer({auditDirectory:settings.auditDirectory,operation});
+ const rendererFor=operation=>isPropDesignOperation(operation)?createPropDesignRenderer():createRepresentativeRenderer({auditDirectory:settings.auditDirectory,operation});
  if(settings.mode==='execute'){
   const result=await executeOnce({...settings,pds,render:settings.operation?rendererFor(settings.operation):undefined,
    withPlanningSnapshot,signal});

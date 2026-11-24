@@ -142,8 +142,7 @@ function planningUpdatePrompt(operation){
   ...layoutGuidance[operation],masterScopeGuidance[operation],
  ].join('\n');
 }
-function parseOutput(bytes,{update=false,sectionCount=0}={}){
- try{
+function readFinalJson(bytes){
   let finalMessage=null,completed=false;
   const raw=new TextDecoder('utf-8',{fatal:true}).decode(bytes);
   for(const line of raw.split('\n')){
@@ -157,7 +156,12 @@ function parseOutput(bytes,{update=false,sectionCount=0}={}){
    }
   }
   if(!completed||typeof finalMessage!=='string')throw Error();
-  const data=JSON.parse(finalMessage);
+  return JSON.parse(finalMessage);
+}
+
+function parseOutput(bytes,{update=false,sectionCount=0}={}){
+ try{
+  const data=readFinalJson(bytes);
   if(sectionCount){validateSectionBodies(data,sectionCount);return data;}
   if(!data||Object.keys(data).join(',')!=='content'||
    (update?(typeof data.content!=='string'||!data.content.isWellFormed()||!data.content.trim()||Buffer.byteLength(data.content)>1024*1024):!typed(data.content,16_000)))throw Error();
@@ -220,6 +224,28 @@ async function prepareAudit(path,data,prompt){
   await writeFile(join(path,'input.json'),JSON.stringify(data),{flag:'wx',mode:0o600});
   await writeFile(join(path,'prompt.txt'),prompt,{flag:'wx',mode:0o600});
  }catch{throw Error('REPRESENTATIVE_AUDIT_UNAVAILABLE');}
+}
+
+/** Reuse the same local Codex sandbox/throttling profile for a typed, non-Markdown artifact. */
+export async function executeTypedCodexDocument({
+ codexPath=REPRESENTATIVE_CODEX_PATH,timeoutMs=120_000,signal,prompt,outputSchema,
+}){
+ if(!absolute(codexPath)||!Number.isSafeInteger(timeoutMs)||timeoutMs<1||timeoutMs>300_000||
+    typeof prompt!=='string'||Buffer.byteLength(prompt)>maxPromptBytes)throw Error('REPRESENTATIVE_CODEX_CONFIGURATION');
+ if(signal?.aborted)throw Error('REPRESENTATIVE_CODEX_CANCELLED');
+ try{accessSync(codexPath,constants.X_OK);}catch{throw Error('REPRESENTATIVE_CODEX_UNAVAILABLE');}
+ const root=await mkdtemp(join(tmpdir(),'ngs-prop-design-'));
+ try{
+  const schema=join(root,'schema.json');
+  await writeFile(schema,JSON.stringify(outputSchema),{flag:'wx',mode:0o600});
+  const stdout=await execute(codexPath,[
+   '-a','never','exec','--ephemeral','--ignore-user-config','--ignore-rules','--sandbox','read-only',
+   '--disable','shell_tool','--disable','unified_exec','--disable','apps','--disable','plugins',
+   '--disable','skill_search','-c','web_search="disabled"',
+   '--cd',root,'--skip-git-repo-check','--output-schema',schema,'--color','never','--json','-',
+  ],root,prompt,timeoutMs,signal);
+  try{return readFinalJson(stdout);}catch{throw Error('REPRESENTATIVE_CODEX_OUTPUT_INVALID');}
+ }finally{await rm(root,{recursive:true,force:true});}
 }
 
 export function createRepresentativeRenderer({codexPath=REPRESENTATIVE_CODEX_PATH,timeoutMs=120_000,auditDirectory,

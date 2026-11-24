@@ -1,3 +1,5 @@
+import {isPropDesignOperation,propDesignKey,propDesignOperations} from './prop-design-contract.mjs';
+import {runPropDesignFromPath} from './prop-design-worker.mjs';
 import {probePresetDatabase,runDocumentFromPath} from './worker.mjs';
 
 import {motionPoseRegistry} from './vendor/planner-npc-motion-selection-v1/envelope.mjs';
@@ -17,14 +19,15 @@ const supported=Object.freeze([
  ...Object.values(motionPoseRegistry).map(({planKey,planType})=>({workerType:'document',taskType:planType,taskKey:planKey,predecessorKey:'planning_representative'})),
  {workerType:'document',taskType:UPDATE,taskKey:'planning_update',predecessorKey:null},
  {workerType:'document',taskType:ADD,taskKey:'planning_add',predecessorKey:null},
+ ...Object.keys(propDesignOperations).map(taskType=>({workerType:'document',taskType,taskKey:propDesignKey,predecessorKey:null})),
 ]);
 export function parseArgs(args){
  let auditDirectory;
  if(args.at(-2)==='--audit-dir'&&args.at(-1).startsWith('/')){
   auditDirectory=args.at(-1);args=args.slice(0,-2);
  }
- const explicit=args.at(-2)==='--operation'&&[OVERVIEW,ART,REP,IDLE,COMBAT,CONCEPT,UPDATE,ADD].includes(args.at(-1))?args.at(-1):null;
- if(auditDirectory!==undefined&&(!explicit||args[0]!=='--execute'))throw Error('DOCUMENT_WORKER_EXPLICIT_MODE_REQUIRED');
+ const explicit=args.at(-2)==='--operation'&&[OVERVIEW,ART,REP,IDLE,COMBAT,CONCEPT,UPDATE,ADD,...Object.keys(propDesignOperations)].includes(args.at(-1))?args.at(-1):null;
+ if(auditDirectory!==undefined&&(!explicit||args[0]!=='--execute'||isPropDesignOperation(explicit)))throw Error('DOCUMENT_WORKER_EXPLICIT_MODE_REQUIRED');
  if(explicit)args=args.slice(0,-2);
  const op=explicit?{operation:explicit,...(auditDirectory?{auditDirectory}:{})}:{};
  if(args.length===3&&args[0]==='--run'&&args[1]==='--db'&&args[2].startsWith('/'))return {mode:'run',dbPath:args[2],...op};
@@ -44,14 +47,14 @@ export async function watchOnce({dbPath,pds,operation,signal,probe=probePresetDa
  return {ready:true,heartbeat};
 }
 
-export async function executeOnce({dbPath,officialRequestId,taskId,pds,operation,render,withPlanningSnapshot,signal,run=runDocumentFromPath}){
+export async function executeOnce({dbPath,officialRequestId,taskId,pds,operation,render,withPlanningSnapshot,signal,run=runDocumentFromPath,runProp=runPropDesignFromPath}){
  if(!await pds.capability(signal,operation))return {state:'not_claimable',code:'DOCUMENT_WORKER_PDS_UNAVAILABLE'};
- return await run({dbPath,officialRequestId,taskId,pds,operation,render,withPlanningSnapshot,signal});
+ return await (isPropDesignOperation(operation)?runProp:run)({dbPath,officialRequestId,taskId,pds,operation,render,withPlanningSnapshot,signal});
 }
 
 
 export async function documentTick({dbPath,pds,operation,rendererFor,withPlanningSnapshot,signal,
- next=nextWorkflowTaskFromPath,run=runDocumentFromPath}){
+ next=nextWorkflowTaskFromPath,run=runDocumentFromPath,runProp=runPropDesignFromPath}){
  if(signal?.aborted)return {state:'stopping'};
  let pending=false;
  for(const spec of supported){
@@ -62,7 +65,7 @@ export async function documentTick({dbPath,pds,operation,rendererFor,withPlannin
   pending=true;
   if(!await pds.capability(signal,spec.taskType))continue;
   if(signal?.aborted)return {state:'stopping'};
-  const result=await run({dbPath,pds,operation:spec.taskType,...task,withPlanningSnapshot,signal,
+  const result=await (isPropDesignOperation(spec.taskType)?runProp:run)({dbPath,pds,operation:spec.taskType,...task,withPlanningSnapshot,signal,
    render:spec.taskType===PRESET?undefined:rendererFor(spec.taskType)});
   return {...result,operation:spec.taskType};
  }

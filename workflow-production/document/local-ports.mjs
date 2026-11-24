@@ -1,3 +1,4 @@
+import {propDesignOperations,propDesignPath,propDesignCapability} from './prop-design-contract.mjs';
 import {request} from 'node:http';
 import {exact} from './vendor/planner-89c7568/planner.mjs';
 
@@ -12,6 +13,7 @@ export const idlePath='/v1/npcs/ownership/workflow-plan-idle';
 export const conceptCategoryPath='/v1/concept/category-workflow';
 export const heartbeatPath='/api/service-heartbeat';
 const routes={
+ ...Object.fromEntries(Object.keys(propDesignOperations).map(v=>[v,{path:propDesignPath,schema:propDesignCapability}])),
  'concept.category-generate':{path:conceptCategoryPath,schema:'workflow.concept-category-write.v1'},
  'npc.preset':{path:presetPath,schema:'workflow.preset-publication-receipt.v1'},
  'npc.plan-overview':{path:overviewPath+'?inputMode=folder-snapshot',schema:'workflow.overview-plan-write.v1'},
@@ -72,6 +74,12 @@ export function localPorts({transport=requestLocalJson}={}){
    const {predecessorReceiptRef,artifact}=command;
    return await transport({port:8030,path:presetPath,method:'POST',
     body:{claim:claimOf(command,claimStamp),artifact:JSON.parse(artifact),predecessorReceiptRef},deadline:120000});
+  },
+  async readPropDesign(claim,signal){
+   return await transport({port:8030,path:propDesignPath+'/read',method:'POST',body:{claim},deadline:5000,signal});
+  },
+  async publishPropDesign(claim,artifact){
+   return await transport({port:8030,path:propDesignPath,method:'POST',body:{claim,artifact},deadline:120000});
   },
   async readConceptCategory(command,claimStamp,signal){
    return await transport({port:8030,path:conceptCategoryPath+'/read',method:'POST',
