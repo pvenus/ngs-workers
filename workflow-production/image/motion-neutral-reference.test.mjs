@@ -119,7 +119,7 @@ class Runner:
  def execution_evidence(self): return {'outcome':'joined'}
 def check_alpha(output,descriptor,use):
  assert output==raw and descriptor=={'alpha':True} and use=='portrait'
-main.__globals__['bind']=lambda *_: (lambda *_:Runner(),Pairs(),{},digest,check_alpha)
+main.__globals__['bind']=lambda *_: (lambda *_:Runner(),None,Pairs(),{},digest,check_alpha)
 sys.argv=['portrait-native.py','render-neutral','placeholder','fixture']
 main()
 assert len(calls)==1

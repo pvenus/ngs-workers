@@ -237,3 +237,5 @@ The PNG is published through PDS with its content hash. The worker marks only
 its exact task complete after the matching receipt; errors after dispatching
 publication remain reconcilable. No NPC portrait, project catalog item, or
 other workspace is created by the image worker.
+
+Cinematic source images are a separate official `cinematic.source.generate` job. The existing resident image worker validates the exact planner/PDS text, uses its pinned native scene provider once (`transparent_background=false`), and publishes the original 1536×1024 PNG to the source library. It does not enqueue animation or interleave with other image calls. Unsupported geometry/format is rejected rather than resized; ambiguous native generation is not automatically repeated.

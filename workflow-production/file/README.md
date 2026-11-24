@@ -139,3 +139,5 @@ The loopback adapter selects the preexisting PDS API by target kind, forwards
 the original exact claim wire, and preserves the existing result verification,
 scope rules, and storage-owned backup/fencing behavior. The file worker does
 not interpret category titles, prompts or physical paths as deletion targets.
+
+The resident worker also applies `cinematic.playback.update` via the PDS timeline revision check and `cinematic.sequences.remove` / `prop.animation.remove` against the exact selected IDs. These change playback/index metadata only and do not claim an image or animation model. They use dedicated PDS mutation endpoints, not the filesystem delete endpoint.

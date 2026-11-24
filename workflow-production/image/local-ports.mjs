@@ -12,7 +12,9 @@ export const motionImagePath='/v1/motion-presets/workflow-convert-2d';
 export const propBasePath='/v1/props/ownership/workflow-stage';
 export const propImagePath='/v1/props/ownership/workflow-image';
 export const heartbeatPath='/api/service-heartbeat';
+const cinematicSourcePath='/v1/cinematics/ownership/workflow-source';
 const routes={
+ 'cinematic.source.generate':{path:cinematicSourcePath,schema:'workflow.cinematic-source-write.v1'},
  'prop.generate.base':{path:propBasePath,schema:'workflow.prop-stage.v1'},
  'prop.regenerate.base':{path:propBasePath,schema:'workflow.prop-stage.v1'},
  'prop.image-generate':{path:propImagePath,schema:'workflow.prop-image-write.v1'},
@@ -80,6 +82,12 @@ export function localPorts({transport=requestLocalJson}={}){
   async publishPortrait(command,claimStamp,basis,signal){
    return await transport({port:8030,path:routes[command.operation].path,method:'POST',
     body:{claim:claimOf(command,claimStamp),basis,artifact:JSON.parse(command.artifact)},deadline:120000,signal});
+  },
+  async readCinematicSource(claim,signal){
+   return await transport({port:8030,path:cinematicSourcePath+'/read',method:'POST',body:{claim},deadline:5000,signal});
+  },
+  async publishCinematicSource(claim,artifact){
+   return await transport({port:8030,path:cinematicSourcePath,method:'POST',body:{claim,artifact},deadline:120000});
   },
   async readPropBase(claim,signal){
    return transport({port:8030,path:propBasePath+'/read',method:'POST',body:{claim},deadline:5000,signal,responseLimit:128*1024});

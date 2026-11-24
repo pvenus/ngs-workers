@@ -1,3 +1,4 @@
+import {validCinematicSource,sourceGeometry} from './cinematic-source-worker.mjs';
 /** Explicit runner for one original portrait, using the pinned legacy native provider. */
 import {spawn} from 'node:child_process';
 import {constants} from 'node:fs';
@@ -117,6 +118,17 @@ export function createPortraitRenderer(config){
   if(Buffer.byteLength(JSON.stringify({...input,reference:undefined}))>maxPayload||payload.length>12*1024*1024)throw fail('WORKFLOW_IMAGE_INPUT_TOO_LARGE');
   const raw=await call(pinned,'render',payload,signal);
   if(!raw.subarray(0,8).equals(signature))throw fail('WORKFLOW_IMAGE_OUTPUT_INVALID');
+  return raw;
+ };
+}
+
+
+export function createCinematicSourceRenderer(config){
+ const pinned=options(config);
+ return async (input,{signal}={})=>{
+  if(!validCinematicSource(input))throw fail('CINEMATIC_SOURCE_INPUT_INVALID');
+  const raw=await call(pinned,'render-cinematic-source',Buffer.from(JSON.stringify(input)),signal);
+  sourceGeometry(raw);
   return raw;
  };
 }

@@ -1,3 +1,4 @@
+import {sourceType,nextCinematicSourceFromPath,runCinematicSourceFromPath} from './cinematic-source-worker.mjs';
 import {propBaseOperations,nextPropBaseFromPath,runPropBaseFromPath} from './prop-base-worker.mjs';
 import {propImageOperation,nextPropImageFromPath,runPropImageFromPath} from './prop-image-worker.mjs';
 import {PORTRAIT,imageOperations,nextPortraitFromPath,probePresetDatabase,runPortraitFromPath} from './worker.mjs';
@@ -5,7 +6,7 @@ import {motionImageOperation,nextMotionImageFromPath,runMotionImageFromPath} fro
 
 export function parseImageArgs(args){
  let operation;
- if(args.at(-2)==='--operation'&&[...imageOperations,motionImageOperation,propImageOperation,...Object.keys(propBaseOperations)].includes(args.at(-1))){
+ if(args.at(-2)==='--operation'&&[...imageOperations,motionImageOperation,propImageOperation,sourceType,...Object.keys(propBaseOperations)].includes(args.at(-1))){
   operation=args.at(-1);args=args.slice(0,-2);
  }
  if(args.length>=3&&args[1]==='--db'&&args[2].startsWith('/')){
@@ -34,9 +35,13 @@ function selectImageTask(dbPath){
  const motion=nextMotionImageFromPath(dbPath);
  if(motion)return {...motion,operation:motionImageOperation};
  const prop=nextPropImageFromPath(dbPath);
- return prop?{...prop,operation:propImageOperation}:nextPropBaseFromPath(dbPath);
+ if(prop)return {...prop,operation:propImageOperation};
+ const base=nextPropBaseFromPath(dbPath);
+ if(base)return base;
+ const source=nextCinematicSourceFromPath(dbPath);
+ return source?{...source,operation:sourceType}:null;
 }
-const executeImage=options=>Object.hasOwn(propBaseOperations,options.operation)?runPropBaseFromPath(options):options.operation===propImageOperation?runPropImageFromPath(options):options.operation===motionImageOperation?runMotionImageFromPath(options):runPortraitFromPath(options);
+const executeImage=options=>options.operation===sourceType?runCinematicSourceFromPath(options):Object.hasOwn(propBaseOperations,options.operation)?runPropBaseFromPath(options):options.operation===propImageOperation?runPropImageFromPath(options):options.operation===motionImageOperation?runMotionImageFromPath(options):runPortraitFromPath(options);
 
 /** At most one runnable image task per tick. Never reclaims running rows. */
 export async function imageTick(options,{select=selectImageTask,execute=executeImage,check=imageHealth}={}){
