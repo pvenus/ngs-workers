@@ -4,6 +4,8 @@ import assert from 'node:assert/strict';
 import {execFileSync} from 'node:child_process';
 import {mkdtemp,rm} from 'node:fs/promises';
 import {request} from 'node:http';
+import {DatabaseSync} from 'node:sqlite';
+import {choosePropAnimation,executePropAnimation,propAnimationPorts} from '../animation/prop-animation-worker.mjs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {fileURLToPath} from 'node:url';
@@ -18,7 +20,7 @@ import {renderPropInScratch} from './prop-derivation-provider.mjs';
 import {propTaskId,propKeys} from './vendor/prop-composite/prop-generate-plan.mjs';
 
 const [dbPath,officialRequestId,rawPort,operation,label]=process.argv.slice(2);
-assert.ok(dbPath&&officialRequestId&&/^[1-9]\d{3,4}$/.test(rawPort)&&['prop.generate','prop.regenerate'].includes(operation)&&label);
+assert.ok(dbPath&&officialRequestId&&/^[1-9]\d{3,4}$/.test(rawPort)&&['prop.generate','prop.regenerate','prop.animation.generate'].includes(operation)&&label);
 const port=Number(rawPort);
 const python=process.env.WORKFLOW_PROP_TEST_PYTHON??'python3';
 const taskId=key=>propTaskId(officialRequestId,key);
@@ -41,31 +43,58 @@ const transport=(path,{body,signal,type,limit,timeout})=>new Promise((resolve,re
 });
 const pds=propStagePorts({transport});
 assert.equal(await pds.ready(),true);
-const result=await runPropDesignFromPath({dbPath,officialRequestId,taskId:taskId(propKeys.design),operation:operation+'.design',
- pds:docPds,render:async input=>{
-  assert.equal(input.sources.length,2);
-  return {title:label,appearancePrompt:'종이 등롱',motionPrompt:null,interaction:{
-   pixelOpen:{xPermille:50,yPermille:100,widthPermille:500,heightPermille:250},detailTrigger:null}};
- }});
-assert.equal(result.state,'completed',JSON.stringify(result));
+const isAppend=operation==='prop.animation.generate';
+if(!isAppend){
+ const result=await runPropDesignFromPath({dbPath,officialRequestId,taskId:taskId(propKeys.design),operation:operation+'.design',
+  pds:docPds,render:async input=>{
+   assert.equal(input.sources.length,2);
+   return {title:label,appearancePrompt:'종이 등롱',motionPrompt:null,interaction:{
+    pixelOpen:{xPermille:50,yPermille:100,widthPermille:500,heightPermille:250},detailTrigger:null}};
+  }});
+ assert.equal(result.state,'completed',JSON.stringify(result));
 
-const base=execFileSync(python,['-B','-c',`
+ const base=execFileSync(python,['-B','-c',`
+ import sys
+ from PIL import Image,ImageDraw
+ im=Image.new('RGB',(40,32))
+ ImageDraw.Draw(im).rectangle((10,8,29,22),fill=(int(sys.argv[1]),55,94))
+ im.save(sys.stdout.buffer,format='PNG')
+ `,operation==='prop.generate'?'90':'180']);
+
+ const imagePds=imagePorts({transport:args=>imageJson({...args,port})});
+ const image=nextPropBaseFromPath(dbPath);
+ assert.equal(image.taskId,taskId(propKeys.base));
+ const baseResult=await runPropBaseFromPath({dbPath,taskId:taskId(propKeys.base),officialRequestId,operation:operation+'.base',
+  pds:imagePds,renderProp:async input=>{
+   assert.equal(input.state,'base');assert.equal(input.lane,'detail');
+   return base;
+  }});
+ assert.equal(baseResult.state,'completed',JSON.stringify(baseResult));
+}else{
+ const db=new DatabaseSync(dbPath);const rawPorts=propAnimationPorts(async (path,opts={})=>{
+  const bytes=await transport(path,{...opts,type:opts.binary?'image/png':'application/json',
+   limit:opts.maxBinaryBytes??opts.maxJsonBytes??4096,timeout:opts.timeout??3000});
+  return opts.binary?bytes:JSON.parse(bytes);
+ });
+ try{
+  assert.equal(await rawPorts.ready(),true);
+  const raw=choosePropAnimation(dbPath);
+  assert.deepEqual({...raw},{officialRequestId,taskId:taskId(propKeys.motion)});
+  const result=await executePropAnimation(db,raw,new AbortController().signal,{ports:rawPorts,renderer:{async render(job){
+   assert.ok(job.source.length>50);assert.equal(job.motionPrompt,'Only the flame flickers');
+   const frames=[60,100,160].map(color=>execFileSync(python,['-B','-c',`
 import sys
 from PIL import Image,ImageDraw
-im=Image.new('RGB',(40,32))
-ImageDraw.Draw(im).rectangle((10,8,29,22),fill=(int(sys.argv[1]),55,94))
+im=Image.new('RGB',(32,32))
+ImageDraw.Draw(im).rectangle((8,8,23,23),fill=(int(sys.argv[1]),55,94))
 im.save(sys.stdout.buffer,format='PNG')
-`,operation==='prop.generate'?'90':'180']);
-
-const imagePds=imagePorts({transport:args=>imageJson({...args,port})});
-const image=nextPropBaseFromPath(dbPath);
-assert.equal(image.taskId,taskId(propKeys.base));
-const baseResult=await runPropBaseFromPath({dbPath,taskId:taskId(propKeys.base),officialRequestId,operation:operation+'.base',
- pds:imagePds,renderProp:async input=>{
-  assert.equal(input.state,'base');assert.equal(input.lane,'detail');
-  return base;
- }});
-assert.equal(baseResult.state,'completed',JSON.stringify(baseResult));
+`,String(color)]));
+   return {frames,width:32,height:32,fps:12};
+  }}});
+  assert.equal(result.state,'completed',JSON.stringify(result));
+  assert.equal(result.frameCount,3);
+ }finally{db.close();}
+}
 
 const render=async(job,binding,{signal}={})=>{
  const scratch=await mkdtemp(join(tmpdir(),'prop-real-processor-fixture-'));
@@ -88,15 +117,16 @@ def matte(root,paths,key):
  }});}finally{await rm(scratch,{recursive:true,force:true});}
 };
 const derived={};
-for(const key of [propKeys.detail,propKeys.pixel]){
- const selected=nextPropDerivationFromPath(dbPath,{stillOnly:true});
+const mode={stillOnly:true,appendEnabled:isAppend};
+for(const key of (isAppend?[propKeys.animDetail,propKeys.animPixel]:[propKeys.detail,propKeys.pixel])){
+ const selected=nextPropDerivationFromPath(dbPath,mode);
  assert.deepEqual(selected,{officialRequestId,taskId:taskId(key)});
- const r=await runPropDerivationFromPath({dbPath,...selected,pds,stillOnly:true,render});
+ const r=await runPropDerivationFromPath({dbPath,...selected,pds,...mode,render});
  assert.equal(r.state,'completed',JSON.stringify(r));derived[key]=r.resultRef;
 }
-const selected=nextPropPackageFromPath(dbPath);
+const selected=nextPropPackageFromPath(dbPath,mode);
 assert.deepEqual(selected,{officialRequestId,taskId:taskId(propKeys.publish)});
-const published=await runPropPackageFromPath({dbPath,...selected,pds});
+const published=await runPropPackageFromPath({dbPath,...selected,pds,...mode});
 assert.equal(published.state,'completed',JSON.stringify(published));
-assert.equal(nextPropPackageFromPath(dbPath),null);
+assert.equal(nextPropPackageFromPath(dbPath,mode),null);
 console.log(JSON.stringify({published,derived}));

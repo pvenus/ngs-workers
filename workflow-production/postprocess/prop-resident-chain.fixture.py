@@ -2,16 +2,20 @@
 
 Run with cwd at that isolated service tree; PYTHONPATH=data-service:filex-writer;
 set WORKFLOW_PROP_TEST_PYTHON to a local Pillow interpreter. Planner inserts real workflow rows from the formal request fixture; the three worker modules run over live test-only PDS and
-Filex HTTP listeners. Only Codex, diffusion and BiRefNet are body fixtures.
+Filex HTTP listeners. Only Codex, diffusion and BiRefNet are body fixtures; no model is called.
 """
 import json
 import sqlite3
 import subprocess
+import time
 from pathlib import Path
 from unittest import main
 
 from test_prop_stage_authority_http import StageFixture
-from prop_package_contract import digest
+from prop_package_contract import digest,wire
+from test_prop_package_http import make
+from project_data_service.workflow_prop_package import WRITER
+from project_data_service.prop_animation_ready import SCHEMA,PROVIDER,renderer_ready
 
 DRIVER=Path(__file__).with_name('prop-resident-chain.fixture.mjs')
 
@@ -65,5 +69,43 @@ s.close();""",str(self.db),oid2,json.dumps(payload,ensure_ascii=False),self.oid,
         self.assertNotEqual(m2['media']['detail']['sha256'],m1['media']['detail']['sha256'])
         self.assertEqual(self.api('/read',pin1)['manifest'],m1)
         self.assertEqual(self.api('/read',pin2)['manifest'],m2)
+
+    def test_actual_worker_append_preserves_original_and_publishes_both_timed_lanes(self):
+        prior=make('a'); m1=prior['manifest']
+        self.filex_writer(WRITER,{k:prior[k] for k in ('candidate','manifest','media')})
+        source={k:v for k,v in self.pin(m1).items() if k!='propId'}
+        marker=self.db.parent/'prop-animation-ready.json'
+        marker.write_bytes(wire({'schemaVersion':SCHEMA,'provider':PROVIDER,'checkedAt':time.time_ns()//1_000_000}))
+        marker.chmod(0o600)
+        self.actual.append_readiness=lambda:renderer_ready(marker)
+        oid='request.official.'+'d'*64
+        payload={'schemaVersion':'ngs.prop-animation-generate.v1','projectId':'binari','propId':m1['propId'],
+                 'source':source,'motionId':'gentle-flicker','prompt':'Only the flame flickers'}
+        inserted=subprocess.run(['node','--input-type=module','-e',"""import {PlannerStore} from './workflow-planner/planner.mjs';
+import {canonical,sha} from './workflow-planner/envelope.mjs';
+const [db,id,raw]=process.argv.slice(1),payload=JSON.parse(raw);
+const s=new PlannerStore(db,{propGenerateEnabled:true,propAnimationEnabled:true,propMutationsEnabled:true,readPropPublication:async()=>null});
+s.stage({officialRequestId:id,requestType:'prop.animation.generate',projectId:'binari',schemaVersion:payload.schemaVersion,
+ payload,payloadSha256:sha(canonical(payload)),status:'registered',registeredAt:2});
+s.acknowledge(id);s.close();""",str(self.db),oid,json.dumps(payload)],capture_output=True,text=True,timeout=15)
+        self.assertEqual(inserted.returncode,0,inserted.stderr)
+        child=subprocess.run(['node',str(DRIVER),str(self.db),oid,self.pds.rsplit(':',1)[1],'prop.animation.generate','gentle-flicker'],
+            capture_output=True,text=True,timeout=40)
+        self.assertEqual(child.returncode,0,child.stderr)
+        proof=json.loads(child.stdout)
+        pin={'propId':m1['propId'],'revision':2,'sha256':proof['published']['resultRef'].removeprefix('prop.package.')}
+        m2=self.api('/read',pin)['manifest']
+        self.assertEqual(self.filex_writer(WRITER+'/read',self.pin(m1))['manifest'],m1)
+        self.assertEqual(m2['parentSha256'],source['sha256'])
+        for field in ('interaction','media','title','designContextSha256'):
+            self.assertEqual(m2[field],m1[field])
+        c=m2['animations'][-1]; self.assertEqual(c['id'],'gentle-flicker')
+        for lane in ('detail','pixel'):
+            self.assertEqual(c['media'][lane]['mediaType'],'image/apng')
+            self.assertEqual(c['media'][lane]['frameDurationsMs'],[83,84,83])
+            self.assertEqual(c['media'][lane]['width'],m1['media'][lane]['width'])
+        with sqlite3.connect(self.db) as db:
+            tasks=db.execute('SELECT status,result_ref,retry_count FROM workflow_tasks WHERE official_request_id=?',(oid,)).fetchall()
+            self.assertEqual(len(tasks),4);self.assertTrue(all(x=='completed' and y and z==0 for x,y,z in tasks))
 
 if __name__=='__main__':main()

@@ -53,3 +53,35 @@
 
 가중치나 Python 의존성이 공급되지 않으면 I2V 기능을 켜지 않습니다.
 소품의 정적 작업은 이 제한과 독립입니다.
+
+## Official prop animation append
+
+The existing animation resident alone claims the official `prop.animation.generate.raw`
+stage. This requires both a healthy private Q8_0 runtime and the PDS
+`append-animation` admission signal. Nothing starts on a separate service or old
+model. An already-resident Animate session must provide joined shutdown before
+Wan TI2V input is sent, and the TI2V process group must be absent before Animate
+resumes. Only the exact immutable PDS detail PNG and formal prompt enter the
+renderer; the raw result has no alpha. The two ordinary Postprocess tasks create
+same-timing transparent detail/pixel APNGs before final Filex publication; a
+committed raw stage can finish these downstream tasks after the renderer lease
+expires, since no generation is needed.
+
+The private installed binding defaults to
+`~/Workspaces/Workers/runtime/prop-animation/i2v-binding.json`. The runtime
+publishes a short-lived, private readiness status
+`prop-animation-ready.json` in the same directory only after a file/header/hash
+probe, never as evidence of actual inference. It removes that readiness after an
+unknown model stop or ordinary shutdown. No FP8/BF16 diffusion fallback.
+
+The model's native output is 45 RGB frames at 24 fps (1.875 seconds). When the
+pinned detail canvas would exceed the existing per-clip 30 million decoded pixel
+budget, the stage selects evenly spaced exact rendered frames, including both
+endpoints. It maintains the common 1,875 ms duration at both original lane sizes
+without modifying the base stills, increasing budgets or simulating frames.
+E.g. a 1536×1024 detail uses 19 frames.
+
+Verified by the opt-in scratch backend fixture
+`prop-resident-chain.fixture.py WorkerChain.test_actual_worker_append_preserves_original_and_publishes_both_timed_lanes`.
+This uses real claim-bound worker ports, PDS, Filex stores and Postprocess APNG
+encoding/byte checks, with the actual render and segmentation boundaries mocked.
