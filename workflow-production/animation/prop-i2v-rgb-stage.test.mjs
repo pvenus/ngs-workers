@@ -14,9 +14,9 @@ const chunk=(type,b)=>{
  const body=Buffer.concat([Buffer.from(type),b]);
  return Buffer.concat([packed(b.length),body,packed(crc32(body))]);
 };
-function png(channelType=2){
+function png(channelType=2,color=120){
  const head=Buffer.concat([packed(16),packed(16),Buffer.from([8,channelType,0,0,0])]);
- const row=Buffer.alloc(1+16*(channelType===2?3:4),0);row[1]=120;
+ const row=Buffer.alloc(1+16*(channelType===2?3:4),0);row[1]=color;
  return Buffer.concat([Buffer.from('89504e470d0a1a0a','hex'),chunk('IHDR',head),
   chunk('IDAT',deflateSync(Buffer.concat(Array(16).fill(row)))),chunk('IEND',Buffer.alloc(0))]);
 }
@@ -54,4 +54,15 @@ assert len(frames)==45 and m==spec
 assert 'prop.i2v-rgb.'+sha(canonical(m))==data['resultRef']
 `],{input:JSON.stringify(result),encoding:'utf8',env:{...process.env,PYTHONPATH:process.env.PROP_I2V_PDS_TEST_ROOT}});
  assert.equal(command.status,0,command.stderr||command.stdout);
+});
+
+test('actual 1536×1024 prop canvas keeps both endpoints and exact duration under decode budget',()=>{
+ const frames=Array.from({length:45},(_,i)=>png(2,i));
+ const output={width:16,height:16,fps:24,frames};
+ const s=propI2VRGBStage(output,{...scope,detailCanvas:{width:1536,height:1024}});
+ assert.equal(s.artifact.frames.length,19);
+ assert.equal(s.artifact.frames[0],frames[0].toString('base64'));
+ assert.equal(s.artifact.frames.at(-1),frames.at(-1).toString('base64'));
+ assert.equal(s.artifact.manifest.frameDurationsMs.reduce((a,b)=>a+b,0),1875);
+ assert.ok(s.artifact.manifest.frameDurationsMs.every(d=>d===98||d===99));
 });

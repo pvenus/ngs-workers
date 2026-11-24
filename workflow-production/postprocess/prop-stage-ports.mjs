@@ -9,15 +9,19 @@ const decoder=new TextDecoder('utf-8',{fatal:true});
 export function propStagePorts({transport=fixedMotionHttp}={}){
  const json=async(path,{body,signal,timeout=5000,limit=1024}={})=>
   JSON.parse(decoder.decode(await transport(path,{body,signal,timeout,limit,type:'application/json'})));
- return {
-  async ready(signal){
+ const capabilities=async(signal)=>{
    try{
     const [stage,pack]=await Promise.all([json(stagePath,{signal}),json(packagePath,{signal})]);
-    return exactProp(stage,['enabled','schemaVersion'])&&stage.enabled===true&&stage.schemaVersion==='workflow.prop-stage.v1'&&
+    if(!(exactProp(stage,['enabled','schemaVersion'])&&stage.enabled===true&&stage.schemaVersion==='workflow.prop-stage.v1'&&
       exactProp(pack,['enabled','schemaVersion','modes'])&&pack.enabled===true&&pack.schemaVersion==='workflow.prop-package-write.v1'&&
-      Array.isArray(pack.modes)&&pack.modes.length===1&&pack.modes[0]==='still';
-   }catch{return false;}
-  },
+      Array.isArray(pack.modes)&&pack.modes[0]==='still'&&(pack.modes.length===1||
+       pack.modes.length===2&&pack.modes[1]==='append-animation')))return null;
+    return {still:true,appendEnabled:pack.modes.length===2};
+   }catch{return null;}
+ };
+ return {
+  capabilities,
+  ready:async signal=>Boolean(await capabilities(signal)),
   readPropDerivation({claim},{signal}={}){
    return json(stagePath+'/read',{body:{claim},signal,limit:64*1024,timeout:120000});
   },

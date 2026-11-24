@@ -42,20 +42,23 @@ async function main(){
     const motionCheck=Promise.all([probePresetEncoder(),presetPds.ready(stop.signal)])
      .then(parts=>parts.every(Boolean));
     const [[frames,portraits],motion,props]=await Promise.all([
-     render?Promise.all([pds.capability(),pds.capabilityPortrait()]):[false,false],motionCheck,renderProp?propPds.ready(stop.signal):false
+     render?Promise.all([pds.capability(),pds.capabilityPortrait()]):[false,false],motionCheck,renderProp?propPds.capabilities(stop.signal):null
     ]);
-    ready=frames||portraits||motion||props;
+    ready=frames||portraits||motion||Boolean(props);
     if(ready&&!heartbeatStarted){heartbeatStarted=true;void pulse();}
     if(!ready)heartbeatStarted=false;
     const available=!stop.signal.aborted;
     const target=available&&(frames||portraits)&&nextPostprocessFromPath(options.dbPath,{frames,portraits});
     const preset=available&&!target&&motion&&choosePresetPostprocess(options.dbPath);
-    const prop=available&&!target&&!preset&&props&&nextPropDerivationFromPath(options.dbPath,{stillOnly:true});
-    const pack=available&&!target&&!preset&&!prop&&props&&nextPropPackageFromPath(options.dbPath);
+    // A committed raw stage no longer needs the renderer's live admission
+    // lease. These consumers still require exact same-run completed parents.
+    const propMode={stillOnly:true,appendEnabled:Boolean(props)};
+    const prop=available&&!target&&!preset&&props&&nextPropDerivationFromPath(options.dbPath,propMode);
+    const pack=available&&!target&&!preset&&!prop&&props&&nextPropPackageFromPath(options.dbPath,propMode);
     result=target?await runPostprocessFromPath({...options,...target,pds,render,signal:stop.signal}):
      preset?await runPresetPostprocessFromPath({...options,...preset,pds:presetPds,signal:stop.signal}):
-           prop?await runPropDerivationFromPath({...options,...prop,pds:propPds,render:renderProp,signal:stop.signal,stillOnly:true}):
-     pack?await runPropPackageFromPath({...options,...pack,pds:propPds,signal:stop.signal}):
+           prop?await runPropDerivationFromPath({...options,...prop,pds:propPds,render:renderProp,signal:stop.signal,...propMode}):
+     pack?await runPropPackageFromPath({...options,...pack,pds:propPds,signal:stop.signal,...propMode}):
      {state:ready?'idle':'not_ready'};
    }catch{result={state:'blocked',code:'POSTPROCESS_EXACT_TASK_REJECTED'};}
    const {state,code,taskId}=result;

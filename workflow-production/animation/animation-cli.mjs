@@ -10,6 +10,8 @@ import {fileURLToPath} from 'node:url';
 import {createWarmAnimation,spawnAnimationChannel} from './animation-warm.mjs';
 import {chooseI2V,executeI2V,i2vPorts} from './i2v-worker.mjs';
 import {createAnimationModelSwitch} from './i2v-model-switch.mjs';
+import {choosePropAnimation,executePropAnimation,propAnimationPorts} from './prop-animation-worker.mjs';
+import {confirmBindingPath,defaultPropBinding,propAnimationReadiness} from './prop-animation-readiness.mjs';
 import {choosePresetFrames,executePresetFrames,presetFramePorts} from './preset-frame-worker.mjs';
 import {isSelectedMediaRun,isRegenerateRun,selectionSchemas,poseSelectionSchemas,regenerateType,regenerateSchemas,selectedMotionBranch,matchesMotionTask} from './vendor/npc-motion-selection-v1/media-branch.mjs';
 import {assertDatabasePath,protectSchema,nextWorkflowTaskFromPath,markWorkflowTaskFailed,workflowTaskEligibleSql,workflowTaskRetrySetSql} from './workflow-ready.mjs';
@@ -273,30 +275,47 @@ if(process.argv[1]===fileURLToPath(import.meta.url)){
  const heart=setInterval(ping,60000);ping();
  const preset=presetFramePorts(local);
  const i2v=i2vPorts(local);
- // This opt-in is code availability, not proof of a usable model or owner target.
- // Existing animation operation remains unchanged without the trusted binding.
- const int8Binding=process.env.WORKFLOW_I2V_BINDING;
+ const prop=propAnimationPorts(local);
+ // Existing resident owns both model families. Fixed, private host binding
+ // enables the new lane only when its real INT8 artifacts are ready.
+ const override=process.env.WORKFLOW_I2V_BINDING;
+ const int8Binding=override??defaultPropBinding;
  let i2vModel;
- if(int8Binding){
-  try{
-   insist(int8Binding.startsWith('/'),'I2V_BINDING_INVALID');
-   const {readWanI2VBinding,createWanI2V}=await import('./i2v-wan.mjs');
-   i2vModel=createWanI2V({binding:await readWanI2VBinding(int8Binding)});
-  }catch{console.error(JSON.stringify({state:'not_ready',code:'I2V_BINDING_INVALID'}));}
+ try{
+  insist(int8Binding.startsWith('/'),'I2V_BINDING_INVALID');
+  if(!override)await confirmBindingPath(int8Binding);
+  const {readWanI2VBinding,createWanI2V}=await import('./i2v-wan.mjs');
+  i2vModel=createWanI2V({binding:await readWanI2VBinding(int8Binding)});
+ }catch(e){
+  if(override||e?.code!=='ENOENT')console.error(JSON.stringify({state:'not_ready',code:'I2V_BINDING_INVALID'}));
  }
  const warm=createWarmAnimation({launch:root=>spawnAnimationChannel({py,helper,provider,binding,root}),
   onIdleUnload:()=>console.log(JSON.stringify({state:'idle_model_unloaded'}))});
  const modelSlot=createAnimationModelSwitch(warm,i2vModel);
+ const propReady=propAnimationReadiness({path:process.env.WORKFLOW_PROP_ANIMATION_READY_FILE,
+  probe:()=>i2vModel?.probe(),assertKnown:()=>modelSlot.assertKnown()});
+ const pulseProp=()=>void propReady.refresh();
+ const propHeart=setInterval(pulseProp,30000);propHeart.unref();pulseProp();
  try{while(!signal.aborted){
   let idle=false;
   try{
    const legacy=choose(dbPath);
    const legacyPreset=legacy?undefined:choosePresetFrames(dbPath);
-   const i2vTask=!legacy&&!legacyPreset&&i2vModel?chooseI2V(dbPath):null;
-   const t=legacy??legacyPreset??i2vTask;
+   const propTask=!legacy&&!legacyPreset&&propReady.ready()?choosePropAnimation(dbPath):null;
+   const i2vTask=!legacy&&!legacyPreset&&!propTask&&i2vModel&&override?chooseI2V(dbPath):null;
+   const t=legacy??legacyPreset??propTask??i2vTask;
    if(!t){
     idle=true; // At the timeout boundary a runnable job takes precedence.
     if(!await warm.idle())throw Error('ANIMATION_PROCESS_STOP_UNCONFIRMED');
+   }else if(propTask){
+    modelSlot.assertKnown();
+    insist(await prop.ready(signal),'PROP_I2V_PDS_UNAVAILABLE');
+    signal.throwIfAborted();
+    const result=await executePropAnimation(db,propTask,signal,{ports:prop,renderer:{render:job=>modelSlot.runI2V(job)}});
+    if(result.state==='completed')console.log(JSON.stringify(result));
+    else if(result.state!=='stale')console.error(JSON.stringify(result));
+    if(result.rendererStop==='unknown')await propReady.invalidate();
+    idle=result.state==='stale'||result.rendererStop==='unknown';
    }else if(i2vTask){
     modelSlot.assertKnown();
     insist(await i2v.ready(signal),'I2V_PDS_UNAVAILABLE');
@@ -331,10 +350,12 @@ if(process.argv[1]===fileURLToPath(import.meta.url)){
    if(!signal.aborted)console.error(JSON.stringify({state:'not_ready',code:e.message}));
    // No runnable work could be taken this tick (e.g. PDS unavailable).
    idle=true;
+   try{modelSlot.assertKnown();}catch{await propReady.invalidate();}
    try{await warm.idle();}catch{/* preserve the prior readiness error */}
   }
   if(!signal.aborted)await delay(idle?warm.idleDelay(5000):0,undefined,{signal}).catch(e=>{if(e.name!=='AbortError')throw e;});
  }}finally{
+  clearInterval(propHeart);await propReady.stop();
   try{
    if(!await warm.shutdown())console.error(JSON.stringify({state:'requires_reconciliation',stage:'stop',code:'ANIMATION_PROCESS_STOP_UNCONFIRMED'}));
   }catch{console.error(JSON.stringify({state:'cleanup_failed',stage:'stop',code:'ANIMATION_SCRATCH_CLEANUP_FAILED'}));}
