@@ -12,6 +12,15 @@ const keys=['FRAME_ALPHA_PYTHON','FRAME_ALPHA_MODULE_ROOT','FRAME_ALPHA_MATTING_
 const budget=16*1024*1024;
 const absolute=p=>typeof p==='string'&&isAbsolute(p)&&resolve(p)===p;
 const assert=(ok,c)=>{if(!ok)throw Error(c);};
+const propExit=Object.freeze({
+ 31:'PROP_DERIVATION_OUTPUT_BUDGET',32:'PROP_DERIVATION_ALPHA_REQUIRED',
+ 33:'PROP_DERIVATION_MATTE_BACKEND',34:'PROP_DERIVATION_INITIAL_MASK_EMPTY',
+ 35:'PROP_DERIVATION_TRACKER_FRAME_SET',36:'PROP_DERIVATION_INPUT_CHANGED',
+ 37:'PROP_DERIVATION_APNG_ENCODE',38:'PROP_DERIVATION_PIXEL_FOREGROUND',
+});
+const visible=new Set([...Object.values(propExit),'PROP_DERIVATION_RENDER_START','PROP_DERIVATION_RENDER_ABORTED',
+ 'PROP_DERIVATION_RENDER_TIMEOUT','PROP_DERIVATION_RENDER_OUTPUT']);
+export const propRenderDiagnostic=e=>visible.has(e?.message)?e.message:null;
 
 function execute(python,script,root,env,signal){
  return new Promise((resolve,reject)=>{
@@ -33,7 +42,7 @@ function execute(python,script,root,env,signal){
   child.once('close',code=>{
    close();
    if(code===0&&reason===null)resolve();
-   else reject(Error(reason??'PROP_DERIVATION_RENDER_FAILED'));
+   else reject(Error(reason??propExit[code]??'PROP_DERIVATION_RENDER_FAILED'));
   });
  });
 }

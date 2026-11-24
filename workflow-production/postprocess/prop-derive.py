@@ -23,6 +23,27 @@ def check(value, message='PROP_DERIVATION_MEDIA'):
         raise ValueError(message)
 
 
+
+def filtered_idat(image):
+    # Pillow chooses reversible PNG scanline filters. Keep only our RGBA
+    # frame's IDAT stream, not its headers, alpha metadata or ancillary chunks.
+    # The APNG framing below still uses full independent frames.
+    png=io.BytesIO()
+    image.save(png, format='PNG', compress_level=6)
+    data=png.getbuffer()
+    offset=8;parts=[]
+    while offset+12 <= len(data):
+        count,kind=struct.unpack_from('>I4s',data,offset)
+        end=offset+count+12
+        check(end<=len(data),'PROP_DERIVATION_APNG_ENCODE')
+        if kind==b'IDAT':
+            parts.append(data[offset+8:end-4])
+        if kind==b'IEND':
+            check(end==len(data) and parts,'PROP_DERIVATION_APNG_ENCODE')
+            return b''.join(parts)
+        offset=end
+    raise ValueError('PROP_DERIVATION_APNG_ENCODE')
+
 def encode(images, durations):
     """Retain full independent canvases, exact integer delays, and repeated frames."""
     def chunk(kind, body):
@@ -37,9 +58,13 @@ def encode(images, durations):
         if durations:
             output.extend(chunk(b'fcTL',struct.pack('>IIIIIHHBB',sequence,w,h,0,0,durations[i],1000,0,0)))
             sequence+=1
-        data=image.tobytes();stride=w*4
-        lines=b''.join(b'\0'+data[j:j+stride] for j in range(0,len(data),stride))
-        compressed=zlib.compress(lines,level=6)
+        if durations:
+            compressed=filtered_idat(image)
+        else:
+            # Preserve the established still-byte encoding and receipt hashes.
+            data=image.tobytes();stride=w*4
+            lines=b''.join(b'\0'+data[j:j+stride] for j in range(0,len(data),stride))
+            compressed=zlib.compress(lines,level=6)
         if i:
             output.extend(chunk(b'fdAT',struct.pack('>I',sequence)+compressed))
             sequence+=1
@@ -134,7 +159,14 @@ def process(root,spec,matte):
     duration=spec['frameDurationsMs'];kind=spec['kind']
     check(size[0]*size[1]*len(paths)<=MAX_PIXELS)
     if kind=='detail':
-        mattes=matte(root,paths,spec['sourceHash'])
+        try:
+            mattes=matte(root,paths,spec['sourceHash'])
+        except Exception as error:
+            key=error.args[0] if len(error.args)==1 and type(error.args[0]) is str else None
+            raise ValueError({
+                'alpha_no_subject_initial_mask':'PROP_DERIVATION_INITIAL_MASK_EMPTY',
+                'alpha_tracker_frame_indices_mismatch':'PROP_DERIVATION_TRACKER_FRAME_SET',
+            }.get(key,'PROP_DERIVATION_MATTE_BACKEND')) from None
         check(len(paths)==len(mattes))
         images=[]
         for row,path in zip(spec['frames'],mattes):
@@ -178,6 +210,23 @@ def pinned_matte(root,paths,source_hash):
     return targets
 
 
+_EXIT={
+    'PROP_DERIVATION_OUTPUT_BUDGET':31,
+    'PROP_DERIVATION_ALPHA_REQUIRED':32,
+    'PROP_DERIVATION_MATTE_BACKEND':33,
+    'PROP_DERIVATION_INITIAL_MASK_EMPTY':34,
+    'PROP_DERIVATION_TRACKER_FRAME_SET':35,
+    'PROP_DERIVATION_INPUT_CHANGED':36,
+    'PROP_DERIVATION_APNG_ENCODE':37,
+    'PROP_DERIVATION_PIXEL_FOREGROUND':38,
+}
+
+
 if __name__=='__main__':
-    root=Path(sys.argv[1]);spec=json.loads((root/'job.json').read_bytes())
-    (root/'result.png').write_bytes(process(root,spec,pinned_matte))
+    try:
+        root=Path(sys.argv[1]);spec=json.loads((root/'job.json').read_bytes())
+        (root/'result.png').write_bytes(process(root,spec,pinned_matte))
+    except Exception as error:
+        # No paths, model stderr, raw pixels, or stack traces on worker logs.
+        c=error.args[0] if len(error.args)==1 and type(error.args[0]) is str else None
+        sys.exit(_EXIT.get(c,1))

@@ -199,3 +199,52 @@ test('append reads prior package geometry without creating replacement stills',
   assert.deepEqual([...staged.keys()],[propKeys.animDetail,propKeys.animPixel]);
   assert.equal(original.state(propKeys.pixel).result_ref,propRef(propKeys.pixel,originalMedia('pixel').media.sha256));
 });
+
+test('animated scanline filtering fits a strict byte budget without altering alpha, timing or decoded RGBA',
+ {skip:!hasPillow},async()=>{
+  const output=execFileSync(py,['-B','-c',`
+import io,runpy,sys,zlib
+from PIL import Image
+M=runpy.run_path(sys.argv[1]);encode=M['encode']
+w,h=320,240
+alpha=lambda x,y: 0 if x<10 or y<10 else 123 if x<12 else 255
+frames=[]
+for j in range(4):
+ raw=bytes(v for y in range(h) for x in range(w) for v in (
+  (x*7+y*13+j*31)%256, (x+y*j)%256, (x*3+y*11)%256, alpha(x,y)))
+ frames.append(Image.frombytes('RGBA',(w,h),raw))
+def old(frame):
+ data=frame.tobytes()
+ return zlib.compress(b''.join(b'\\0'+data[i:i+w*4] for i in range(0,len(data),w*4)),6)
+prior=sum(len(old(frame)) for frame in frames)
+times=[83,84,83,83]
+first=encode(frames,times)
+assert len(first)+1024<prior,(len(first),prior)
+encode.__globals__['MAX_BYTES']=(len(first)+prior)//2
+assert len(encode(frames,times))==len(first)
+with Image.open(io.BytesIO(first)) as decoded:
+ assert decoded.n_frames==len(times)
+ for i,frame in enumerate(frames):
+  decoded.seek(i)
+  assert decoded.info['duration']==times[i]
+  assert decoded.tobytes()==frame.tobytes()
+sys.stdout.buffer.write(first)
+`,program]);
+  const sha256=sha(output);
+  await verifyPropMedia(output,{assetId:sha256+'.png',sha256,bytes:output.length,
+   width:320,height:240,mediaType:'image/apng',frameDurationsMs:[83,84,83,83]});
+ });
+
+test('worker reports exact declared failure stage and fixed child classification, never private message',
+ {skip:!hasPillow},async t=>{
+  for(const [payload,phase,code] of [
+   ['PROP_DERIVATION_OUTPUT_BUDGET','render','PROP_DERIVATION_OUTPUT_BUDGET'],
+   ['/private/hidden provider traceback','render','PROP_DERIVATION_RENDER_FAILED'],
+  ]){
+   const f=fixture(t,'prop.generate',{motion:'still'}),{pds,staged}=setup(f);
+   const r=await f.run(propKeys.detail,pds,async()=>{throw Error(payload);});
+   assert.deepEqual(r,{state:'failed',taskId:f.by[propKeys.detail].id,phase,code});
+   assert.equal(staged.size,0);
+   assert.equal(f.state(propKeys.detail).result_ref,null);
+  }
+ });

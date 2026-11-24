@@ -61,8 +61,8 @@ async function main(){
      pack?await runPropPackageFromPath({...options,...pack,pds:propPds,signal:stop.signal,...propMode}):
      {state:ready?'idle':'not_ready'};
    }catch{result={state:'blocked',code:'POSTPROCESS_EXACT_TASK_REJECTED'};}
-   const {state,code,taskId}=result;
-   const line=JSON.stringify({service:'postprocess-worker',state,code,taskId});
+   const {state,code,taskId,phase}=result;
+   const line=JSON.stringify({service:'postprocess-worker',state,code,taskId,phase});
    if(last!==line){console.log(line);last=line;}
    if(!stop.signal.aborted)await delay(1000,undefined,{signal:stop.signal}).catch(e=>{if(e.name!=='AbortError')throw e;});
   }

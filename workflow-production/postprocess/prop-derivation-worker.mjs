@@ -3,6 +3,7 @@ import {DatabaseSync} from 'node:sqlite';
 import {canonical,sha} from './vendor/planner-f24d23a/envelope.mjs';
 import {exactProp,propValidator,propAnimationType,propTypes} from './vendor/prop-composite/prop-generate-envelope.mjs';
 import {buildPropGeneratePlan,exactPropTask,isPropRef,propKeys,propRef} from './vendor/prop-composite/prop-generate-plan.mjs';
+import {propRenderDiagnostic} from './prop-derivation-provider.mjs';
 import {verifyPropMedia,propPackageMediaLimit} from './vendor/prop-composite/prop-package-contract.mjs';
 import {assertDatabasePath,protectSchema,workflowTaskEligibleSql,workflowTaskRetrySetSql,markWorkflowTaskFailed} from './workflow-ready.mjs';
 
@@ -200,10 +201,12 @@ export async function runPropDerivationFromPath({dbPath,officialRequestId,taskId
    const current=selected(db,taskId,officialRequestId,'running',stamp);
    check(current&&['row','source','geometry'].every(k=>canonical(current[k])===canonical(x[k])),'PROP_DERIVATION_STALE');
   };
-  let sent=false;
+  let sent=false,phase='read';
   try{
    const job=await preparePropDerivation(pds,binding,{signal});
+   phase='render';
    const raw=await render(job,binding,{signal});
+   phase='validate';
    check(Buffer.isBuffer(raw)&&raw.length<=propPackageMediaLimit,'PROP_DERIVATION_OUTPUT_BUDGET');
    const hash=sha(raw);
    const media={...job.canvas,sha256:hash,assetId:hash+'.png',bytes:raw.length,
@@ -213,7 +216,7 @@ export async function runPropDerivationFromPath({dbPath,officialRequestId,taskId
    // Recheck the live claim and prerequisite proofs before any stage write;
    // the PDS port repeats this authorization independently when committing.
    tx(db,exactCurrent);
-   sent=true;
+   phase='publish';sent=true;
    const reply=await pds.stagePropDerivation(binding,{source:job.source,geometry:job.geometry,media,bytes:raw},{signal});
    const resultRef=propRef(binding.key,hash);
    check(exactProp(reply,['ok','resultRef'])&&reply.ok===true&&reply.resultRef===resultRef,'PROP_DERIVATION_ACK');
@@ -224,10 +227,13 @@ export async function runPropDerivationFromPath({dbPath,officialRequestId,taskId
      .run(resultRef,Math.max(Date.now(),stamp+1),taskId,officialRequestId,stamp).changes===1);
    });
    return {state:'completed',taskId,resultRef};
-  }catch{
+  }catch(error){
    if(!sent)try{
     tx(db,()=>{exactCurrent();check(markWorkflowTaskFailed(db,{...binding.claim,workerType:'postprocess'}));});
-    return {state:'failed',taskId,code:'PROP_DERIVATION_READ_OR_RENDER_FAILED'};
+    const code=propRenderDiagnostic(error)??{
+     read:'PROP_DERIVATION_READ_FAILED',render:'PROP_DERIVATION_RENDER_FAILED',validate:'PROP_DERIVATION_OUTPUT_VERIFICATION_FAILED',
+    }[phase];
+    return {state:'failed',taskId,phase,code};
    }catch{}
    return {state:'requires_reconciliation',taskId,code:'PROP_DERIVATION_PUBLICATION_UNCERTAIN'};
   }
