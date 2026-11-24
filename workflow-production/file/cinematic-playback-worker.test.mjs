@@ -7,7 +7,7 @@ import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {canonical,sha} from './vendor/planner-f24d23a/envelope.mjs';
 import {executeOnce,parseArgs,pollOnce} from './runner.mjs';
-import {playbackKey,playbackSchema,playbackType} from './cinematic-playback-worker.mjs';
+import {playbackKey,playbackSchema,playbackType,manifestMutationScopes,cinematicRemoveType,propMotionRemoveType} from './cinematic-playback-worker.mjs';
 import {cinematicPlaybackCapability,cinematicPlaybackPath,localPorts,requestLocalJson} from './local-ports.mjs';
 
 const officialRequestId='request.official.'+'4'.repeat(64);
@@ -18,17 +18,19 @@ const playback={durationFrames:80,speedCurve:[{frame:0,rate:1},{frame:79,rate:0.
  cameraCurve:[{frame:0,zoom:1.1,x:0.37,y:0.59},{frame:38,zoom:2.19,x:1,y:0}]};
 const input={sequenceId,expectedRevision:0,playback};
 const payload=canonical({schemaVersion:playbackSchema,projectId:'binari',...input});
-function setup(t,override){
+function setup(t,override,type=playbackType,schema=playbackSchema){
+ const key=manifestMutationScopes.find(s=>s.taskType===type).taskKey;
+ const taskId='workflow.task.'+sha(canonical([officialRequestId,key]));
  const dir=realpathSync(mkdtempSync(join(tmpdir(),'cinematic-playback-stage-')));
  const dbPath=join(dir,'db.sqlite');writeFileSync(dbPath,'',{mode:0o600});
  const db=new DatabaseSync(dbPath);
  t.after(()=>{db.close();rmSync(dir,{recursive:true,force:true});});
  db.exec(`CREATE TABLE workflow_runs(official_request_id,project_id,request_type,schema_version,payload,payload_sha256,registered_at,state,updated_at,reason);
   CREATE TABLE workflow_tasks(task_id,official_request_id,task_key,task_type,worker_type,task_input,result_ref,updated_at,depends_on_task_id,status,retry_count);`);
- const principal=override?canonical({schemaVersion:playbackSchema,projectId:'binari',...override}):payload;
- db.prepare("INSERT INTO workflow_runs VALUES(?,?,?,?,?,?,1,'planned',1,NULL)").run(officialRequestId,'binari',playbackType,playbackSchema,principal,sha(principal));
- db.prepare("INSERT INTO workflow_tasks VALUES(?,?,?,?,?,?,NULL,2,NULL,'pending',0)").run(taskId,officialRequestId,playbackKey,
-  playbackType,'file',canonical(override??input));
+ const principal=override?canonical({schemaVersion:schema,projectId:'binari',...override}):payload;
+ db.prepare("INSERT INTO workflow_runs VALUES(?,?,?,?,?,?,1,'planned',1,NULL)").run(officialRequestId,'binari',type,schema,principal,sha(principal));
+ db.prepare("INSERT INTO workflow_tasks VALUES(?,?,?,?,?,?,NULL,2,NULL,'pending',0)").run(taskId,officialRequestId,key,
+  type,'file',canonical(override??input));
  const state=()=>db.prepare('SELECT status,result_ref,updated_at,retry_count FROM workflow_tasks WHERE task_id=?').get(taskId);
  return {db,dbPath,state,officialRequestId,taskId};
 }
@@ -101,4 +103,35 @@ test('bad expected revision, source ID, unbounded camera or stale claim never po
   return {ok:true,resultRef};
  }};
  assert.equal((await pollOnce({...f,pds})).state,'requires_reconciliation');assert.equal(f.state().result_ref,null);
+});
+
+
+test('archive checkboxes scope each claim, skip GPU and old delete routes, never send unchecked content',async t=>{
+ const rows=[
+  [cinematicRemoveType,'ngs.cinematic-sequences-remove.v1',{sequenceIds:[sequenceId]},'/v1/cinematics/ownership/workflow-sequence-remove','workflow.cinematic-sequence-remove.v1','binari/cinematics/sequence-archive.json'],
+  [propMotionRemoveType,'ngs.prop-animation-remove.v1',{propId:'candle',source:{revision:1,sha256:'a'.repeat(64)},motionIds:['flare.v1']},'/v1/props/ownership/workflow-animation-remove','workflow.prop-animation-remove.v1','prop.package.'+'b'.repeat(64)],
+ ];
+ for(const [type,schema,input,path,cap,resultRef] of rows){
+  const f=setup(t,input,type,schema),calls=[];
+  const pds=await withHttp(t,async(req,packet)=>{
+   assert.equal(req.url,path);calls.push(req.method);
+   if(!packet)return {body:{enabled:true,schemaVersion:cap}};
+   assert.deepEqual(Object.keys(packet),['claim']);
+   assert.equal(packet.claim.taskId,f.taskId);
+   assert.equal(packet.claim.payloadSha256,sha(canonical({schemaVersion:schema,projectId:'binari',...input})));
+   return {body:{ok:true,resultRef}};
+  });
+  assert.equal((await pollOnce({...f,pds})).state,'completed');
+  assert.equal(f.state().result_ref,resultRef);
+  assert.deepEqual(calls,['GET','POST']);
+ }
+});
+test('duplicate/empty selections and stale prop revisions cannot be claimed',async t=>{
+ const pds={archiveCapability:async()=>true,archiveExactSelection:async()=>assert.fail('unexpected update')};
+ for(const input of [{sequenceIds:[]},{sequenceIds:[sequenceId,sequenceId]},{sequenceIds:[officialRequestId]}]){
+  const f=setup(t,input,cinematicRemoveType,'ngs.cinematic-sequences-remove.v1');
+  assert.equal((await pollOnce({...f,pds})).state,'blocked');assert.equal(f.state().status,'pending');
+ }
+ const f=setup(t,{propId:'candle',source:{revision:0,sha256:'a'.repeat(64)},motionIds:['flare']},propMotionRemoveType,'ngs.prop-animation-remove.v1');
+ assert.equal((await pollOnce({...f,pds})).state,'blocked');assert.equal(f.state().status,'pending');
 });

@@ -9,6 +9,10 @@ export const cinematicPlaybackPath='/v1/cinematics/ownership/workflow-playback';
 export const cinematicPlaybackCapability='workflow.cinematic-playback-write.v1';
 export class PlaybackRevisionConflict extends Error {}
 const playbackConflictCode='WORKFLOW_CINEMATIC_PLAYBACK_CONFLICT';
+const archiveRoutes=Object.freeze({
+ 'cinematic.sequences.remove':{path:'/v1/cinematics/ownership/workflow-sequence-remove',schemaVersion:'workflow.cinematic-sequence-remove.v1'},
+ 'prop.animation.remove':{path:'/v1/props/ownership/workflow-animation-remove',schemaVersion:'workflow.prop-animation-remove.v1'},
+});
 export const heartbeatPath='/api/service-heartbeat';
 export class DeleteDefinitelyRejected extends Error {}
 const definitive=new Map([[403,new Set(['WORKFLOW_DELETE_CLAIM_DENIED','WORKFLOW_DELETE_INTERNAL_ONLY'])],[404,new Set(['WORKFLOW_DELETE_DISABLED'])]]);
@@ -79,6 +83,19 @@ export function localPorts({transport=requestLocalJson,singleTarget=false}={}){
    if(!exact(claim,['officialRequestId','taskId','projectId','payloadSha256','claimStamp'])||claim.projectId!=='binari'||
       !Number.isSafeInteger(claim.claimStamp)||claim.claimStamp<1)throw Error('CINEMATIC_PLAYBACK_PORT_CLAIM');
    return await transport({port:8030,path:cinematicPlaybackPath,method:'POST',body:{claim},deadline:40_000});
+  },
+  async archiveCapability(operation,signal){
+   if(!Object.hasOwn(archiveRoutes,operation))return false;
+   const {path,schemaVersion}=archiveRoutes[operation];
+   try{
+    const data=await transport({port:8030,path,method:'GET',deadline:5000,signal});
+    return exact(data,['enabled','schemaVersion'])&&data.enabled===true&&data.schemaVersion===schemaVersion;
+   }catch{return false;}
+  },
+  async archiveExactSelection(operation,claim){
+   if(!Object.hasOwn(archiveRoutes,operation)||!exact(claim,['officialRequestId','taskId','projectId','payloadSha256','claimStamp'])||
+      claim.projectId!=='binari'||!Number.isSafeInteger(claim.claimStamp)||claim.claimStamp<1)throw Error('FILE_ARCHIVE_PORT_CLAIM');
+   return await transport({port:8030,path:archiveRoutes[operation].path,method:'POST',body:{claim},deadline:40_000});
   },
   async heartbeat(signal){
    try{

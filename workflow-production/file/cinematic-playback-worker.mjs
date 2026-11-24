@@ -7,7 +7,7 @@ import {PlaybackRevisionConflict} from './local-ports.mjs';
 
 export const playbackType='cinematic.playback.update',playbackSchema='ngs.cinematic-playback-update.v1';
 export const playbackKey='cinematic_playback_update';
-const projectId='binari',workerType='file',inputKeys=['sequenceId','expectedRevision','playback'];
+const projectId='binari',workerType='file';
 const official=id=>typeof id==='string'&&id.length===81&&/^request\.official\.[a-f0-9]{64}$/u.test(id);
 const n=(v,a,b)=>Number.isFinite(v)&&v>=a&&v<=b;
 const curve=(list,duration,keys,values)=>Array.isArray(list)&&list.length>=1&&list.length<=128&&Array.from(list).every((k,i)=>
@@ -20,36 +20,59 @@ function validPlayback(v){
 const require=(ok,code='CINEMATIC_PLAYBACK_CLAIM_BINDING')=>{if(!ok)throw Error(code);};
 const scope=`r.state='planned' AND r.reason IS NULL AND r.project_id=? AND r.request_type=? AND r.schema_version=?
  AND t.worker_type=? AND t.task_type=? AND t.task_key=? AND t.depends_on_task_id IS NULL AND t.result_ref IS NULL`;
-const args=[projectId,playbackType,playbackSchema,workerType,playbackType,playbackKey];
-const taskIdFor=id=>'workflow.task.'+sha(canonical([id,playbackKey]));
-const refFor=id=>projectId+'/cinematics/sequences/'+id+'/timeline.json';
+export const cinematicRemoveType='cinematic.sequences.remove', propMotionRemoveType='prop.animation.remove';
+const slug=v=>typeof v==='string'&&v.length>=2&&v.length<=80&&/^[a-z0-9]+(?:[-._][a-z0-9]+)*$/u.test(v);
+const hash=v=>typeof v==='string'&&v.length===64&&/^[a-f0-9]{64}$/u.test(v);
+const checked=(v,valid)=>Array.isArray(v)&&v.length>=1&&v.length<=30&&
+ Array.from(v).every(valid)&&new Set(v).size===v.length;
+const mutations=Object.freeze({
+ [playbackType]:{
+  schema:playbackSchema,key:playbackKey,keys:['sequenceId','expectedRevision','playback'],
+  valid:(p,ownId)=>official(p.sequenceId)&&p.sequenceId!==ownId&&Number.isSafeInteger(p.expectedRevision)&&
+   p.expectedRevision>=0&&p.expectedRevision<Number.MAX_SAFE_INTEGER&&validPlayback(p.playback),
+  ref:(v,p)=>v===projectId+'/cinematics/sequences/'+p.sequenceId+'/timeline.json',
+ },
+ [cinematicRemoveType]:{
+  schema:'ngs.cinematic-sequences-remove.v1',key:'cinematic_sequences_remove',keys:['sequenceIds'],
+  valid:(p,ownId)=>checked(p.sequenceIds,v=>official(v)&&v!==ownId),
+  ref:v=>v===projectId+'/cinematics/sequence-archive.json',
+ },
+ [propMotionRemoveType]:{
+  schema:'ngs.prop-animation-remove.v1',key:'prop_animation_remove',keys:['propId','source','motionIds'],
+  valid:p=>slug(p.propId)&&exact(p.source,['revision','sha256'])&&
+   Number.isSafeInteger(p.source.revision)&&p.source.revision>=1&&p.source.revision<=Number.MAX_SAFE_INTEGER-2&&
+   hash(p.source.sha256)&&checked(p.motionIds,slug),
+  ref:v=>typeof v==='string'&&v.length===77&&/^prop\.package\.[a-f0-9]{64}$/u.test(v),
+ },
+});
+export const manifestMutationScopes=Object.freeze(Object.entries(mutations).map(([taskType,m])=>
+ Object.freeze({workerType,taskType,taskKey:m.key,predecessorKey:null})));
+const taskIdFor=(id,key)=>'workflow.task.'+sha(canonical([id,key]));
 function tx(db,fn){
  db.exec('BEGIN IMMEDIATE');
  try{const v=fn();db.exec('COMMIT');return v;}
  catch(e){db.exec('ROLLBACK');throw e;}
 }
-function candidate(db,t,stamp){
+function candidate(db,t,m,stamp){
  const running=stamp!==undefined;
  const row=db.prepare(`SELECT t.*,r.payload,r.payload_sha256,r.registered_at
   FROM workflow_tasks t JOIN workflow_runs r USING(official_request_id) WHERE ${scope}
   AND t.task_id=? AND t.official_request_id=? AND ${running?"t.status='running' AND t.updated_at=?":workflowTaskEligibleSql('t')}`)
-  .get(...args,t.taskId,t.officialRequestId,...(running?[stamp]:[]));
+  .get(projectId,t.operation,m.schema,workerType,t.operation,m.key,t.taskId,t.officialRequestId,...(running?[stamp]:[]));
  if(!row)return null;
  const p=JSON.parse(row.payload);
- require(exact(p,['schemaVersion','projectId',...inputKeys])&&p.schemaVersion===playbackSchema&&p.projectId===projectId&&
-  official(p.sequenceId)&&p.sequenceId!==t.officialRequestId&&Number.isSafeInteger(p.expectedRevision)&&
-  p.expectedRevision>=0&&p.expectedRevision<Number.MAX_SAFE_INTEGER&&validPlayback(p.playback)&&
-  canonical(p)===row.payload&&sha(row.payload)===row.payload_sha256);
- const input=Object.fromEntries(inputKeys.map(k=>[k,p[k]]));
+ require(exact(p,['schemaVersion','projectId',...m.keys])&&p.schemaVersion===m.schema&&p.projectId===projectId&&
+  m.valid(p,t.officialRequestId)&&canonical(p)===row.payload&&sha(row.payload)===row.payload_sha256);
+ const input=Object.fromEntries(m.keys.map(k=>[k,p[k]]));
  require(canonical(input)===row.task_input);
  const tasks=db.prepare('SELECT task_id FROM workflow_tasks WHERE official_request_id=? LIMIT 2').all(t.officialRequestId);
  require(tasks.length===1&&tasks[0].task_id===t.taskId);
  return {input,row};
 }
-function claimPlayback(db,t){
- require(official(t.officialRequestId)&&t.taskId===taskIdFor(t.officialRequestId));
+function claimMutation(db,t,m){
+ require(official(t.officialRequestId)&&t.taskId===taskIdFor(t.officialRequestId,m.key));
  return tx(db,()=>{
-  const b=candidate(db,t);
+  const b=candidate(db,t,m);
   if(!b)return null;
   const {row}=b,claimStamp=Math.max(Date.now(),row.updated_at+1);
   require(Number.isSafeInteger(claimStamp)&&claimStamp<Number.MAX_SAFE_INTEGER&&Number.isSafeInteger(row.registered_at)&&
@@ -61,35 +84,36 @@ function claimPlayback(db,t){
  });
 }
 
-export async function runPlaybackFromPath({dbPath,officialRequestId,taskId,pds,signal}){
- require(typeof pds?.updateCinematicPlayback==='function','CINEMATIC_PLAYBACK_PORT_REQUIRED');
+export async function runManifestMutationFromPath({dbPath,officialRequestId,taskId,pds,signal,operation=playbackType}){
+ const m=Object.hasOwn(mutations,operation)?mutations[operation]:null;
+ const write=(claim)=>operation===playbackType?pds.updateCinematicPlayback(claim):pds.archiveExactSelection(operation,claim);
+ require(m&&(operation===playbackType?typeof pds?.updateCinematicPlayback==='function':typeof pds?.archiveExactSelection==='function'),'CINEMATIC_PLAYBACK_PORT_REQUIRED');
  if(signal?.aborted)return {state:'not_claimable',taskId};
  assertDatabasePath(dbPath);
  const db=new DatabaseSync(dbPath);
  try{
   db.exec('PRAGMA foreign_keys=ON; PRAGMA busy_timeout=5000;');protectSchema(db);
-  const target={officialRequestId,taskId},found=claimPlayback(db,target);
+  const target={officialRequestId,taskId,operation},found=claimMutation(db,target,m);
   if(!found)return {state:'not_claimable',taskId};
   const {row,input,claim}=found;
-  const resultRef=refFor(input.sequenceId);
   const current=()=>{
-   const next=candidate(db,target,claim.claimStamp);
+   const next=candidate(db,target,m,claim.claimStamp);
    require(next&&['payload','task_input','payload_sha256','registered_at'].every(k=>row[k]===next.row[k]),'CINEMATIC_PLAYBACK_CLAIM_CHANGED');
   };
   const verifyCurrent=()=>tx(db,current);
-  const write=()=>pds.updateCinematicPlayback(claim);
   try{
    verifyCurrent();
    let ack;
-   try{ack=await write();}
+   try{ack=await write(claim);}
    catch(e){
     if(e instanceof PlaybackRevisionConflict)throw e;
     // Repeat once for a lost ACK, under the same active claim and intent.
     // The endpoint independently confirms the original immutable receipt.
     signal?.throwIfAborted();verifyCurrent();
-    ack=await write();
+    ack=await write(claim);
    }
-   require(exact(ack,['ok','resultRef'])&&ack.ok===true&&ack.resultRef===resultRef,'CINEMATIC_PLAYBACK_ACK_UNCONFIRMED');
+   require(exact(ack,['ok','resultRef'])&&ack.ok===true&&m.ref(ack.resultRef,input),'FILE_WORKER_MANIFEST_ACK_UNCONFIRMED');
+   const {resultRef}=ack;
    tx(db,()=>{
     current();
     require(db.prepare(`UPDATE workflow_tasks SET status='completed',result_ref=?,updated_at=?
@@ -107,7 +131,9 @@ export async function runPlaybackFromPath({dbPath,officialRequestId,taskId,pds,s
     });
     return {state:'failed',taskId,code:'CINEMATIC_PLAYBACK_REVISION_CONFLICT'};
    }catch{}
-   return {state:'requires_reconciliation',taskId,code:'CINEMATIC_PLAYBACK_RECONCILIATION_REQUIRED'};
+   return {state:'requires_reconciliation',taskId,code:operation===playbackType?'CINEMATIC_PLAYBACK_RECONCILIATION_REQUIRED':'FILE_WORKER_ARCHIVE_RECONCILIATION_REQUIRED'};
   }
  }finally{db.close();}
 }
+
+export const runPlaybackFromPath=runManifestMutationFromPath;
