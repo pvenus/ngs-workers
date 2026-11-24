@@ -156,7 +156,7 @@ export function nextPropDerivationFromPath(dbPath,{stillOnly=false}={}){
     WHERE r.state='planned' AND r.reason IS NULL AND r.project_id='binari'
       AND r.request_type IN (${propTypes.map(()=>'?')})
       AND ${workflowTaskEligibleSql('t')} AND t.result_ref IS NULL AND t.worker_type='postprocess'
-      ${stillOnly?`AND r.request_type<>? AND COALESCE(json_extract(r.payload,'$.motion'),'still')='still'`:''}
+      ${stillOnly?`AND r.request_type<>? AND CASE WHEN json_valid(r.payload) THEN coalesce(json_extract(r.payload,'$.motion'),'still')='still' ELSE 0 END`:''}
       AND t.task_key IN (${Object.keys(roles).map(()=>'?')}) AND p.status='completed'
       AND (r.request_type=? OR t.task_key NOT IN (?,?) OR EXISTS (
         SELECT 1 FROM workflow_tasks s WHERE s.official_request_id=t.official_request_id AND s.status='completed'

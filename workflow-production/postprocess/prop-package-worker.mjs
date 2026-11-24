@@ -7,7 +7,7 @@ import {buildPropGeneratePlan,checkPropPublishRows,exactPropTask,propKeys} from 
 import {parsePropPackage,propPackageReceipt} from './vendor/prop-composite/prop-package-contract.mjs';
 
 const types=[propGenerateType,propRegenerateType];
-const stillSql="r.request_type IN (?,?) AND coalesce(json_extract(r.payload,'$.motion'),'still')='still'";
+const stillSql="r.request_type IN (?,?) AND CASE WHEN json_valid(r.payload) THEN coalesce(json_extract(r.payload,'$.motion'),'still')='still' ELSE 0 END";
 const check=(ok,code='WORKFLOW_PROP_PACKAGE_BINDING_INVALID')=>{if(!ok)throw Error(code);};
 
 function tx(db,fn){

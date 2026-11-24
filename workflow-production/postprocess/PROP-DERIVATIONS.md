@@ -49,3 +49,35 @@ Check those source copies against the reviewed services/NGS release, provision
 an actual claim-bound intermediate PDS source/store and connect the resident
 launcher before making it runnable. The fixture tests run genuine Pillow and
 stub only learned alpha inference and the intermediate PDS transport.
+
+## Resident still lane
+
+The same Postprocess resident checks both loopback PDS stage and package
+capabilities before considering work. Only ordinary still create/regenerate
+is admitted; neither an authored motion request nor a subtly animated create
+is accepted even if its task row is already in the local DB. Native provider
+uses the existing frame-alpha Python, module root and pinned BiRefNet/SAM
+configuration; a still has no tracking invocation. No new process or model
+runs at startup. Source and final payloads remain PDS/Filex-only.
+
+The final Postprocess task waits on all four exact success receipts in this
+one formal request, asks PDS to construct the package from them, verifies
+the request identity, exact predecessor pin and both derivative byte hashes,
+and forwards just the manifest. PDS performs authoritative Filex publication
+and readback. No ACK/claim mismatch can persist a completed task; after
+dispatch an uncertain result is held for reconciliation rather than retried.
+
+Full isolated worker→PDS→Filex fixture (using the staged service tree
+containing `filex-writer/test_prop_stage_authority_http.py`):
+
+```sh
+cd "$STAGED_BACKEND_SERVICES"
+PYTHONPATH=data-service:filex-writer WORKFLOW_PROP_TEST_PYTHON=/path/to/python-with-pillow \
+  /path/to/python3 -B "$WORKERS/workflow-production/postprocess/prop-resident-chain.fixture.py" \
+  WorkerChain.test_actual_static_worker_chain_create_regenerate
+```
+
+The fixture supplies model-free Codex, diffusion and matting results
+but executes the production request claims, PNG verification, pixel
+derivation, PDS handlers, Filex publication and Planner readback. It does not
+open the real Planner database or installed model providers.
