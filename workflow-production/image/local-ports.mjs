@@ -9,9 +9,12 @@ export const combatDirectionPortraitPath='/v1/npcs/ownership/workflow-portrait-c
 export const idlePortraitPath='/v1/npcs/ownership/workflow-portrait-idle-reference';
 export const directionPortraitPath='/v1/npcs/ownership/workflow-portrait-direction';
 export const motionImagePath='/v1/motion-presets/workflow-convert-2d';
+export const propBasePath='/v1/props/ownership/workflow-stage';
 export const propImagePath='/v1/props/ownership/workflow-image';
 export const heartbeatPath='/api/service-heartbeat';
 const routes={
+ 'prop.generate.base':{path:propBasePath,schema:'workflow.prop-stage.v1'},
+ 'prop.regenerate.base':{path:propBasePath,schema:'workflow.prop-stage.v1'},
  'prop.image-generate':{path:propImagePath,schema:'workflow.prop-image-write.v1'},
  'motion-preset.convert-2d.image':{path:motionImagePath,schema:'workflow.motion-preset-convert-2d.v1'},
  'npc.portrait-representative':{path:portraitPath,schema:'workflow.representative-portrait-write.v1'},
@@ -77,6 +80,12 @@ export function localPorts({transport=requestLocalJson}={}){
   async publishPortrait(command,claimStamp,basis,signal){
    return await transport({port:8030,path:routes[command.operation].path,method:'POST',
     body:{claim:claimOf(command,claimStamp),basis,artifact:JSON.parse(command.artifact)},deadline:120000,signal});
+  },
+  async readPropBase(claim,signal){
+   return transport({port:8030,path:propBasePath+'/read',method:'POST',body:{claim},deadline:5000,signal,responseLimit:128*1024});
+  },
+  async publishPropBase(claim,artifact){
+   return transport({port:8030,path:propBasePath,method:'POST',body:{claim,artifact},deadline:120000});
   },
   async readPropDesign(claim,signal){
    return transport({port:8030,path:propImagePath+'/read',method:'POST',body:{claim},deadline:5000,signal,responseLimit:128*1024});

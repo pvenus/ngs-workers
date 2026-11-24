@@ -85,7 +85,8 @@ export function createPropImageRenderer(config){
   if(!exact(input,['projectId','propId','state','lane','intent','sources','contextSha256']))throw fail('PROP_IMAGE_INPUT_INVALID');
   const {sources,contextSha256,...request}=input;
   preparePropImageInput({...request,schemaVersion:propImageRequestSchema,designContextSha256:contextSha256},
-   {schemaVersion:propDesignContextSchema,projectId:input.projectId,sources,contextSha256});
+   {schemaVersion:propDesignContextSchema,projectId:input.projectId,sources,contextSha256},
+   {formalBase:input.state==='base'&&input.lane==='detail'});
   const wire=Buffer.from(JSON.stringify(input));
   if(wire.length>maxPayload)throw fail('WORKFLOW_IMAGE_INPUT_TOO_LARGE');
   const raw=await call(pinned,'render-prop',wire,signal);

@@ -13,13 +13,18 @@ const hasControl=/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f]/u;
 const text=(v,max)=>typeof v==='string'&&v.isWellFormed()&&v.trim()===v&&v.length>0&&
  Buffer.byteLength(v,'utf8')<=max&&!hasControl.test(v);
 const id=v=>typeof v==='string'&&v.length<=128&&v.trim()===v&&/^[a-z][a-z0-9_-]*$/u.test(v);
+const basePropId=v=>typeof v==='string'&&v.length>=2&&v.length<=80&&/^[a-z0-9]+(?:[-._][a-z0-9]+)*$/u.test(v);
 const fieldIds=['visualStyle','visualProhibitions'];
 const headings=['형태와 식별','재료와 색','상태 사이의 일관성','납품과 검수'];
 const fail=code=>Error(code);
 
 export function validatePropImageRequest(request){
+ return validateRenderRequest(request,false);
+}
+function validateRenderRequest(request,formalBase){
  if(!exact(request,['schemaVersion','projectId','propId','state','lane','intent','designContextSha256'])||
-    request.schemaVersion!==propImageRequestSchema||request.projectId!=='binari'||!id(request.propId)||!id(request.state)||
+    request.schemaVersion!==propImageRequestSchema||request.projectId!=='binari'||
+    !((id(request.propId)&&id(request.state))||(formalBase&&basePropId(request.propId)&&request.state==='base'&&request.lane==='detail'))||
     !['detail','pixel'].includes(request.lane)||!text(request.intent,4000)||!hex(request.designContextSha256))
   throw fail('PROP_IMAGE_REQUEST_INVALID');
  return request;
@@ -45,8 +50,8 @@ export function validatePropDesign(context,request){
  return context;
 }
 
-export function preparePropImageInput(request,context){
- validatePropImageRequest(request);validatePropDesign(context,request);
+export function preparePropImageInput(request,context,{formalBase=false}={}){
+ validateRenderRequest(request,formalBase);validatePropDesign(context,request);
  return {projectId:request.projectId,propId:request.propId,state:request.state,lane:request.lane,
   sources:structuredClone(context.sources),contextSha256:context.contextSha256,intent:request.intent};
 }
