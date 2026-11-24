@@ -6,6 +6,7 @@ import {homedir} from 'node:os';
 import {isAbsolute,normalize} from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {exact} from './vendor/planner-f24d23a/planner.mjs';
+import {preparePropImageInput,propImageRequestSchema,propDesignContextSchema} from './prop-image-design.mjs';
 
 const helper=fileURLToPath(new URL('./portrait-native.py',import.meta.url));
 const python='/opt/homebrew/bin/python3.12';
@@ -75,6 +76,21 @@ export function createNeutralReferenceRenderer(config){
   const png=await call(pinned,'render-neutral',Buffer.from(JSON.stringify(input)),signal);
   if(!png.subarray(0,8).equals(signature))throw fail('WORKFLOW_IMAGE_OUTPUT_INVALID');
   return png;
+ };
+}
+
+export function createPropImageRenderer(config){
+ const pinned=options(config);
+ return async (input,{signal}={})=>{
+  if(!exact(input,['projectId','propId','state','lane','intent','sources','contextSha256']))throw fail('PROP_IMAGE_INPUT_INVALID');
+  const {sources,contextSha256,...request}=input;
+  preparePropImageInput({...request,schemaVersion:propImageRequestSchema,designContextSha256:contextSha256},
+   {schemaVersion:propDesignContextSchema,projectId:input.projectId,sources,contextSha256});
+  const wire=Buffer.from(JSON.stringify(input));
+  if(wire.length>maxPayload)throw fail('WORKFLOW_IMAGE_INPUT_TOO_LARGE');
+  const raw=await call(pinned,'render-prop',wire,signal);
+  if(!raw.subarray(0,8).equals(signature))throw fail('WORKFLOW_IMAGE_OUTPUT_INVALID');
+  return raw;
  };
 }
 
