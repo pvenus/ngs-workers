@@ -7,6 +7,10 @@ import {createPostprocessRenderer} from './postprocess-provider.mjs';
 import {probePresetEncoder} from './preset-video-artifact.mjs';
 import {presetPostprocessPorts} from './preset-video-ports.mjs';
 import {choosePresetPostprocess,runPresetPostprocessFromPath} from './preset-video-postprocess.mjs';
+import {propStagePorts} from './prop-stage-ports.mjs';
+import {createPropDerivationRenderer} from './prop-derivation-provider.mjs';
+import {nextPropDerivationFromPath,runPropDerivationFromPath} from './prop-derivation-worker.mjs';
+import {nextPropPackageFromPath,runPropPackageFromPath} from './prop-package-worker.mjs';
 
 export function parseArgs(args){
  const flags=['--run','--db','--config','--model-pins','--worker-source','--sam-source'];
@@ -20,10 +24,12 @@ async function main(){
  const db=new DatabaseSync(options.dbPath,{readOnly:true});
  try{protectSchema(db);}finally{db.close();}
  const pds=postprocessPorts(),presetPds=presetPostprocessPorts();
- let render;
+ const propPds=propStagePorts();
+ let render,renderProp;
  // Existing NPC alpha/pixel setup never blocks or becomes a dependency of the
  // new CPU-only lane. This promise validates paths only; no GPU is loaded.
  void createPostprocessRenderer({...options,pds}).then(value=>{render=value;}).catch(()=>{});
+ void createPropDerivationRenderer(options).then(value=>{renderProp=value;}).catch(()=>{});
  const stop=new AbortController();
  process.once('SIGINT',()=>stop.abort());process.once('SIGTERM',()=>stop.abort());
  let ready=false,heartbeatStarted=false,last;
@@ -35,18 +41,22 @@ async function main(){
    try{
     const motionCheck=Promise.all([probePresetEncoder(),presetPds.ready(stop.signal)])
      .then(parts=>parts.every(Boolean));
-    const [[frames,portraits],motion]=await Promise.all([
-     render?Promise.all([pds.capability(),pds.capabilityPortrait()]):[false,false],motionCheck
+    const [[frames,portraits],motion,props]=await Promise.all([
+     render?Promise.all([pds.capability(),pds.capabilityPortrait()]):[false,false],motionCheck,renderProp?propPds.ready(stop.signal):false
     ]);
-    ready=frames||portraits||motion;
+    ready=frames||portraits||motion||props;
     if(ready&&!heartbeatStarted){heartbeatStarted=true;void pulse();}
     if(!ready)heartbeatStarted=false;
     const available=!stop.signal.aborted;
     const target=available&&(frames||portraits)&&nextPostprocessFromPath(options.dbPath,{frames,portraits});
     const preset=available&&!target&&motion&&choosePresetPostprocess(options.dbPath);
+    const prop=available&&!target&&!preset&&props&&nextPropDerivationFromPath(options.dbPath,{stillOnly:true});
+    const pack=available&&!target&&!preset&&!prop&&props&&nextPropPackageFromPath(options.dbPath);
     result=target?await runPostprocessFromPath({...options,...target,pds,render,signal:stop.signal}):
      preset?await runPresetPostprocessFromPath({...options,...preset,pds:presetPds,signal:stop.signal}):
-      {state:ready?'idle':'not_ready'};
+           prop?await runPropDerivationFromPath({...options,...prop,pds:propPds,render:renderProp,signal:stop.signal,stillOnly:true}):
+     pack?await runPropPackageFromPath({...options,...pack,pds:propPds,signal:stop.signal}):
+     {state:ready?'idle':'not_ready'};
    }catch{result={state:'blocked',code:'POSTPROCESS_EXACT_TASK_REJECTED'};}
    const {state,code,taskId}=result;
    const line=JSON.stringify({service:'postprocess-worker',state,code,taskId});

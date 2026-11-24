@@ -143,7 +143,7 @@ export async function preparePropDerivation(pds,binding,{signal}={}){
  return {source,geometry,canvas:dto.canvas,frameDurationsMs:d,frames,buffers};
 }
 
-export function nextPropDerivationFromPath(dbPath){
+export function nextPropDerivationFromPath(dbPath,{stillOnly=false}={}){
  assertDatabasePath(dbPath);
  const db=new DatabaseSync(dbPath,{readOnly:true});
  try{
@@ -156,18 +156,19 @@ export function nextPropDerivationFromPath(dbPath){
     WHERE r.state='planned' AND r.reason IS NULL AND r.project_id='binari'
       AND r.request_type IN (${propTypes.map(()=>'?')})
       AND ${workflowTaskEligibleSql('t')} AND t.result_ref IS NULL AND t.worker_type='postprocess'
+      ${stillOnly?`AND r.request_type<>? AND COALESCE(json_extract(r.payload,'$.motion'),'still')='still'`:''}
       AND t.task_key IN (${Object.keys(roles).map(()=>'?')}) AND p.status='completed'
       AND (r.request_type=? OR t.task_key NOT IN (?,?) OR EXISTS (
         SELECT 1 FROM workflow_tasks s WHERE s.official_request_id=t.official_request_id AND s.status='completed'
         AND s.task_key=CASE WHEN t.task_key=? THEN ? ELSE ? END))
     ORDER BY r.registered_at,r.official_request_id,t.task_key LIMIT 1`)
-    .get(...propTypes,...Object.keys(roles),propAnimationType,propKeys.animDetail,propKeys.animPixel,
+    .get(...propTypes,...(stillOnly?[propAnimationType]:[]),...Object.keys(roles),propAnimationType,propKeys.animDetail,propKeys.animPixel,
          propKeys.animDetail,propKeys.detail,propKeys.pixel);
   return found?{taskId:found.taskId,officialRequestId:found.officialRequestId}:null;
  }finally{db.close();}
 }
 
-export async function runPropDerivationFromPath({dbPath,officialRequestId,taskId,pds,render,signal}){
+export async function runPropDerivationFromPath({dbPath,officialRequestId,taskId,pds,render,signal,stillOnly=false}){
  check(typeof officialRequestId==='string'&&officialRequestId.length===81&&/^request\.official\.[a-f0-9]{64}$/u.test(officialRequestId)&&
        typeof taskId==='string'&&taskId.length===78&&/^workflow\.task\.[a-f0-9]{64}$/u.test(taskId));
  check(['readPropDerivation','fetchPropDerivationAsset','stagePropDerivation'].every(k=>typeof pds?.[k]==='function')&&
@@ -180,6 +181,7 @@ export async function runPropDerivationFromPath({dbPath,officialRequestId,taskId
   const attempt=tx(db,()=>{
    const x=selected(db,taskId,officialRequestId,'eligible');
    if(!x)return null;
+   if(stillOnly&&(x.animated||x.row.request_type===propAnimationType||JSON.parse(x.row.payload).motion==='subtle'))return null;
    const stamp=Math.max(Date.now(),x.task.updated_at+1);
    check(Number.isSafeInteger(stamp));
    check(db.prepare(`UPDATE workflow_tasks SET status='running',updated_at=?,${workflowTaskRetrySetSql}
