@@ -35,6 +35,12 @@ class CinematicChain(unittest.TestCase):
         self.fixture=fixture
 
     def test_cinematic_enters_and_leaves_the_formal_queue_without_prop_or_background_removal(self):
+        self.exercise('mp4')
+
+    def test_sequence_publishes_all_native_png_bytes_and_playback_without_encoding(self):
+        self.exercise('sequence')
+
+    def exercise(self,kind):
         f=self.fixture
         services=Path(os.environ['NGS_CINEMATIC_SERVICES_ROOT']).resolve(strict=True)
         root=f.data/'cinematics'; sources=root/'sources'; sources.mkdir()
@@ -48,32 +54,47 @@ new PlannerStore(process.argv[1],{cinematicEnabled:true,readCinematicPublication
                             cwd=services,capture_output=True,text=True,timeout=10)
         self.assertEqual(init.returncode,0,init.stderr)
         db.chmod(0o600); identity=db.stat()
-        marker=f.root/'cinematic-animation-ready.json'
-        marker.write_text(json.dumps({'schemaVersion':READY_SCHEMA,'provider':'wan-i2v-a14b-q4_k_m',
+        impl,schema,at,marker_name=WorkflowCinematic,READY_SCHEMA,'workflow_cinematic','cinematic-animation-ready.json'
+        if kind=='sequence':
+            from project_data_service.workflow_cinematic_sequence import WorkflowCinematicSequence,READY_SCHEMA as sequence_schema
+            impl,schema,at,marker_name=WorkflowCinematicSequence,sequence_schema,'workflow_cinematic_sequence','cinematic-sequence-animation-ready.json'
+        marker=f.root/marker_name
+        marker.write_text(json.dumps({'schemaVersion':schema,'provider':'wan-i2v-a14b-q4_k_m',
                                       'checkedAt':time.time_ns()//1_000_000}))
         marker.chmod(0o600)
         config={'schemaVersion':'pds-filex-cas.v1','projectId':'binari','enabled':True,'endpoint':f.origin,
                 'tokenFile':str(f.secret/'media'/'writer_token'),'writerScope':'cinematics'}
-        service=WorkflowCinematic(PrivatePlannerClaim(str(db),identity.st_dev,identity.st_ino),
-            writer_factory=lambda:FilexCASTransport(config),readiness=lambda:renderer_ready(marker,schema=READY_SCHEMA))
+        service=impl(PrivatePlannerClaim(str(db),identity.st_dev,identity.st_ino),
+            writer_factory=lambda:FilexCASTransport(config),readiness=lambda:renderer_ready(marker,schema=schema))
         pds=ThreadingHTTPServer(('127.0.0.1',0),PDS)
-        pds.workflow_cinematic=service
+        setattr(pds,at,service)
         worker=threading.Thread(target=pds.serve_forever,daemon=True);worker.start()
         def cleanup():
             pds.shutdown();pds.server_close();worker.join(timeout=3)
         self.addCleanup(cleanup)
         child=subprocess.run(['node',str(DRIVER),str(services),str(db),str(f.root/'inbox'),
-            f'http://127.0.0.1:{pds.server_port}',source],capture_output=True,text=True,timeout=30)
+            f'http://127.0.0.1:{pds.server_port}',source,kind],capture_output=True,text=True,timeout=30)
         self.assertEqual(child.returncode,0,child.stderr)
         proof=json.loads(child.stdout); rn=proof['officialRequestId']
-        png=source+'.png'; suffix=proof['artifactSha256']
-        self.assertEqual((sources/png).read_bytes(),still)
-        self.assertEqual(sha256((root/'results'/(rn+'.mp4')).read_bytes()).hexdigest(),suffix)
-        self.assertEqual(json.loads((root/'results'/(rn+'.json')).read_bytes())['sha256'],suffix)
+        self.assertEqual((sources/(source+'.png')).read_bytes(),still)
         self.assertFalse(list((f.data/'props').iterdir()))
+        if kind=='sequence':
+            path=root/'sequences'/rn
+            manifest=json.loads((path/'manifest.json').read_bytes())
+            self.assertEqual(manifest['frameCount'],45)
+            self.assertEqual(manifest['playback'],proof['playback'])
+            for i,digest in enumerate(proof['hashes']):
+                self.assertEqual(sha256((path/'frames'/f'{i:04d}.png').read_bytes()).hexdigest(),digest)
+            self.assertFalse(list(path.glob('*.mp4')))
+            task,ref='cinematic_sequence_render',f'binari/cinematics/sequences/{rn}/manifest.json'
+        else:
+            suffix=proof['artifactSha256']
+            self.assertEqual(sha256((root/'results'/(rn+'.mp4')).read_bytes()).hexdigest(),suffix)
+            self.assertEqual(json.loads((root/'results'/(rn+'.json')).read_bytes())['sha256'],suffix)
+            task,ref='cinematic_render',f'binari/cinematics/results/{rn}.json'
         with sqlite3.connect(db) as conn:
             self.assertEqual(conn.execute('SELECT task_key,status,result_ref,depends_on_task_id FROM workflow_tasks').fetchall(),
-                             [('cinematic_render','completed',f'binari/cinematics/results/{rn}.json',None)])
+                             [(task,'completed',ref,None)])
             self.assertEqual(conn.execute('SELECT reason FROM workflow_runs').fetchone()[0],'RS_COMPLETED')
 
 
