@@ -17,7 +17,7 @@ const propExit=Object.freeze({
  33:'PROP_DERIVATION_MATTE_BACKEND',34:'PROP_DERIVATION_INITIAL_MASK_EMPTY',
  35:'PROP_DERIVATION_TRACKER_FRAME_SET',36:'PROP_DERIVATION_INPUT_CHANGED',
  37:'PROP_DERIVATION_APNG_ENCODE',38:'PROP_DERIVATION_PIXEL_FOREGROUND',
- 39:'PROP_DERIVATION_STATIC_NATIVE_ALPHA_REQUIRED',40:'PROP_DERIVATION_STATIC_SOURCE_PNG_INVALID',
+ 39:'PROP_DERIVATION_STATIC_NATIVE_ALPHA_REQUIRED',40:'PROP_DERIVATION_STATIC_SOURCE_PNG_INVALID',41:'PROP_DERIVATION_CHROMA_FRAME',42:'PROP_DERIVATION_RENDER_PROFILE',
 });
 const visible=new Set([...Object.values(propExit),'PROP_DERIVATION_RENDER_START','PROP_DERIVATION_RENDER_ABORTED',
  'PROP_DERIVATION_RENDER_TIMEOUT','PROP_DERIVATION_RENDER_OUTPUT']);
@@ -76,8 +76,9 @@ export async function createPropDerivationRenderer({configPath,modelPinsPath,wor
 // The fixture can replace only the external renderer boundary. It does not
 // bypass claim, source, individual file, manifest, or output checks.
 export async function renderPropInScratch(job,binding,{root,signal,execute}){
- const {source,canvas,buffers,frames,media,frameDurationsMs}=job;
- const spec={kind:binding.role,canvas,frameDurationsMs,sourceHash:source.resultRef.slice(-64)};
+ const {source,canvas,buffers,frames,media,frameDurationsMs,renderProfile}=job;
+ const spec={kind:binding.role,canvas,frameDurationsMs,sourceHash:source.resultRef.slice(-64),
+  ...(renderProfile?{renderProfile}:{})};
  if(binding.role==='pixel'){
   spec.media=media;
   await writeFile(join(root,'source.png'),buffers[0],{mode:0o600,flag:'wx'});

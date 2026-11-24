@@ -154,8 +154,41 @@ def trustworthy_static_rgba(raw,size):
 
 
 
+CANDLE_CHROMA_PROFILE = 'candle-chroma-headroom-v1'
+
+
+def connected_candle_chroma(image):
+    # Runtime uses its pinned Pillow/NumPy/OpenCV stack. No learned model.
+    import cv2
+    import numpy as np
+    check(image.mode=='RGB' and image.size==(512,352),'PROP_DERIVATION_CHROMA_FRAME')
+    rgb=np.array(image,dtype=np.uint8)
+    r,g,b=rgb.astype(np.int32).transpose(2,0,1)
+    excess=g-np.maximum(r,b)
+    candidate=(g>=64)&(excess>=14)&(100*excess>=20*g)
+    count,labels=cv2.connectedComponents(candidate.astype(np.uint8),connectivity=4)
+    border=np.concatenate((labels[0],labels[-1],labels[1:-1,0],labels[1:-1,-1]))
+    exterior=np.zeros(count,dtype=bool)
+    exterior[border]=True;exterior[0]=False
+    keyed=exterior[labels]
+    alpha=np.full(rgb.shape[:2],255,dtype=np.uint8)
+    alpha[keyed]=np.clip(((105-excess)*255)//91,0,255)[keyed].astype(np.uint8)
+    # Refuse inconsistent/missing green backing rather than use a learned matte.
+    check(np.count_nonzero(alpha==0)>=alpha.size//100 and np.count_nonzero(alpha==255)>=alpha.size//100,
+          'PROP_DERIVATION_CHROMA_FRAME')
+    rgba=np.dstack((rgb,alpha))
+    edge=keyed&(alpha>0)
+    rgba[:,:,1][edge]=np.minimum(g,np.maximum(r,b)+12)[edge].astype(np.uint8)
+    rgba[alpha==0,:3]=0
+    return Image.fromarray(rgba)
+
+
 def process(root,spec,matte):
     media=spec.get('media')
+    use_chroma='renderProfile' in spec
+    if use_chroma:
+        check(spec['renderProfile']==CANDLE_CHROMA_PROFILE and spec.get('kind')=='detail' and
+              media is None and len(spec.get('frameDurationsMs',()))>=2,'PROP_DERIVATION_RENDER_PROFILE')
     if media is not None:
         check(spec['kind']=='pixel')
         payload=(root/'source.png').read_bytes()
@@ -197,6 +230,15 @@ def process(root,spec,matte):
             raise ValueError('PROP_DERIVATION_STATIC_SOURCE_PNG_INVALID') from None
         check(native is not None,'PROP_DERIVATION_STATIC_NATIVE_ALPHA_REQUIRED')
         images=[native]
+    elif use_chroma:
+        images=[]
+        for source in original:
+            try:
+                with Image.open(io.BytesIO(source)) as im:
+                    frame=connected_candle_chroma(im)
+            except Exception:
+                raise ValueError('PROP_DERIVATION_CHROMA_FRAME') from None
+            images.append(cleared(fit(frame,size)))
     else:
         try:
             mattes=matte(root,paths,spec['sourceHash'])
@@ -241,6 +283,8 @@ _EXIT={
     'PROP_DERIVATION_PIXEL_FOREGROUND':38,
     'PROP_DERIVATION_STATIC_NATIVE_ALPHA_REQUIRED':39,
     'PROP_DERIVATION_STATIC_SOURCE_PNG_INVALID':40,
+    'PROP_DERIVATION_CHROMA_FRAME':41,
+    'PROP_DERIVATION_RENDER_PROFILE':42,
 }
 
 

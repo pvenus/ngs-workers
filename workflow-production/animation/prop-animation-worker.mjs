@@ -75,7 +75,7 @@ export const propAnimationPorts=local=>({
  asset:(claim,signal)=>local(propStagePath+'/asset',{body:{claim,purpose:'input',index:null},signal,binary:true,maxBinaryBytes:maxImageBytes}),
  write:(claim,artifact)=>local(propStagePath,{body:{claim,artifact},timeout:180000,maxJsonBytes:4096}),
 });
-export async function executePropAnimation(db,t,signal,{ports,renderer,
+export async function executePropAnimation(db,t,signal,{ports,renderer,prepareInput,
  makeDir=()=>mkdtemp(join(tmpdir(),'workflow-prop-i2v-')),cleanup=dir=>rm(dir,{recursive:true,force:true})}){
  if(signal.aborted)return {state:'stale',taskId:t.taskId};
  const found=claimPropAnimation(db,t);
@@ -88,7 +88,9 @@ export async function executePropAnimation(db,t,signal,{ports,renderer,
  let dir,stage='read',result,unknownStop=false;
  try{
   const r=await ports.read(claim,signal),media=r?.media;
-  require(exactProp(r,['package','media','motionPrompt'])&&canonical(r.package)===canonical(p.source)&&r.motionPrompt===p.prompt&&
+  const profile=Object.hasOwn(p,'renderProfile')?p.renderProfile:null;
+  require(exactProp(r,['package','media','motionPrompt',...(profile?['renderProfile']:[])])&&
+   (!profile||r.renderProfile===profile)&&canonical(r.package)===canonical(p.source)&&r.motionPrompt===p.prompt&&
    exactProp(media,['assetId','sha256','bytes','width','height','mediaType','frameDurationsMs'])&&propHash(media.sha256)&&
    media.assetId===media.sha256+'.png'&&media.mediaType==='image/png'&&Array.isArray(media.frameDurationsMs)&&media.frameDurationsMs.length===0&&
    Number.isSafeInteger(media.bytes)&&media.bytes>=57&&media.bytes<=maxImageBytes&&
@@ -97,9 +99,19 @@ export async function executePropAnimation(db,t,signal,{ports,renderer,
   require(source.length===media.bytes&&sha(source)===media.sha256&&shape.width===media.width&&shape.height===media.height,'PROP_I2V_SOURCE_BYTES');
   dir=await makeDir();
   signal.throwIfAborted();tx(db,current);
+  let prepared=source;
+  if(profile){
+   stage='prepare';
+   require(typeof prepareInput==='function','PROP_I2V_FRAMING_UNAVAILABLE');
+   prepared=await prepareInput({dir,source,renderProfile:profile,signal});
+   const framed=png(prepared,maxImageBytes,{rgb:true});
+   require(framed.width===512&&framed.height===352,'PROP_I2V_FRAMING_GEOMETRY');
+   signal.throwIfAborted();tx(db,current);
+  }
   stage='render';
-  const output=await renderer.render({dir,source,motionPrompt:p.prompt,signal});
+  const output=await renderer.render({dir,source:prepared,motionPrompt:p.prompt,signal});
   stage='validate';
+  require(!profile||output.width===512&&output.height===352,'PROP_I2V_FRAMING_GEOMETRY');
   const {artifact,resultRef}=propI2VRGBStage(output,{...t,propId:p.propId,sourceSha256:media.sha256,detailCanvas:shape});
   signal.throwIfAborted();tx(db,current);
   stage='write';

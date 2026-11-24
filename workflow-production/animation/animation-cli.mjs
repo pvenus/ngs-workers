@@ -13,6 +13,7 @@ import {createAnimationModelSwitch} from './i2v-model-switch.mjs';
 import {choosePropAnimation,executePropAnimation,propAnimationPorts} from './prop-animation-worker.mjs';
 import {confirmBindingPath,defaultPropBinding,propAnimationReadiness,cinematicAnimationReadiness} from './prop-animation-readiness.mjs';
 import {chooseCinematic,executeCinematic,cinematicPorts} from './cinematic-worker.mjs';
+import {createPropI2VInputFraming} from './prop-i2v-input-framing.mjs';
 import {probeCutsceneEncoder} from './cutscene-i2v.mjs';
 import {WAN_I2V_MODEL_ID,WAN_I2V_QUANTIZATION} from './i2v-wan-graph.mjs';
 import {choosePresetFrames,executePresetFrames,presetFramePorts} from './preset-frame-worker.mjs';
@@ -284,12 +285,14 @@ if(process.argv[1]===fileURLToPath(import.meta.url)){
  // enables I2V only with the exact A14B high/low Q4_K_M pair and Wan 2.1 VAE.
  const override=process.env.WORKFLOW_I2V_A14B_BINDING;
  const a14bBinding=override??defaultPropBinding;
- let i2vModel;
+ let i2vModel,preparePropInput;
  try{
   insist(a14bBinding.startsWith('/'),'I2V_BINDING_INVALID');
   if(!override)await confirmBindingPath(a14bBinding);
   const {readWanI2VBinding,createWanI2V}=await import('./i2v-wan.mjs');
-  i2vModel=createWanI2V({binding:await readWanI2VBinding(a14bBinding)});
+  const binding=await readWanI2VBinding(a14bBinding);
+  i2vModel=createWanI2V({binding});
+  preparePropInput=createPropI2VInputFraming(binding.python);
  }catch(e){
   if(override||e?.code!=='ENOENT')console.error(JSON.stringify({state:'not_ready',code:'I2V_BINDING_INVALID'}));
  }
@@ -325,7 +328,7 @@ if(process.argv[1]===fileURLToPath(import.meta.url)){
     modelSlot.assertKnown();
     insist(await prop.ready(signal),'PROP_I2V_PDS_UNAVAILABLE');
     signal.throwIfAborted();
-    const result=await executePropAnimation(db,propTask,signal,{ports:prop,renderer:{render:job=>modelSlot.runI2V(job)}});
+    const result=await executePropAnimation(db,propTask,signal,{ports:prop,prepareInput:preparePropInput,renderer:{render:job=>modelSlot.runI2V(job)}});
     if(result.state==='completed')console.log(JSON.stringify(result));
     else if(result.state!=='stale')console.error(JSON.stringify(result));
     if(result.rendererStop==='unknown')await invalidateReady();

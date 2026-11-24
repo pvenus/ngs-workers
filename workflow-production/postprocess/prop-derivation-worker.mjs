@@ -49,7 +49,8 @@ function selected(db,taskId,officialRequestId,status,stamp){
   if(!geometry||geometry.status!=='completed')return null;
   check(exactPropTask(geometry,required)&&isPropRef(required.key,geometry.result_ref));
  }
- return {row,task,target,parent,source,geometry,role:roles[target.key],animated:lane(target.key)};
+ return {row,task,target,parent,source,geometry,role:roles[target.key],animated:lane(target.key),
+  renderProfile:target.key===propKeys.animDetail?(payload.renderProfile??null):null};
 }
 function imageDescriptor(row,animated){
  check(exactProp(row,['assetId','sha256','bytes','width','height','mediaType','frameDurationsMs'])&&
@@ -79,11 +80,12 @@ function frozenRef(value,expected){
 }
 
 export async function preparePropDerivation(pds,binding,{signal}={}){
- const {role,animated}=binding;
+ const {role,animated,renderProfile}=binding;
  const dto=await pds.readPropDerivation(binding,{signal});
  const mediaInput=!animated||role==='pixel';
  const geometryProof=animated?'geometry':null;
- check(exactProp(dto,['source',mediaInput?'media':'manifest','canvas',...(geometryProof?[geometryProof]:[])]));
+ check(exactProp(dto,['source',mediaInput?'media':'manifest','canvas',...(geometryProof?[geometryProof]:[]),
+  ...(renderProfile?['renderProfile']:[])])&&(!renderProfile||dto.renderProfile===renderProfile),'PROP_DERIVATION_RENDER_PROFILE');
  const source=frozenRef(dto.source,binding.source);
  const limit=role==='pixel'?512:2048;
  check(dimensions(dto.canvas,limit),'PROP_DERIVATION_CANVAS');
@@ -128,6 +130,7 @@ export async function preparePropDerivation(pds,binding,{signal}={}){
     manifest.schemaVersion==='ngs.prop-native-rgb-sequence.v1'&&manifest.officialRequestId===binding.claim.officialRequestId&&
     manifest.taskId===binding.source.taskId&&manifest.propId===binding.propId&&
     dimensions({width:manifest.width,height:manifest.height},2048)&&
+    (!renderProfile||manifest.width===512&&manifest.height===352)&&
     sha(canonical(manifest))===source.resultRef.slice(-64),'PROP_DERIVATION_RGB_MANIFEST');
  const d=timing(manifest.frameDurationsMs,true);
  check(Array.isArray(manifest.frames)&&manifest.frames.length===d.length&&manifest.width*manifest.height*d.length<=MAX_PIXELS&&
@@ -141,7 +144,7 @@ export async function preparePropDerivation(pds,binding,{signal}={}){
   signal?.throwIfAborted();
   buffers.push(assetBytes(await pds.fetchPropDerivationAsset(binding,f,{signal}),f));
  }
- return {source,geometry,canvas:dto.canvas,frameDurationsMs:d,frames,buffers};
+ return {source,geometry,canvas:dto.canvas,frameDurationsMs:d,frames,buffers,...(renderProfile?{renderProfile}:{})};
 }
 
 export function nextPropDerivationFromPath(dbPath,{stillOnly=false,appendEnabled=false}={}){
@@ -191,7 +194,7 @@ export async function runPropDerivationFromPath({dbPath,officialRequestId,taskId
    const ref=r=>Object.freeze({taskId:r.task_id,resultRef:r.result_ref});
    return {x,binding:Object.freeze({claim:Object.freeze({officialRequestId,taskId,projectId:x.row.project_id,
     payloadSha256:x.row.payload_sha256,claimStamp:stamp}),propId:x.target.input.propId,key:x.target.key,
-    role:x.role,animated:x.animated,source:ref(x.source),geometry:x.geometry?ref(x.geometry):null,
+    role:x.role,animated:x.animated,renderProfile:x.renderProfile,source:ref(x.source),geometry:x.geometry?ref(x.geometry):null,
     package:x.target.input.source?Object.freeze({...x.target.input.source}):null})};
   });
   if(!attempt)return {state:'not_claimable',taskId};

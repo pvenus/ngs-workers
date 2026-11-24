@@ -90,3 +90,14 @@ coverage and transparent background/corners/border; an alpha header alone
 does not qualify. An invalid static cutout fails explicitly and is never
 rematted. Pixel output still uses the verified detail. The installed matting
 model is used only for animated prop detail; NPC matting is unchanged.
+
+## Scoped candle chroma profile
+
+The exact formal candle append profile checks agreement between the full
+claim-bound payload and PDS read response before reading or keying its raw 512×352
+RGB frames. Only edge-connected green becomes transparent; the warm flame,
+opaque non-green pixels, and isolated green pockets are never selected by the
+key. There is no tracking/matting retry or fallback for this request. A frame
+without meaningful green backing or remaining foreground is rejected.
+The APNG frame timings and existing detail/pixel projection remain unchanged.
+The original static package stays immutable.

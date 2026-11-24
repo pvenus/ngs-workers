@@ -41,8 +41,12 @@ export function validatePropRegenerate(v,project){
  if(Object.hasOwn(v,'motion')&&!['still','subtle'].includes(v.motion)||!clean(v.intent,4000)||!propHash(v.designContextSha256))throw Error(propGenerateInvalid);
  return stable(v);
 }
+export const candleChromaProfile='candle-chroma-headroom-v1';
+export const candleChromaPropId='candle-brass-petal-unlit-clean';
 export function validatePropAnimation(v,project){
- validateMutation(v,project,animationFields,propAnimationSchema);
+ const hasProfile=Object.hasOwn(v??{},'renderProfile');
+ validateMutation(v,project,hasProfile?[...animationFields,'renderProfile']:animationFields,propAnimationSchema);
+ if(hasProfile&&(v.renderProfile!==candleChromaProfile||v.propId!==candleChromaPropId))throw Error(propGenerateInvalid);
  if(!slug(v.motionId)||!clean(v.prompt,2000)||/\bembedding:/iu.test(v.prompt))throw Error(propGenerateInvalid);
  return stable(v);
 }
@@ -52,5 +56,8 @@ export const propRegeneratePayloadSchema={type:'object',properties:{...propGener
  schemaVersion:{const:propRegenerateSchema},source:sourceSchema},required:regenerateFields,additionalProperties:false};
 export const propAnimationPayloadSchema={type:'object',properties:{schemaVersion:{const:propAnimationSchema},projectId:{const:'binari'},
  propId:propGeneratePayloadSchema.properties.propId,source:sourceSchema,motionId:propGeneratePayloadSchema.properties.propId,
- prompt:{type:'string',minLength:1,maxLength:2000}},required:animationFields,additionalProperties:false};
+ prompt:{type:'string',minLength:1,maxLength:2000},renderProfile:{const:candleChromaProfile}},
+ required:animationFields,additionalProperties:false,allOf:[
+  {if:{required:['renderProfile']},then:{properties:{propId:{const:candleChromaPropId}}}}
+ ]};
 export const propValidator=Object.freeze({[propGenerateType]:validatePropGenerate,[propRegenerateType]:validatePropRegenerate,[propAnimationType]:validatePropAnimation});
