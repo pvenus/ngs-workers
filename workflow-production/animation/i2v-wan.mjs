@@ -5,42 +5,42 @@ import {access,lstat,open,realpath,mkdir,symlink,writeFile,readFile,readdir} fro
 import {basename,dirname,isAbsolute,join} from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {setTimeout as sleep} from 'node:timers/promises';
-import {buildWanI2VGraph,WAN_I2V_MODEL,WAN_I2V_MODEL_SHA256,WAN_I2V_ENCODER,WAN_I2V_VAE,
+import {buildWanI2VGraph,WAN_I2V_MODEL_ID,WAN_I2V_QUANTIZATION,WAN_I2V_HIGH,WAN_I2V_LOW,
+ WAN_I2V_HIGH_SHA256,WAN_I2V_LOW_SHA256,WAN_I2V_ENCODER,WAN_I2V_VAE,WAN_I2V_VAE_SHA256,
  WAN_I2V_INPUT_IMAGE,WAN_I2V_SAVE_NODE,WAN_I2V_SAVE_PREFIX,WAN_I2V_FPS,WAN_I2V_LENGTH} from './i2v-wan-graph.mjs';
 import {png,maxBundleBytes,maxFrameBytes,maxImageBytes} from './i2v-worker.mjs';
 
-const schema='ngs.animation-i2v-int8-binding.v1';
+export const wanI2VBindingSchema='ngs.animation-i2v-a14b-q4km-binding.v1';
 const bindingKeys='comfyRoot,ggufNodesRoot,modelsRoot,python,schemaVersion';
-export const wanCheckpoint=WAN_I2V_MODEL;
-export const wanCheckpointSha256=WAN_I2V_MODEL_SHA256;
-const pins=[
- ['diffusion_models',wanCheckpoint,wanCheckpointSha256],
- ['text_encoders',WAN_I2V_ENCODER,'7b8850f1961e1cf8a77cca4c964a358d303f490833c6c087d0cff4b2f99db2af'],
- ['vae',WAN_I2V_VAE,'e40321bd36b9709991dae2530eb4ac303dd168276980d3e9bc4b6e2b75fed156']
-];
+export const wanI2VAssetPins=Object.freeze([
+ Object.freeze(['diffusion_models',WAN_I2V_HIGH,WAN_I2V_HIGH_SHA256,'I2V_A14B_HIGH_EXPERT_MISSING']),
+ Object.freeze(['diffusion_models',WAN_I2V_LOW,WAN_I2V_LOW_SHA256,'I2V_A14B_LOW_EXPERT_MISSING']),
+ Object.freeze(['text_encoders',WAN_I2V_ENCODER,'7b8850f1961e1cf8a77cca4c964a358d303f490833c6c087d0cff4b2f99db2af','I2V_A14B_ENCODER_MISSING']),
+ Object.freeze(['vae',WAN_I2V_VAE,WAN_I2V_VAE_SHA256,'I2V_A14B_VAE_MISSING']),
+]);
 const boot=fileURLToPath(new URL('./i2v-comfy-bootstrap.py',import.meta.url));
-const nodeNames=['UnetLoaderGGUF','Wan22ImageToVideoLatent','CLIPLoader','VAELoader','LoadImage','CLIPTextEncode','ModelSamplingSD3','KSampler','VAEDecode','SaveImage'];
+const nodeNames=['UnetLoaderGGUF','WanImageToVideo','CLIPLoader','VAELoader','LoadImage','CLIPTextEncode','ModelSamplingSD3','KSamplerAdvanced','VAEDecode','SaveImage'];
 const error=(code,rendererJoined=true)=>Object.assign(Error(code),{rendererJoined});
 const need=(cond,code)=>{if(!cond)throw error(code);};
 
 async function regular(p){
  const s=await lstat(p,{bigint:true});
- need(s.isFile()&&(s.mode&0o022n)===0n&&s.uid===BigInt(process.getuid())&&s.size>0n,'I2V_INT8_FILE_INVALID');
+ need(s.isFile()&&(s.mode&0o022n)===0n&&s.uid===BigInt(process.getuid())&&s.size>0n,'I2V_A14B_FILE_INVALID');
  return s;
 }
 export async function readWanI2VBinding(p){
- need(typeof p==='string'&&isAbsolute(p)&&await realpath(p)===p,'I2V_INT8_BINDING_INVALID');
+ need(typeof p==='string'&&isAbsolute(p)&&await realpath(p)===p,'I2V_A14B_BINDING_INVALID');
  const fd=await open(p,constants.O_RDONLY|constants.O_NOFOLLOW|constants.O_NONBLOCK);
  try{
   const stat=await fd.stat();
-  need(stat.isFile()&&stat.uid===process.getuid()&&(stat.mode&0o077)===0&&stat.size>=1&&stat.size<=4096,'I2V_INT8_BINDING_INVALID');
+  need(stat.isFile()&&stat.uid===process.getuid()&&(stat.mode&0o077)===0&&stat.size>=1&&stat.size<=4096,'I2V_A14B_BINDING_INVALID');
   const b=Buffer.alloc(4097),read=await fd.read(b,0,4097,0);
-  need(read.bytesRead===stat.size,'I2V_INT8_BINDING_INVALID');
+  need(read.bytesRead===stat.size,'I2V_A14B_BINDING_INVALID');
   const v=JSON.parse(new TextDecoder('utf-8',{fatal:true}).decode(b.subarray(0,read.bytesRead)));
-  need(v&&typeof v==='object'&&!Array.isArray(v)&&Object.keys(v).sort().join(',')===bindingKeys&&v.schemaVersion===schema,
-   'I2V_INT8_BINDING_INVALID');
+  need(v&&typeof v==='object'&&!Array.isArray(v)&&Object.keys(v).sort().join(',')===bindingKeys&&v.schemaVersion===wanI2VBindingSchema,
+   'I2V_A14B_BINDING_INVALID');
   for(const k of ['comfyRoot','ggufNodesRoot','modelsRoot','python'])
-   need(typeof v[k]==='string'&&isAbsolute(v[k])&&await realpath(dirname(v[k]))===dirname(v[k]),'I2V_INT8_BINDING_INVALID');
+   need(typeof v[k]==='string'&&isAbsolute(v[k])&&await realpath(dirname(v[k]))===dirname(v[k]),'I2V_A14B_BINDING_INVALID');
   return Object.freeze(v);
  } finally{await fd.close();}
 }
@@ -49,7 +49,7 @@ export async function requireGgufHeader(fd){
  const buf=Buffer.alloc(24);
  need((await fd.read(buf,0,buf.length,0)).bytesRead===24&&buf.toString('ascii',0,4)==='GGUF'&&
   buf.readUInt32LE(4)===3&&buf.readBigUInt64LE(8)>=1n&&buf.readBigUInt64LE(8)<=100000n&&
-  buf.readBigUInt64LE(16)>=1n&&buf.readBigUInt64LE(16)<=10000n,'I2V_INT8_GGUF_HEADER_INVALID');
+  buf.readBigUInt64LE(16)>=1n&&buf.readBigUInt64LE(16)<=10000n,'I2V_A14B_GGUF_HEADER_INVALID');
 }
 export async function verifyI2VFile(path,digest,{gguf=false,cache=new Map()}={}){
  const first=await regular(path);
@@ -58,12 +58,12 @@ export async function verifyI2VFile(path,digest,{gguf=false,cache=new Map()}={})
  if(cache.get(path)===digest+':'+gguf+':'+token)return;
  const fd=await open(path,constants.O_RDONLY|constants.O_NOFOLLOW|constants.O_NONBLOCK);
  try{
-  need(stamp(await fd.stat({bigint:true}))===token,'I2V_INT8_FILE_CHANGED');
+  need(stamp(await fd.stat({bigint:true}))===token,'I2V_A14B_FILE_CHANGED');
   if(gguf)await requireGgufHeader(fd);
   const hash=createHash('sha256');
   for await(const part of createReadStream(path,{fd:fd.fd,autoClose:false,start:0,highWaterMark:2**20}))hash.update(part);
-  need(hash.digest('hex')===digest,'I2V_INT8_CHECKPOINT_HASH_INVALID');
-  need(stamp(await fd.stat({bigint:true}))===token&&stamp(await regular(path))===token,'I2V_INT8_FILE_CHANGED');
+  need(hash.digest('hex')===digest,'I2V_A14B_CHECKPOINT_HASH_INVALID');
+  need(stamp(await fd.stat({bigint:true}))===token&&stamp(await regular(path))===token,'I2V_A14B_FILE_CHANGED');
   cache.set(path,digest+':'+gguf+':'+token);
  }finally{await fd.close();}
 }
@@ -75,9 +75,9 @@ async function canonicalDirectory(p,code){
  }catch{throw error(code);}
 }
 export async function verifyWanI2V(binding,cache){
- need(binding&&Object.keys(binding).sort().join(',')===bindingKeys&&binding.schemaVersion===schema,'I2V_INT8_BINDING_INVALID');
+ need(binding&&Object.keys(binding).sort().join(',')===bindingKeys&&binding.schemaVersion===wanI2VBindingSchema,'I2V_A14B_BINDING_INVALID');
  await canonicalDirectory(binding.comfyRoot,'I2V_COMFY_RUNTIME_MISSING');
- await canonicalDirectory(binding.modelsRoot,'I2V_INT8_MODELS_ROOT_MISSING');
+ await canonicalDirectory(binding.modelsRoot,'I2V_A14B_MODELS_ROOT_MISSING');
  await canonicalDirectory(binding.ggufNodesRoot,'I2V_GGUF_LOADER_MISSING');
  try{await access(binding.python,constants.X_OK);await regular(join(binding.comfyRoot,'main.py'));}
  catch{throw error('I2V_COMFY_RUNTIME_MISSING');}
@@ -92,10 +92,16 @@ export async function verifyWanI2V(binding,cache){
   need(modes.length===1,'I2V_GGUF_DEPENDENCY_MISSING');
   await regular(join(lib,modes[0].name,'site-packages','gguf','__init__.py'));
  }catch{throw error('I2V_GGUF_DEPENDENCY_MISSING');}
- for(const [folder,file,digest] of pins){
-  const abs=join(binding.modelsRoot,folder,file);
-  try{await verifyI2VFile(abs,digest,{gguf:file===wanCheckpoint,cache});}
-  catch(e){if(e.code==='ENOENT')throw error(file===wanCheckpoint?'I2V_INT8_CHECKPOINT_MISSING':'I2V_SUPPORTING_ASSET_MISSING');throw e;}
+ // Detect missing/invalid assets before spending time hashing any large model.
+ for(const folder of new Set(wanI2VAssetPins.map(([name])=>name)))
+  await canonicalDirectory(join(binding.modelsRoot,folder),'I2V_A14B_MODEL_DIRECTORY_INVALID');
+ for(const [folder,file,,missing] of wanI2VAssetPins){
+  try{await regular(join(binding.modelsRoot,folder,file));}
+  catch(e){if(e.code==='ENOENT')throw error(missing);throw e;}
+ }
+ for(const [folder,file,digest,missing] of wanI2VAssetPins){
+  try{await verifyI2VFile(join(binding.modelsRoot,folder,file),digest,{gguf:folder==='diffusion_models',cache});}
+  catch(e){if(e.code==='ENOENT')throw error(missing);throw e;}
  }
 }
 
@@ -166,22 +172,22 @@ export function createWanI2V({binding,ports={}}){
  return {
   async probe(){
    await verify(binding,cache); // Local file/header/digest verification only, no inference.
-   return {ready:true,model:'wan2.2-ti2v-5b',quantization:'q8_0',fps:i2vWanFps,frames:i2vWanFrames};
+   return {ready:true,model:WAN_I2V_MODEL_ID,quantization:WAN_I2V_QUANTIZATION,fps:i2vWanFps,frames:i2vWanFrames};
   },
   async render({dir,source,motionPrompt,signal}){
    if(busy||unsafe)throw error('I2V_MODEL_OWNERSHIP_UNKNOWN',false);
    busy=true;
    let state;
    try{
-    const timeout=AbortSignal.any([signal,AbortSignal.timeout(15*60_000)]);
+    const timeout=AbortSignal.any([signal,AbortSignal.timeout(30*60_000)]);
     timeout.throwIfAborted();
     const shape=resolution(png(source,maxImageBytes));
     await verify(binding,cache);
     const scratch=await realpath(dir);
     const engine=join(scratch,'i2v-comfy'),models=join(engine,'models'),custom=join(engine,'custom_nodes'),input=join(engine,'input'),out=join(engine,'output');
     for(const p of [engine,models,custom,input,out])await mkdir(p,{mode:0o700});
-    for(const [folder,file] of pins){
-     await mkdir(join(models,folder),{mode:0o700});
+    for(const folder of new Set(wanI2VAssetPins.map(([name])=>name)))await mkdir(join(models,folder),{mode:0o700});
+    for(const [folder,file] of wanI2VAssetPins){
      await symlink(join(binding.modelsRoot,folder,file),join(models,folder,file));
     }
     await symlink(binding.ggufNodesRoot,join(custom,'ComfyUI-GGUF'));

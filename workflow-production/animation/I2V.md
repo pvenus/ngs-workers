@@ -1,87 +1,65 @@
 # 단일 이미지 기반 애니메이션 (I2V)
 
-이 단계는 동작 프리셋 기반 NPC 영상 경로와 별개입니다. 영상 합성기는 PNG 한 장과 동작 지시를 받아 고정 카메라의 짧은 결과 한 개를 만듭니다. 경로, 실행 명령, 모델 이름, 영상 길이, 해상도, 후보 개수는 요청하지 않습니다.
+현 승인 공급자는 **Wan2.2 I2V-A14B Q4_K_M만**입니다. 시네마틱과 프랍 모두
+같은 상주 애니메이션 워커의 같은 I2V 선택을 사용하고, 별도 옵션으로 활성화된 독립
+`animation.i2v` 요청도 동일 모델을 사용합니다. 기존 NPC의 Wan Animate는 별도의
+동작 프리셋 경로로 그대로 유지합니다.
 
-## 워크플로 연결
+## 설정·고정된 자산
 
-- 승인된 요청: `animation.i2v` / `ngs.animation-i2v.v1`
-- 본문: `{schemaVersion,projectId:"binari",sourceRef:{assetId,sha256},motionPrompt}`
-- 소스: `assetId === sha256 + ".png"`. 해시가 같아도 PDS가 해당 프로젝트에서 읽을 수 있다고 확인한 PNG만 허용합니다.
-- 단계: `animation_i2v`, 타입 `animation.i2v`, 워커 `animation`. 단계 ID는 공식 요청과 키에 묶이며 이 버전의 독립 요청에서 선행 단계는 없습니다.
-- PDS: `/v1/animations/ownership/workflow-i2v` 활성 기능 확인, `/read` → 정식 작업 클레임에 한정한 자산 연결, `/asset` → 원본 PNG, 같은 루트 POST → 검증한 프레임 묶음 게시. 워커는 PDS를 우회해 Filex를 열지 않습니다.
-- 최종 `result_ref`: `binari/animations/i2v/<officialRequestId>/manifest.json`. 정확한 저장 응답을 받은 경우에만 단계가 완료됩니다. POST 이후 응답 또는 DB 확정이 불명확하면 이미 게시됐을 수 있으므로 자동 실패/생성 재실행으로 바꾸지 않습니다.
-- 조합하려면 후속 단계에서 이 정확한 단계 ID의 완료 및 해당 결과 레퍼런스를 선행 조건으로, PDS에서 같은 요청의 매니페스트/해시를 확인합니다. 폴더명·임의 URL만 입력받지 않으며, 현재 독립 요청 외 다른 루트 계약은 해당 그래프에 등록할 때 추가합니다. 공식 단계 선택은 이미 운영 중인 코드 기반 Planner를 따릅니다. 라야 등록이나 호출을 다시 넣지 않습니다.
+- 기본 소유자 전용 바인딩 파일은 `~/Workspaces/Workers/runtime/prop-animation/i2v-a14b-binding.json`입니다 (부모 0700, 파일 0600).
+- 운영자가 다른 승인 경로가 필요한 경우에만 `WORKFLOW_I2V_A14B_BINDING`에 절대 경로를 둡니다. 단독 `animation.i2v` 경로는 이 명시적 바인딩이 있고 해당 PDS 계약이 지원되는 경우에만 활성화됩니다. 기존 5B 바인딩은 읽지 않으며 다른 모델로 대체하지 않습니다.
+- 구조: `{schemaVersion:"ngs.animation-i2v-a14b-q4km-binding.v1",comfyRoot,python,ggufNodesRoot,modelsRoot}`.
+  사용자 요청은 경로·모델·LoRA·프레임 설정을 지정할 수 없습니다.
+- 모든 자산은 정규화된 소유자 경로, 고정 파일명 및 정확한 SHA-256으로 검증합니다.
+  두 전문가 파일 모두 GGUF v3 헤더가 필요합니다. 한 파일이라도 빠지거나 바이트가 다르면 준비 표시는 발행되지 않으며 모델은 시작하지 않습니다.
 
-## 모델 전환과 안전
+| `modelsRoot` 아래 승인 파일 | SHA-256 |
+| --- | --- |
+| [diffusion_models/Wan2.2-I2V-A14B-HighNoise-Q4_K_M.gguf](https://huggingface.co/QuantStack/Wan2.2-I2V-A14B-GGUF/blob/3410ece6272f4db4fcc2f8fbb38bd50add5b3c5e/HighNoise/Wan2.2-I2V-A14B-HighNoise-Q4_K_M.gguf) | `836250abfaa3411694e2c9cf3a0cc18265329d5156d81aa116d5366b0f8f02e7` |
+| [diffusion_models/Wan2.2-I2V-A14B-LowNoise-Q4_K_M.gguf](https://huggingface.co/QuantStack/Wan2.2-I2V-A14B-GGUF/blob/main/LowNoise/Wan2.2-I2V-A14B-LowNoise-Q4_K_M.gguf) | `e2f98d834af009d035c6b0918268f2eba0aa8a63025ce942277e2384d40b0866` |
+| text_encoders/umt5_xxl_fp16.safetensors (기존 검증본 재사용) | `7b8850f1961e1cf8a77cca4c964a358d303f490833c6c087d0cff4b2f99db2af` |
+| [vae/wan_2.1_vae.safetensors](https://huggingface.co/Comfy-Org/Wan-2.2/blob/main/split_files/vae/wan_2.1_vae.safetensors) | `2fc39d31359a4b0a64f55876d8ff7fa8d780956ae2cb13463b0223e15148976b` |
 
-- `WORKFLOW_I2V_BINDING` 미설정이면 기존 Wan/NPC 실행만 작동합니다. 설정을 못 읽거나 PDS/설치 사전 점검이 실패하면 I2V는 클레임 전 대기합니다.
-- 같은 resident animation worker에서 순차 실행합니다. Wan이 남아 있으면 즉시 정식 unload 명령을 요청해 **엔진 그룹 부재 + helper 종료**를 확인한 뒤에만 Wan2.2 TI2V-5B Q8_0를 시작합니다. I2V는 작업당 소유 프로세스 그룹으로 켜고 작업을 끝낼 때 해당 그룹을 종료/확인합니다. 프로세스 종료를 증명할 수 없으면 이 워커는 어느 모델도 다시 시작하지 않습니다.
-- 인수한 모델이 없는 경우가 명확하거나 모든 소유 프로세스가 내려간 실행 전/중 오류는 일반 태스크 실패로 기록합니다. 종료 미확정은 작업을 `running`으로 보존해 다시 실행되는 것을 막습니다.
-- 보장은 이 워커의 생존 세션과 자신이 소유한 프로세스 그룹에 한정됩니다. 외부 수동 모델을 관리하거나 중지하지 않습니다. 런처 전체 강제 종료/재시작으로 소유 증거가 사라지면 기존 프로세스가 없는지 운영자가 확인해야 합니다.
-- 로컬 Mac에서 현재 사용하던 Comfy 자체와 UMT5 FP16 **텍스트 인코더**는 확인했습니다. 후보의 영상 생성 백본은 명시적으로 Q8_0 정수 양자화 GGUF 하나만 쓰며, BF16/FP8 영상 모델로 대체하지 않습니다. GGUF은 저장 가중치를 정수 양자화하는 것이며 Apple GPU가 모든 연산에서 INT8 커널을 쓴다는 뜻은 아닙니다.
-- [실제 Q8_0 후보](https://huggingface.co/QuantStack/Wan2.2-TI2V-5B-GGUF/blob/57437632ddd08bdcbd1508c866aa22e126ed51d2/Wan2.2-TI2V-5B-Q8_0.gguf), [Wan2.2 VAE](https://huggingface.co/Comfy-Org/Wan-2.2/blob/main/split_files/vae/wan2.2_vae.safetensors), [ComfyUI-GGUF](https://github.com/city96/ComfyUI-GGUF)가 해당 Mac에 설치되지 않아 실제 추론은 실행하지 않았습니다. 신뢰된 경로/체크포인트 해시·GGUF 헤더 및 필요한 그래프 노드를 확인하기 전에는 렌더할 수 없습니다.
-- [공식 Comfy의 TI2V 그래프](https://docs.comfy.org/tutorials/video/wan/wan2_2)를 사용하되, 고정 Q8_0 로더와 실제 PNG 이미지 조건을 연결하고 24 fps × 45프레임(1.875초), 긴 변 512px, RGB PNG 직출로 제한합니다. 원본 비율은 32px 격자/짧은 변 128px 이내에서 근사합니다.
-- 예시 내부 설정 형태: `{schemaVersion:"ngs.animation-i2v-int8-binding.v1",comfyRoot,python,ggufNodesRoot,modelsRoot}`. `modelsRoot`는 `diffusion_models`, `text_encoders`, `vae` 하위 폴더를 사용합니다. 모델/로더는 운영자가 공급해야 하며 이 코드가 설치 또는 다운로드하지 않습니다.
+전문가 2개는 합계 약 19.30GB이며, FP16 텍스트 인코더 및 VAE는 별도입니다.
+GGUF 정수 양자화는 가중치 저장 형식이며, 전체 GPU/CPU 메모리 사용량이나
+추론 속도를 보장하지 않습니다. Wan 2.1 VAE를 기존 5B용 Wan 2.2 VAE로
+대체하면 안 됩니다. 기존 전용 Python/GGUF 노드 환경 및 모델 무결성 검사를
+재사용하지만, 워커는 런타임에 의존성이나 모델을 다운로드하지 않습니다.
 
-## 알파/미리보기
+## 그래프와 독점 슬롯
 
-- 원본 PNG의 알파는 영상 모델의 네이티브 출력 채널이 아닙니다. 본 단계는 디코딩한 8비트 RGB PNG들을 시간순으로 게시하고 매니페스트에 `alpha:"none"`으로 기록합니다. PNG라는 이유로 투명 결과로 표시하지 않습니다.
-- 투명이 필요하면 `animation_i2v` 결과를 입력으로 받은 독립 후처리 단계에서 관심영역/초기 마스크, 전경 분리, 프레임별 투명 영역 및 시간적 안정성을 검증하고 RGBA 결과를 게시합니다. 광원/불꽃만 들어 있는 검정 배경 효과에는 기존 luma 모드를 검토할 수 있지만, 촛대+불꽃 전체를 luma로 자르면 어두운 금속도 손실되므로 동일 공정으로 취급하지 않습니다.
-- 기존 NPC 후처리 API는 NPC·포즈·방향 계약에 묶여 직접 호출할 수 없습니다. 검증된 RGBA 결과가 없으면 원본 투명 정지 이미지를 퍼즐용 대체로 유지합니다.
+[Comfy-Org 14B 공식 I2V 템플릿](https://github.com/Comfy-Org/workflow_templates/blob/main/templates/video_wan2_2_14B_i2v.json)
+(검토한 JSON blob `fa67e98001b457769cd00d567c08c6aabe745e86`)의
+non-turbo 경로를 따릅니다. `WanImageToVideo`로 입력 PNG를 컨디셔닝하고,
+shift 5, CFG 3.5의 Euler/simple 20-step 스케줄을 0–10(HighNoise)과
+10–20(LowNoise)으로 잇습니다. 뒤 단계에서 새 노이즈를 만들지 않습니다.
+출력 프레임은 32픽셀 단위 128–512 크기의 전체 RGB 장면 45장입니다. 출력을
+저장하는 워크플로는 기존 24fps (1.875초)를 유지합니다. 공식 템플릿의 16fps
+표시 속도와 같다고 가정하지 말고 실제 영상의 모션 속도를 확인해야 합니다.
 
-## 소품 파이프라인 연결 검증
+기존 Animate 엔진 그룹 부재 및 helper 종료를 확인한 뒤에만 I2V를 시작하고,
+I2V 엔진 그룹 종료 확인 뒤에만 다음 모델을 허용합니다. 증명이 불확실하면
+어느 모델도 시작하지 않습니다. 모델을 별도로 강제 실행하거나 다른 서비스와
+동시에 실험하는 스크립트는 포함하지 않습니다.
 
-`propI2VRGBStage`는 승인된 `prop_motion` 작업의 RGB 프레임을
-`/v1/props/ownership/workflow-stage`용 매니페스트와 원본 바이트로 변환합니다.
-24fps × 45프레임은 누적 반올림으로 정확히 1,875ms가 되며, 재인코딩하지
-않습니다. 실제 PDS의 순서·해시·RGB 검증을 합성 프레임으로 통과했습니다.
-변환기만으로는 소품 Animation 워커를 시작하거나 요청을 실행하지 않습니다.
+프랍과 시네마틱의 준비 파일은 각각 `prop-animation-ready.json`,
+`cinematic-animation-ready.json`입니다. 두 파일은
+`provider:"wan-i2v-a14b-q4_k_m"`을 쓰고 독립 schema를 유지합니다.
+시네마틱은 ffmpeg/ffprobe도 확인합니다. 30초 갱신, PDS 120초 유효 기간입니다.
+A14B는 Worker와 PDS/RS/Planner의 동일 계약을 함께 준비한 뒤에만 전환합니다.
 
-공급할 독립 런타임의 고정 소스:
+## 산출물
 
-- [QuantStack Q8_0](https://huggingface.co/QuantStack/Wan2.2-TI2V-5B-GGUF/blob/57437632ddd08bdcbd1508c866aa22e126ed51d2/Wan2.2-TI2V-5B-Q8_0.gguf):
-  `57bece983817ab2f957546683bb670f13be7d99022d45674840cd999a050ea8f`,
-  5,400,179,040 bytes.
-- [Comfy-Org Wan2.2 VAE](https://huggingface.co/Comfy-Org/Wan-2.2/blob/8441d066add15eae8d84f42aa6d9c45417973ce6/split_files/vae/wan2.2_vae.safetensors):
-  `e40321bd36b9709991dae2530eb4ac303dd168276980d3e9bc4b6e2b75fed156`.
-- [city96 ComfyUI-GGUF](https://github.com/city96/ComfyUI-GGUF/commit/6ea2651e7df66d7585f6ffee804b20e92fb38b8a):
-  고정 커밋 `6ea2651e7df66d7585f6ffee804b20e92fb38b8a`.
-- 기존 Comfy 런타임 Python을 바꾸지 않고 별도의 Python 환경에
-  [gguf 0.19.0](https://pypi.org/project/gguf/0.19.0/#files),
-  [protobuf 6.33.5](https://pypi.org/project/protobuf/6.33.5/#files)와
-  기존 설치에서 검증된 `sentencepiece`를 준비합니다.
+- **시네마틱**: `cinematic.generate` → 단일 `cinematic_render` →
+  원본 장면의 배경을 그대로 둔 무음 MP4. [계약과 검증](./CUTSCENE-I2V.md).
+- **프랍 모션**: 정식 `prop.animation.generate.raw` → PDS에 원본 RGB →
+  해당 프랍의 별도 후처리/패키지 워크플로. 기존 30M decoded-pixel 예산에
+  맞춰 필요한 경우 원본 프레임 일부를 균등 선택하여 길이와 첫/끝을 보존합니다.
+- **별도 `animation.i2v`**: `ngs.animation-i2v.v1` 요청의 해시/pin을
+  PDS `/v1/animations/ownership/workflow-i2v`에서 검증하고 RGB 묶음을
+  게시합니다. 파일명이나 사용자 URL만 받아 직접 읽지 않습니다.
 
-가중치나 Python 의존성이 공급되지 않으면 I2V 기능을 켜지 않습니다.
-소품의 정적 작업은 이 제한과 독립입니다.
-
-## Official prop animation append
-
-The existing animation resident alone claims the official `prop.animation.generate.raw`
-stage. This requires both a healthy private Q8_0 runtime and the PDS
-`append-animation` admission signal. Nothing starts on a separate service or old
-model. An already-resident Animate session must provide joined shutdown before
-Wan TI2V input is sent, and the TI2V process group must be absent before Animate
-resumes. Only the exact immutable PDS detail PNG and formal prompt enter the
-renderer; the raw result has no alpha. The two ordinary Postprocess tasks create
-same-timing transparent detail/pixel APNGs before final Filex publication; a
-committed raw stage can finish these downstream tasks after the renderer lease
-expires, since no generation is needed.
-
-The private installed binding defaults to
-`~/Workspaces/Workers/runtime/prop-animation/i2v-binding.json`. The runtime
-publishes a short-lived, private readiness status
-`prop-animation-ready.json` in the same directory only after a file/header/hash
-probe, never as evidence of actual inference. It removes that readiness after an
-unknown model stop or ordinary shutdown. No FP8/BF16 diffusion fallback.
-
-The model's native output is 45 RGB frames at 24 fps (1.875 seconds). When the
-pinned detail canvas would exceed the existing per-clip 30 million decoded pixel
-budget, the stage selects evenly spaced exact rendered frames, including both
-endpoints. It maintains the common 1,875 ms duration at both original lane sizes
-without modifying the base stills, increasing budgets or simulating frames.
-E.g. a 1536×1024 detail uses 19 frames.
-
-Verified by the opt-in scratch backend fixture
-`prop-resident-chain.fixture.py WorkerChain.test_actual_worker_append_preserves_original_and_publishes_both_timed_lanes`.
-This uses real claim-bound worker ports, PDS, Filex stores and Postprocess APNG
-encoding/byte checks, with the actual render and segmentation boundaries mocked.
+워커는 산출물과 접수 claim이 정확히 일치하는 PDS 확인을 받은 뒤에만 DB 완료를
+기록합니다. 게시 결과나 모델 프로세스 종료가 불명확할 때 생성 전체를 자동 반복하지
+않습니다.

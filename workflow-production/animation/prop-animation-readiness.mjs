@@ -3,9 +3,10 @@ import {homedir} from 'node:os';
 import {basename,dirname,isAbsolute,join,resolve} from 'node:path';
 import {lstat,realpath,rename,unlink,writeFile} from 'node:fs/promises';
 import {randomUUID} from 'node:crypto';
+import {WAN_I2V_MODEL_ID,WAN_I2V_QUANTIZATION,WAN_I2V_PROVIDER} from './i2v-wan-graph.mjs';
 
 const base=join(homedir(),'Workspaces','Workers','runtime','prop-animation');
-export const defaultPropBinding=join(base,'i2v-binding.json');
+export const defaultPropBinding=join(base,'i2v-a14b-binding.json');
 export const defaultPropReady=join(base,'prop-animation-ready.json');
 export const defaultCinematicReady=join(base,'cinematic-animation-ready.json');
 const code='PROP_ANIMATION_READINESS_PATH';
@@ -19,7 +20,7 @@ async function check(path,leaf='prop-animation-ready.json'){
   require(f.isFile()&&f.nlink===1&&f.uid===process.getuid()&&(f.mode&0o777)===0o600);
  }catch(e){if(e.code!=='ENOENT')throw e;}
 }
-export async function confirmBindingPath(path){await check(path,'i2v-binding.json');}
+export async function confirmBindingPath(path){await check(path,'i2v-a14b-binding.json');}
 
 export function propAnimationReadiness(options){
  return runtimeReadiness(options,defaultPropReady,'prop-animation-ready.json','workflow.prop-animation-renderer-ready.v1');
@@ -42,12 +43,12 @@ function runtimeReadiness({path=undefined,probe,assertKnown,now=Date.now},defaul
    try{
     await check(path,leaf);assertKnown();
     const ready=await probe();
-    require(ready?.ready===true&&ready.model==='wan2.2-ti2v-5b'&&ready.quantization==='q8_0');
+    require(ready?.ready===true&&ready.model===WAN_I2V_MODEL_ID&&ready.quantization===WAN_I2V_QUANTIZATION);
     assertKnown();require(!closed);
     const checkedAt=now();require(Number.isSafeInteger(checkedAt)&&checkedAt>0);
     stage=join(dirname(path),'.animation-ready-'+randomUUID());
     await writeFile(stage,JSON.stringify({schemaVersion,
-      provider:'wan-ti2v-q8_0',checkedAt})+'\n',{mode:0o600,flag:'wx'});
+      provider:WAN_I2V_PROVIDER,checkedAt})+'\n',{mode:0o600,flag:'wx'});
     assertKnown();require(!closed);
     await rename(stage,path);stage=undefined;valid=true;return true;
    }catch{await clear();return false;}

@@ -14,6 +14,7 @@ import {choosePropAnimation,executePropAnimation,propAnimationPorts} from './pro
 import {confirmBindingPath,defaultPropBinding,propAnimationReadiness,cinematicAnimationReadiness} from './prop-animation-readiness.mjs';
 import {chooseCinematic,executeCinematic,cinematicPorts} from './cinematic-worker.mjs';
 import {probeCutsceneEncoder} from './cutscene-i2v.mjs';
+import {WAN_I2V_MODEL_ID,WAN_I2V_QUANTIZATION} from './i2v-wan-graph.mjs';
 import {choosePresetFrames,executePresetFrames,presetFramePorts} from './preset-frame-worker.mjs';
 import {isSelectedMediaRun,isRegenerateRun,selectionSchemas,poseSelectionSchemas,regenerateType,regenerateSchemas,selectedMotionBranch,matchesMotionTask} from './vendor/npc-motion-selection-v1/media-branch.mjs';
 import {assertDatabasePath,protectSchema,nextWorkflowTaskFromPath,markWorkflowTaskFailed,workflowTaskEligibleSql,workflowTaskRetrySetSql} from './workflow-ready.mjs';
@@ -280,15 +281,15 @@ if(process.argv[1]===fileURLToPath(import.meta.url)){
  const prop=propAnimationPorts(local);
  const cinematic=cinematicPorts(local);
  // Existing resident owns both model families. Fixed, private host binding
- // enables the new lane only when its real INT8 artifacts are ready.
- const override=process.env.WORKFLOW_I2V_BINDING;
- const int8Binding=override??defaultPropBinding;
+ // enables I2V only with the exact A14B high/low Q4_K_M pair and Wan 2.1 VAE.
+ const override=process.env.WORKFLOW_I2V_A14B_BINDING;
+ const a14bBinding=override??defaultPropBinding;
  let i2vModel;
  try{
-  insist(int8Binding.startsWith('/'),'I2V_BINDING_INVALID');
-  if(!override)await confirmBindingPath(int8Binding);
+  insist(a14bBinding.startsWith('/'),'I2V_BINDING_INVALID');
+  if(!override)await confirmBindingPath(a14bBinding);
   const {readWanI2VBinding,createWanI2V}=await import('./i2v-wan.mjs');
-  i2vModel=createWanI2V({binding:await readWanI2VBinding(int8Binding)});
+  i2vModel=createWanI2V({binding:await readWanI2VBinding(a14bBinding)});
  }catch(e){
   if(override||e?.code!=='ENOENT')console.error(JSON.stringify({state:'not_ready',code:'I2V_BINDING_INVALID'}));
  }
@@ -333,7 +334,7 @@ if(process.argv[1]===fileURLToPath(import.meta.url)){
     modelSlot.assertKnown();
     insist(await i2v.ready(signal),'I2V_PDS_UNAVAILABLE');
     const ready=await i2vModel.probe();
-    insist(ready?.ready===true&&ready.quantization==='q8_0','I2V_MODEL_UNAVAILABLE');
+    insist(ready?.ready===true&&ready.model===WAN_I2V_MODEL_ID&&ready.quantization===WAN_I2V_QUANTIZATION,'I2V_MODEL_UNAVAILABLE');
     signal.throwIfAborted();
     const result=await executeI2V(db,i2vTask,signal,{ports:i2v,renderer:{render:job=>modelSlot.runI2V(job)}});
     if(result.state==='completed')console.log(JSON.stringify(result));

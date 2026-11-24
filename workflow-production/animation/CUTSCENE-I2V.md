@@ -36,7 +36,7 @@ candle is a recurring visual motif, not the action that opens the path.
   A lost publication acknowledgement leaves a reconcilable in-progress
   claim instead of silently scheduling a second generation.
 - The worker only writes the private cinematic admission proof after checking
-  the shared Wan TI2V Q8_0 runtime and the trusted local ffmpeg/ffprobe tools.
+  the shared Wan I2V-A14B Q4_K_M runtime and the trusted local ffmpeg/ffprobe tools.
   The default is `cinematic-animation-ready.json` next to the prop proof, or
   the same basename under `WORKFLOW_CINEMATIC_ANIMATION_READY_FILE`. Refresh
   is 30 seconds and model ownership uncertainty invalidates both proofs.
@@ -48,4 +48,13 @@ RGB is retained in a playable 45-frame MP4, with coded 24 fps and no audio.
 
 ```sh
 NGS_TEST_CUTSCENE_ENCODER=1 node --test cinematic-worker.test.mjs cutscene-i2v.test.mjs prop-animation-readiness.test.mjs
+```
+
+Scratch end-to-end integration using the staged BackendServices checkout
+(real RS, Planner, PDS, Filex writer and FFmpeg; only model response substituted):
+
+```sh
+svc=/absolute/staged/path/to/BackendServices
+PYTHONPATH="$svc/data-service:$svc/filex-writer" NGS_CINEMATIC_SERVICES_ROOT="$svc" \
+  python3 -B cinematic-resident-chain.fixture.py -v
 ```
