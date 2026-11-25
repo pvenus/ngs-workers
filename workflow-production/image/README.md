@@ -261,3 +261,9 @@ database containing the marker; rolling back that far requires verifying no
 marked work, stopping writers and having the operator remove the column via a
 verified database maintenance procedure before restarting the old version.
 Unknown rendering/publication outcomes still require reconciliation.
+
+For cinematic stills, provider results remain private until the first PDS
+publication RPC. Local generation or invalid geometry before that boundary
+is an ordinary failure, with safe stage/reason and dimensions when available.
+No-save proof is never assumed once publication starts. A transient folder
+MCP FOLDER_BUSY is retried with short bounded backoff on that read only.

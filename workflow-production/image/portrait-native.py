@@ -272,6 +272,8 @@ def cinematic_source_prompt(data):
             hashlib.sha256(design["markdown"].encode()).hexdigest() != design["sha256"]):
         raise ValueError("CINEMATIC_SOURCE_DESIGN_INVALID")
     return ("Render one opaque, landscape 1536×1024 PNG as the establishing frame of a game cinematic. "
+            "The actual canvas must be 1536 pixels wide and 1024 pixels high, even if a shot mentions another aspect ratio. "
+            "Use such aspect notes as framing guidance only; never change the canvas or add letterboxing. "
             "Compose one continuous scene to the canvas edges, with the environment/background fully painted. "
             "No borders, split-panel layout, typography, subtitle, logo or watermark. "
             "Use the published design to determine the drawing and rendering style; use the individual shot "

@@ -34,11 +34,11 @@ function fixture(t,request=input){
  const db=new DatabaseSync(dbPath);
  t.after(()=>{db.close();rmSync(dir,{recursive:true,force:true});});
  db.exec(`CREATE TABLE workflow_runs(official_request_id,project_id,request_type,schema_version,payload,payload_sha256,registered_at,state,updated_at,reason);
-  CREATE TABLE workflow_tasks(task_id,official_request_id,task_key,task_type,worker_type,task_input,result_ref,updated_at,depends_on_task_id,status,retry_count);`);
+  CREATE TABLE workflow_tasks(task_id,official_request_id,task_key,task_type,worker_type,task_input,result_ref,updated_at,depends_on_task_id,status,retry_count,portrait_read_owner_pid INTEGER);`);
  const payload=canonical({schemaVersion:sourceSchema,projectId:'binari',...request});
  db.prepare("INSERT INTO workflow_runs VALUES(?,?,?,?,?,?,1,'planned',1,NULL)").run(officialRequestId,'binari',sourceType,sourceSchema,payload,sha(payload));
- db.prepare("INSERT INTO workflow_tasks VALUES(?,?,?,?,?,?,NULL,2,NULL,'pending',0)").run(taskId,officialRequestId,sourceKey,sourceType,'image',canonical(request));
- const state=()=>db.prepare('SELECT status,result_ref,updated_at FROM workflow_tasks').get();
+ db.prepare("INSERT INTO workflow_tasks VALUES(?,?,?,?,?,?,NULL,2,NULL,'pending',0,NULL)").run(taskId,officialRequestId,sourceKey,sourceType,'image',canonical(request));
+ const state=()=>db.prepare('SELECT status,result_ref,updated_at,retry_count,portrait_read_owner_pid FROM workflow_tasks').get();
  return {db,dbPath,state,payload};
 }
 const safeCheck=async()=>({ready:true});
@@ -49,25 +49,27 @@ test('resident claims an image-only job and retries exact PNG bytes only after l
   payloadSha256:sha(f.payload),claimStamp:f.state().updated_at});return input;},
  readCinematicConcept:async()=>{order.push('design');return concept();},
  publishCinematicSource:async(claim,artifact)=>{
-  order.push('publish');assert.equal(claim.claimStamp,f.state().updated_at);
+  order.push('publish');assert.equal(f.state().portrait_read_owner_pid,null);assert.equal(claim.claimStamp,f.state().updated_at);
   assert.deepEqual(artifact,{sha256:sha(png),bytes:png.length,width:1536,height:1024,base64:png.toString('base64')});
   if(order.length===4)throw Error('lost');return {ok:true,resultRef};
  }};
- const renderCinematicSource=async direction=>{order.push('render');assert.deepEqual(direction,{...input,design});return png;};
+ const renderCinematicSource=async direction=>{order.push('render');assert.equal(f.state().portrait_read_owner_pid,process.pid);assert.deepEqual(direction,{...input,design});return png;};
  const result=await imageTick({...f,mode:'run',pds,renderCinematicSource},{check:safeCheck});
  assert.equal(result.state,'completed');assert.equal(result.designSha256,design.sha256);
  assert.deepEqual(order,['read','design','render','publish','publish']);
  assert.equal(f.state().result_ref,resultRef);
  assert.equal((await imageTick({...f,mode:'run',pds,renderCinematicSource},{check:safeCheck})).state,'idle');
 });
-test('mismatched PDS input has no side effects; ambiguous native invocation is not rerun',async t=>{
+test('local native or input failure records normal failure and does not immediately rerun',async t=>{
  for(const mismatched of [true,false]){
   const f=fixture(t);let gen=0;
   const pds={capability:async()=>true,readCinematicSource:async()=>mismatched?{...input,title:'다른 제목'}:input,
    readCinematicConcept:async()=>concept(),publishCinematicSource:async()=>assert.fail('must not publish')};
   const renderCinematicSource=async()=>{gen++;throw Error('unknown model outcome');};
   const options={...f,mode:'run',pds,renderCinematicSource};
-  assert.equal((await imageTick(options,{check:safeCheck})).state,mismatched?'failed':'requires_reconciliation');
+  const r=await imageTick(options,{check:safeCheck});
+  assert.equal(r.state,'failed');assert.equal(f.state().retry_count,0);assert.equal(f.state().portrait_read_owner_pid,null);
+  assert.equal(r.diagnostic.stage,mismatched?'read-inputs':'render');
   if(!mismatched)assert.equal((await imageTick(options,{check:safeCheck})).state,'idle');
   assert.equal(gen,mismatched?0:1);
  }
@@ -115,4 +117,21 @@ main()
  const p=spawnSync('/usr/bin/python3',['-B','-c',script,helper],{input:JSON.stringify({...input,design}),encoding:'utf8'});
  assert.equal(p.status,0,p.stderr);
  assert.equal(p.stdout,'not-a-generated-image-in-this-bridge-test');
+});
+
+test('bad original geometry records exact dimensions without publishing; lost publish ACK stays unresolved',async t=>{
+ for(const bad of [true,false]){
+  const f=fixture(t),raw=Buffer.from(png);
+  if(bad)raw.writeUInt32BE(1824,16);
+  let sends=0;
+  const pds={capability:async()=>true,readCinematicSource:async()=>input,readCinematicConcept:async()=>concept(),
+   publishCinematicSource:async()=>{sends++;throw Error('unconfirmed');}};
+  const r=await imageTick({...f,mode:'run',pds,renderCinematicSource:async()=>raw},{check:safeCheck});
+  assert.equal(f.state().portrait_read_owner_pid,null);
+  assert.equal(sends,bad?0:2);
+  assert.equal(r.state,bad?'failed':'requires_reconciliation');
+  assert.equal(f.state().status,bad?'failed':'running');
+  if(bad)assert.deepEqual(r.diagnostic,{stage:'validate-png',reason:'CINEMATIC_SOURCE_PNG_GEOMETRY_INVALID',width:1824,height:1024});
+  else assert.equal(r.diagnostic.stage,'publish');
+ }
 });

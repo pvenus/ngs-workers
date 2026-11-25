@@ -1,5 +1,7 @@
 /** Official cinematic source lane. Native ImageGen output, no video generation. */
 import {DatabaseSync} from 'node:sqlite';
+import {settleFailure} from './failure-state.mjs';
+import {finishPortraitRead,hasPortraitReadOwner} from './portrait-read-owner.mjs';
 import {canonical,sha} from './vendor/planner-f24d23a/envelope.mjs';
 import {exact} from './vendor/planner-f24d23a/planner.mjs';
 import {assertDatabasePath,protectSchema,workflowTaskEligibleSql,workflowTaskRetrySetSql} from './workflow-ready.mjs';
@@ -44,10 +46,12 @@ export const validCinematicSourceRenderInput=v=>exact(v,['title','prompt','desig
  validCinematicSource({title:v.title,prompt:v.prompt})&&validCinematicDesign(v.design);
 const signature=Buffer.from('89504e470d0a1a0a','hex');
 export function sourceGeometry(png){
- require(Buffer.isBuffer(png)&&png.length>=57&&png.length<=8*1024*1024&&
-  png.subarray(0,8).equals(signature)&&png.readUInt32BE(8)===13&&png.toString('ascii',12,16)==='IHDR'&&
-  png.readUInt32BE(16)===1536&&png.readUInt32BE(20)===1024&&png[24]===8&&[2,6].includes(png[25]),
-  'CINEMATIC_SOURCE_PNG_INVALID');
+ const format=Buffer.isBuffer(png)&&png.length>=57&&png.length<=8*1024*1024&&
+  png.subarray(0,8).equals(signature)&&png.readUInt32BE(8)===13&&png.toString('ascii',12,16)==='IHDR';
+ require(format,'CINEMATIC_SOURCE_PNG_INVALID');
+ const width=png.readUInt32BE(16),height=png.readUInt32BE(20);
+ if(width!==1536||height!==1024)throw Object.assign(Error('CINEMATIC_SOURCE_PNG_GEOMETRY_INVALID'),{width,height});
+ require(png[24]===8&&[2,6].includes(png[25]),'CINEMATIC_SOURCE_PNG_INVALID');
  return {width:1536,height:1024};
 }
 export const nextCinematicSourceFromPath=dbPath=>nextWorkflowTaskFromPath(dbPath,
@@ -87,10 +91,11 @@ function claimSource(db,t){
   const {row}=b,claimStamp=Math.max(Date.now(),row.updated_at+1);
   require(Number.isSafeInteger(claimStamp)&&claimStamp<Number.MAX_SAFE_INTEGER&&Number.isSafeInteger(row.registered_at)&&
    row.registered_at>=0&&row.registered_at<=claimStamp);
-  require(db.prepare(`UPDATE workflow_tasks SET status='running',updated_at=?,${workflowTaskRetrySetSql}
+  const ownerTracked=hasPortraitReadOwner(db);
+  require(db.prepare(`UPDATE workflow_tasks SET status='running',updated_at=?,${workflowTaskRetrySetSql}${ownerTracked?',portrait_read_owner_pid=?':''}
    WHERE task_id=? AND official_request_id=? AND updated_at=? AND result_ref IS NULL AND ${workflowTaskEligibleSql()}`)
-   .run(claimStamp,t.taskId,t.officialRequestId,row.updated_at).changes===1);
-  return {...b,claim:Object.freeze({taskId:t.taskId,officialRequestId:t.officialRequestId,projectId,payloadSha256:row.payload_sha256,claimStamp})};
+   .run(claimStamp,...(ownerTracked?[process.pid]:[]),t.taskId,t.officialRequestId,row.updated_at).changes===1);
+  return {...b,ownerTracked,claim:Object.freeze({taskId:t.taskId,officialRequestId:t.officialRequestId,projectId,payloadSha256:row.payload_sha256,claimStamp})};
  });
 }
 
@@ -110,26 +115,34 @@ export async function runCinematicSourceFromPath({dbPath,officialRequestId,taskI
    require(next&&['payload','task_input','payload_sha256','registered_at'].every(k=>row[k]===next.row[k]),'CINEMATIC_SOURCE_CLAIM_CHANGED');
   };
   const verifyCurrent=()=>tx(db,current);
-  let sent=false,nativePending=false,readingDesign=false;
+  let sent=false,ownerTracked=found.ownerTracked,stage='read-inputs';
   try{
    verifyCurrent();
    const bound=await pds.readCinematicSource(claim,signal);
    require(validCinematicSource(bound)&&canonical(bound)===canonical(input),'CINEMATIC_SOURCE_READ_MISMATCH');
-   readingDesign=true;
+   stage='read-design';
    const design=selectCinematicDesign(await pds.readCinematicConcept(signal));
-   readingDesign=false;
    signal?.throwIfAborted();verifyCurrent();
-   nativePending=true;
+   stage='render';
    const png=await renderCinematicSource({...input,design},{signal});
-   nativePending=false;
+   stage='validate-png';
    const geometry=sourceGeometry(png),sha256=sha(png),resultRef=refFor(sha256);
    const artifact={sha256,bytes:png.length,...geometry,base64:png.toString('base64')};
    signal?.throwIfAborted();verifyCurrent();
+   stage='release-prewrite-owner';
+   if(ownerTracked){
+    require(await settleFailure(()=>finishPortraitRead(db,claim)),'CINEMATIC_SOURCE_OWNER_CHANGED');
+    ownerTracked=false;
+   }
+   signal?.throwIfAborted();
+   stage='publish';
    sent=true;
    let ack;
    try{ack=await pds.publishCinematicSource(claim,artifact);}
    catch{verifyCurrent();ack=await pds.publishCinematicSource(claim,artifact);}
+   stage='verify-publish-ack';
    require(exact(ack,['ok','resultRef'])&&ack.ok===true&&ack.resultRef===resultRef,'CINEMATIC_SOURCE_ACK_UNCONFIRMED');
+   stage='record-completion';
    tx(db,()=>{
     current();
     require(db.prepare(`UPDATE workflow_tasks SET status='completed',result_ref=?,updated_at=?
@@ -137,10 +150,27 @@ export async function runCinematicSourceFromPath({dbPath,officialRequestId,taskI
      .run(resultRef,Math.max(Date.now(),claim.claimStamp+1),taskId,officialRequestId,claim.claimStamp).changes===1);
    });
    return {state:'completed',taskId,resultRef,designSha256:design.sha256};
-  }catch{
-   if(!sent&&!nativePending&&markWorkflowTaskFailed(db,{...claim,workerType}))
-    return {state:'failed',taskId,code:readingDesign?'CINEMATIC_DESIGN_UNAVAILABLE':'CINEMATIC_SOURCE_FAILED_BEFORE_PUBLISH'};
-   return {state:'requires_reconciliation',taskId,code:'CINEMATIC_SOURCE_RECONCILIATION_REQUIRED'};
+  }catch(error){
+   const allowed=new Set(['CINEMATIC_SOURCE_PNG_INVALID','CINEMATIC_SOURCE_PNG_GEOMETRY_INVALID','CINEMATIC_SOURCE_READ_MISMATCH',
+    'CINEMATIC_SOURCE_OWNER_CHANGED','CINEMATIC_SOURCE_ACK_UNCONFIRMED','CINEMATIC_DESIGN_UNAVAILABLE',
+    'WORKFLOW_IMAGE_CLI_OUTCOME_UNCONFIRMED','WORKFLOW_IMAGE_CLI_PROCESS_FAILED','WORKFLOW_IMAGE_CLI_RESPONSE_INVALID',
+    'WORKFLOW_IMAGE_CLI_REPORTED_BLOCKED','WORKFLOW_IMAGE_CLI_RESULT_REJECTED','WORKFLOW_IMAGE_NATIVE_UNCONFIRMED',
+    'WORKFLOW_IMAGE_NATIVE_TIMEOUT','WORKFLOW_IMAGE_CANCELLED','WORKFLOW_IMAGE_OUTPUT_INVALID','DOCUMENT_WORKER_LOCAL_TRANSPORT']);
+   const reason=allowed.has(error?.message)?error.message:'UNCLASSIFIED';
+   const diagnostic={stage,reason,...(reason==='CINEMATIC_SOURCE_PNG_GEOMETRY_INVALID'&&
+    [error.width,error.height].every(n=>Number.isSafeInteger(n)&&n>=0&&n<16384)?{width:error.width,height:error.height}:{})};
+   // Native generation only returns private scratch bytes; it never publishes.
+   // Any failure before the first storage RPC is safe for the normal retry policy.
+   if(!sent){
+    try{
+     const changed=await settleFailure(()=>ownerTracked?finishPortraitRead(db,claim,{failed:true}):markWorkflowTaskFailed(db,{...claim,workerType}));
+     if(changed)return {state:'failed',taskId,code:stage==='read-design'?'CINEMATIC_DESIGN_UNAVAILABLE':'CINEMATIC_SOURCE_FAILED_BEFORE_PUBLISH',diagnostic};
+     diagnostic.failureTransition='CLAIM_NOT_UPDATED';
+    }catch{
+     diagnostic.failureTransition='STATE_WRITE_UNCONFIRMED';
+    }
+   }
+   return {state:'requires_reconciliation',taskId,code:'CINEMATIC_SOURCE_RECONCILIATION_REQUIRED',diagnostic};
   }
  }finally{db.close();}
 }

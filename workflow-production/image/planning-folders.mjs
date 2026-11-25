@@ -3,6 +3,7 @@ import {createHash} from 'node:crypto';
 import {constants} from 'node:fs';
 import {lstat,mkdir,mkdtemp,open,realpath,rm} from 'node:fs/promises';
 import {request} from 'node:http';
+import {setTimeout as delay} from 'node:timers/promises';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 
@@ -106,10 +107,22 @@ function loopbackCall(url,signal){
   await ready;
   const context={operation:name==='npc_folders_compare'?'compare':'read_chunk',
    scopeKind:args.scope==='binari/concept'?'concept':'npc_planning'};
-  const v=await rpc('tools/call',{name,arguments:args},limit,context);
-  if(v.isError)throw mcpFailure('tool_error',context,{httpStatus:200,...safeToolError(v)});
-  if(!v.structuredContent||typeof v.structuredContent!=='object')throw mcpFailure('tool_response_schema',context,{httpStatus:200});
-  return v.structuredContent;
+  // The folder semaphore rejects concurrent readers without performing the read.
+  // Retry only that proven contention; never retry a different response or replay work.
+  const busyBackoff=[120,280,550,1000,1800];
+  for(let i=0;;i++){
+   const v=await rpc('tools/call',{name,arguments:args},limit,context);
+   if(v.isError){
+    const error=safeToolError(v);
+    if(error.toolCode==='FOLDER_BUSY'&&error.toolStatus===503&&i<busyBackoff.length){
+     await delay(busyBackoff[i]+Math.floor(Math.random()*90),undefined,{signal});
+     continue;
+    }
+    throw mcpFailure('tool_error',context,{httpStatus:200,...error});
+   }
+   if(!v.structuredContent||typeof v.structuredContent!=='object')throw mcpFailure('tool_response_schema',context,{httpStatus:200});
+   return v.structuredContent;
+  }
  };
 }
 

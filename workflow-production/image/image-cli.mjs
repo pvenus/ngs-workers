@@ -1,5 +1,6 @@
 import {detectLostPortraitReadsFromPath} from './portrait-read-owner.mjs';
 import {imageOperations} from './worker.mjs';
+import {sourceType} from './cinematic-source-worker.mjs';
 import {setTimeout as delay} from 'node:timers/promises';
 import {localPorts} from './local-ports.mjs';
 import {imageTick,parseImageArgs,startImageHeartbeat} from './image-runner.mjs';
@@ -24,7 +25,7 @@ try{
  do{
   let result;
   try{
-   if(settings.mode==='run'&&!admissionSignal.aborted)for(const failure of detectLostPortraitReadsFromPath(settings.dbPath,imageOperations))
+   if(settings.mode==='run'&&!admissionSignal.aborted)for(const failure of detectLostPortraitReadsFromPath(settings.dbPath,[...imageOperations,sourceType]))
     console.log(JSON.stringify({service:'image-worker',...failure}));
    result=await imageTick({...settings,pds,providerReady,render,renderNeutral,renderProp,renderCinematicSource,withPlanningSnapshot,signal,admissionSignal,onPhase,onHealth});}
   catch{onHealth(false);result={state:'not_ready',code:'IMAGE_WORKER_OPERATION_FAILED'};}
