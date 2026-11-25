@@ -307,7 +307,8 @@ if(process.argv[1]===fileURLToPath(import.meta.url)){
   return inFlightModelProbe;
  };
  const assertKnown=()=>modelSlot.assertKnown();
- const propReady=propAnimationReadiness({path:process.env.WORKFLOW_PROP_ANIMATION_READY_FILE,probe:probeModel,assertKnown});
+ const propReady=propAnimationReadiness({path:process.env.WORKFLOW_PROP_ANIMATION_READY_FILE,
+  probe:()=>preparePropInput?probeModel():undefined,assertKnown});
  const cinematicReady=cinematicAnimationReadiness({path:process.env.WORKFLOW_CINEMATIC_ANIMATION_READY_FILE,assertKnown,
   probe:async()=>{const [proof]=await Promise.all([probeModel(),probeCutsceneEncoder()]);return proof;}});
  const sequenceReady=cinematicSequenceReadiness({path:process.env.WORKFLOW_CINEMATIC_SEQUENCE_ANIMATION_READY_FILE,probe:probeModel,assertKnown});

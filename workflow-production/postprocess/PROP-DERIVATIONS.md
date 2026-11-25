@@ -4,7 +4,7 @@
 postprocess derivative keys in the registered Planner graph, both under
 `prop.generate` and `prop.regenerate`, or the two animation-only derivative
 keys under `prop.animation.generate`. Neither the connector nor the Pillow
-renderer has Filex authority. The worker never selects or claims the final
+renderer has Filex authority. This derivation worker never selects or claims the final
 package publish key or NPC work. No launch/import is active by default.
 
 The installed launcher supplies these private ports; all must independently
@@ -31,9 +31,9 @@ not a new worker-facing/public HTTP spec:
   written by this operation. A possibly committed callback never auto-retries.
 
 `createPropDerivationRenderer` uses launch-provisioned existing alpha model
-pins and cleans owner-private scratch; stills use BiRefNet without a video
-tracker, animation uses existing BiRefNet/SAM2. Static detail preserves the
-provider canvas. All RGB animation frames are fitted by a **single** geometry
+configuration and cleans owner-private scratch. The prop keying engine is
+CorridorKey; existing genuinely transparent static source images don't need
+a second matte. Static detail preserves the provider canvas. All RGB animation frames are fitted by a **single** geometry
 transform to the same verified detail canvas. Pixel cleanup reuses the
 deterministic 32-colour palette routine with one palette over the animation,
 BOX resize, no dithering and hard alpha; it decodes the exact detail bytes and
@@ -91,13 +91,40 @@ does not qualify. An invalid static cutout fails explicitly and is never
 rematted. Pixel output still uses the verified detail. The installed matting
 model is used only for animated prop detail; NPC matting is unchanged.
 
-## Scoped candle chroma profile
+## Default chroma pipeline for props
 
-The exact formal candle append profile checks agreement between the full
-claim-bound payload and PDS read response before reading or keying its raw 512×352
-RGB frames. Only edge-connected green becomes transparent; the warm flame,
-opaque non-green pixels, and isolated green pockets are never selected by the
-key. There is no tracking/matting retry or fallback for this request. A frame
-without meaningful green backing or remaining foreground is rejected.
-The APNG frame timings and existing detail/pixel projection remain unchanged.
-The original static package stays immutable.
+New prop bases are opaque green-screen (RGB) PNGs. The existing asset
+construction stages call CorridorKey to make the transparent detail, then
+derive the pixel-sized representation from that authorized result. Existing
+verified transparent static RGBA bases are passed through instead of re-keyed.
+Every prop animation is now framed against green by the animation worker and
+uses CorridorKey on its complete RGB sequence. The older candle profile
+continues to parse, but it no longer selects a different algorithm. No request
+field, schema, Planner stage, or UI option is added. NPC and cinematic media
+do not use this prop renderer.
+
+Provision a separate Apple Silicon Python 3.12 environment. The reviewed CLI
+source is [corridorkey-v2-mlx](https://github.com/peterteravskis/corridorkey-v2-mlx)
+at `74065491ebd2eddea494ab34c15a6d84d7415353`. Install the CLI into that
+environment. Provision FP32 profiles 1024×1536 t1 (static) and 768×1280 t1/t4
+(animation) from `cdelta/CorridorKey-v2-MLX-fp32` revision
+`7bb9a4443d5f1b4b696bcc0547d49ae0ac5e5f7e` and verify against published
+SHA256SUMS. Do not commit the CLI or redistribute model files. Read the
+CorridorKey model license and third-party notices before integrating into a
+commercial product or service.
+
+Set the absolute executable `PROP_CORRIDOR_V2_CLI` and absolute profile
+directory `PROP_CORRIDOR_V2_MODEL_ROOT` in `runtime/corridorkey-v2/adapter-config.json`,
+next to (not inside) the existing `runtime/frame-alpha` configuration. No model is loaded at worker startup. An unavailable runtime or invalid
+output fails this stage explicitly rather than silently falling back to OpenCV
+or a foreground recognition model; a new source or motion can be requested.
+
+The bridge verifies input digests, pads without resizing, and submits the
+full ordered sequence in one local invocation. It uses the unmodified
+CorridorKey matte and foreground: green screen, `--despill-strength 0.10`,
+no OpenCV hint or color-specific exception, and four-frame time windows with
+stride two for sequences of four or more frames. It checks each 16-bit RGBA
+cutout before cropping back. Source dimensions and timings are preserved,
+along with the existing APNG packaging and downstream pixel projection.
+Worker scratch and intermediates are removed after each run. The worker
+never downloads models.

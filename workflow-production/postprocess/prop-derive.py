@@ -183,8 +183,9 @@ def connected_candle_chroma(image):
     return Image.fromarray(rgba)
 
 
-def process(root,spec,matte):
+def process(root,spec,matte,corridor=False):
     media=spec.get('media')
+    check(not corridor or spec.get('kind')=='detail','PROP_DERIVATION_RENDER_PROFILE')
     use_chroma='renderProfile' in spec
     if use_chroma:
         check(spec['renderProfile']==CANDLE_CHROMA_PROFILE and spec.get('kind')=='detail' and
@@ -222,7 +223,13 @@ def process(root,spec,matte):
         except Exception:
             if not duration:raise ValueError('PROP_DERIVATION_STATIC_SOURCE_PNG_INVALID') from None
             raise
-    if not duration:
+    if corridor:
+        try:
+            from prop_corridor import cutouts
+            images=[cleared(fit(frame,size)) for frame in cutouts(root,spec)]
+        except Exception:
+            raise ValueError('PROP_DERIVATION_CORRIDOR_OUTPUT') from None
+    elif not duration:
         check(len(paths)==1,'PROP_DERIVATION_STATIC_SOURCE_PNG_INVALID')
         try:
             native=trustworthy_static_rgba(original[0],size)
@@ -285,13 +292,14 @@ _EXIT={
     'PROP_DERIVATION_STATIC_SOURCE_PNG_INVALID':40,
     'PROP_DERIVATION_CHROMA_FRAME':41,
     'PROP_DERIVATION_RENDER_PROFILE':42,
+    'PROP_DERIVATION_CORRIDOR_OUTPUT':43,
 }
 
 
 if __name__=='__main__':
     try:
         root=Path(sys.argv[1]);spec=json.loads((root/'job.json').read_bytes())
-        (root/'result.png').write_bytes(process(root,spec,pinned_matte))
+        (root/'result.png').write_bytes(process(root,spec,pinned_matte,sys.argv[2:]==['corridor-v2']))
     except Exception as error:
         # No paths, model stderr, raw pixels, or stack traces on worker logs.
         c=error.args[0] if len(error.args)==1 and type(error.args[0]) is str else None

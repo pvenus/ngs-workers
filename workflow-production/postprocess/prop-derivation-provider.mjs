@@ -3,10 +3,11 @@ import {spawn} from 'node:child_process';
 import {createHash} from 'node:crypto';
 import {access,lstat,mkdir,mkdtemp,readFile,rm,writeFile} from 'node:fs/promises';
 import {constants} from 'node:fs';
-import {delimiter,isAbsolute,join,resolve} from 'node:path';
+import {delimiter,dirname,isAbsolute,join,resolve} from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {tmpdir} from 'node:os';
 
+const corridorEntry=fileURLToPath(new URL('./prop_corridor.py',import.meta.url));
 const entry=fileURLToPath(new URL('./prop-derive.py',import.meta.url));
 const keys=['FRAME_ALPHA_PYTHON','FRAME_ALPHA_MODULE_ROOT','FRAME_ALPHA_MATTING_MODEL','FRAME_ALPHA_TRACKING_MODEL'];
 const budget=16*1024*1024;
@@ -17,16 +18,17 @@ const propExit=Object.freeze({
  33:'PROP_DERIVATION_MATTE_BACKEND',34:'PROP_DERIVATION_INITIAL_MASK_EMPTY',
  35:'PROP_DERIVATION_TRACKER_FRAME_SET',36:'PROP_DERIVATION_INPUT_CHANGED',
  37:'PROP_DERIVATION_APNG_ENCODE',38:'PROP_DERIVATION_PIXEL_FOREGROUND',
- 39:'PROP_DERIVATION_STATIC_NATIVE_ALPHA_REQUIRED',40:'PROP_DERIVATION_STATIC_SOURCE_PNG_INVALID',41:'PROP_DERIVATION_CHROMA_FRAME',42:'PROP_DERIVATION_RENDER_PROFILE',
+ 39:'PROP_DERIVATION_STATIC_NATIVE_ALPHA_REQUIRED',40:'PROP_DERIVATION_STATIC_SOURCE_PNG_INVALID',41:'PROP_DERIVATION_CHROMA_FRAME',42:'PROP_DERIVATION_RENDER_PROFILE',43:'PROP_DERIVATION_CORRIDOR_OUTPUT',
 });
 const visible=new Set([...Object.values(propExit),'PROP_DERIVATION_RENDER_START','PROP_DERIVATION_RENDER_ABORTED',
- 'PROP_DERIVATION_RENDER_TIMEOUT','PROP_DERIVATION_RENDER_OUTPUT']);
+ 'PROP_DERIVATION_RENDER_TIMEOUT','PROP_DERIVATION_RENDER_OUTPUT',
+ 'PROP_DERIVATION_CORRIDOR_CONFIG','PROP_DERIVATION_CORRIDOR_EXECUTION']);
 export const propRenderDiagnostic=e=>visible.has(e?.message)?e.message:null;
 
-function execute(python,script,root,env,signal){
+function execute(executable,args,env,signal,failure){
  return new Promise((resolve,reject)=>{
   signal?.throwIfAborted();
-  const child=spawn(python,['-B',script,root],{env,stdio:'ignore'});
+  const child=spawn(executable,args,{env,stdio:'ignore'});
   let reason=null;
   function stop(code){
    if(reason===null){reason=code;child.kill('SIGKILL');}
@@ -39,17 +41,17 @@ function execute(python,script,root,env,signal){
   function close(){
    signal?.removeEventListener('abort',abort);clearTimeout(timer);
   }
-  child.once('error',()=>{close();reject(Error('PROP_DERIVATION_RENDER_START'));});
+  child.once('error',()=>{close();reject(Error(failure??'PROP_DERIVATION_RENDER_START'));});
   child.once('close',code=>{
    close();
    if(code===0&&reason===null)resolve();
-   else reject(Error(reason??propExit[code]??'PROP_DERIVATION_RENDER_FAILED'));
+   else reject(Error(reason??failure??propExit[code]??'PROP_DERIVATION_RENDER_FAILED'));
   });
  });
 }
 
 // Callers must pass approved installed configuration at launch, not request metadata.
-export async function createPropDerivationRenderer({configPath,modelPinsPath,workerSource,samSource}){
+export async function createPropDerivationRenderer({configPath,modelPinsPath,workerSource,samSource,corridorConfigPath}){
  assert([configPath,modelPinsPath,workerSource,samSource].every(absolute),'PROP_DERIVATION_MODEL_PATH');
  const cfg=JSON.parse(await readFile(configPath,'utf8'));
  const pins=await readFile(modelPinsPath);
@@ -65,10 +67,40 @@ export async function createPropDerivationRenderer({configPath,modelPinsPath,wor
    FRAME_ALPHA_MATTING_MODEL:cfg.FRAME_ALPHA_MATTING_MODEL,
    FRAME_ALPHA_TRACKING_MODEL:cfg.FRAME_ALPHA_TRACKING_MODEL,
    WORKFLOW_POSTPROCESS_MODEL_DIGEST:createHash('sha256').update(pins).digest('hex')};
+ const keyConfig=corridorConfigPath??resolve(dirname(configPath),'..','corridorkey-v2','adapter-config.json');
+ // Keep the existing strict frame-alpha host configuration untouched. Prop
+ // runtime config is isolated and is not required to process native RGBA/pixel.
+ let corridor={};
+ if(absolute(keyConfig)){
+  try{
+   const local=JSON.parse(await readFile(keyConfig,'utf8'));
+   corridor={cli:local.PROP_CORRIDOR_V2_CLI,models:local.PROP_CORRIDOR_V2_MODEL_ROOT};
+  }catch{}
+ }
  return async (job,binding,{signal}={})=>{
   const root=await mkdtemp(join(tmpdir(),'workflow-prop-derivation-'));
   try{
-   return await renderPropInScratch(job,binding,{root,signal,execute:(workspace,s)=>execute(cfg.FRAME_ALPHA_PYTHON,entry,workspace,env,s)});
+   return await renderPropInScratch(job,binding,{root,signal,execute:async (workspace,s)=>{
+    // A prop detail animation is always chroma keyed. Legacy static RGBA
+    // is already a cutout; new opaque bases go through the same model.
+    const animated=job.frameDurationsMs.length>0;
+    const key=binding.role==='detail'&&(animated||job.buffers[0]?.[25]===2);
+    const python=(script,...args)=>execute(cfg.FRAME_ALPHA_PYTHON,['-B',script,workspace,...args],env,s);
+    if(key){
+     assert(absolute(corridor.cli)&&absolute(corridor.models),'PROP_DERIVATION_CORRIDOR_CONFIG');
+     try{await Promise.all([access(corridor.cli,constants.X_OK),access(corridor.models,constants.R_OK)]);}
+     catch{throw Error('PROP_DERIVATION_CORRIDOR_CONFIG');}
+     await python(corridorEntry);
+     const temporal=job.frameDurationsMs.length>=4?['4','2']:['1','1'];
+     const profile=animated?['768','1280']:['1024','1536'];
+     await execute(corridor.cli,['--input',join(workspace,'corridor-input'),'--output-dir',join(workspace,'corridor'),
+      '--model-root',corridor.models,'--height',profile[0],'--width',profile[1],'--precision','fp32',
+      '--hann-chunk',temporal[0],'--hann-stride',temporal[1],'--screen','green','--despill-strength','0.10',
+      '--image-sequence','--outputs','cutout'],{...env,PYTHONPATH:'',TMPDIR:workspace},s,
+      'PROP_DERIVATION_CORRIDOR_EXECUTION');
+    }
+    await python(entry,...(key?['corridor-v2']:[]));
+   }});
   }finally{await rm(root,{recursive:true,force:true});}
  };
 }

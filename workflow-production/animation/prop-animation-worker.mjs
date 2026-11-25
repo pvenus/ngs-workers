@@ -9,6 +9,10 @@ import {buildPropGeneratePlan,exactPropTask,propKeys,propTaskId} from './vendor/
 import {assertDatabasePath,protectSchema,workflowTaskEligibleSql,workflowTaskRetrySetSql,markWorkflowTaskFailed} from './workflow-ready.mjs';
 import {png,maxImageBytes} from './i2v-worker.mjs';
 import {propI2VRGBStage,propStagePath,propStageCapability} from './prop-i2v-rgb-stage.mjs';
+import {defaultPropFramingProfile,propFrameCanvas} from './prop-i2v-input-framing.mjs';
+
+const directGreenMotionPrompt='Use the fixed camera and preserve the source composition. Keep the entire prop and its requested motion inside the supplied framing with generous headroom. Outside the prop and its requested moving parts, preserve the perfectly flat solid chroma-green (#00FF00) background in every frame. Do not add a floor, background texture, shadows, light variation, camera movement, or extra objects.';
+const exactCanvas=shape=>shape.width===propFrameCanvas.width&&shape.height===propFrameCanvas.height;
 
 const sql=`r.project_id='binari' AND r.state='planned' AND r.reason IS NULL
  AND r.request_type=? AND r.schema_version=? AND t.worker_type='animation' AND t.task_type=? AND t.task_key=?
@@ -99,19 +103,16 @@ export async function executePropAnimation(db,t,signal,{ports,renderer,prepareIn
   require(source.length===media.bytes&&sha(source)===media.sha256&&shape.width===media.width&&shape.height===media.height,'PROP_I2V_SOURCE_BYTES');
   dir=await makeDir();
   signal.throwIfAborted();tx(db,current);
-  let prepared=source;
-  if(profile){
-   stage='prepare';
-   require(typeof prepareInput==='function','PROP_I2V_FRAMING_UNAVAILABLE');
-   prepared=await prepareInput({dir,source,renderProfile:profile,signal});
-   const framed=png(prepared,maxImageBytes,{rgb:true});
-   require(framed.width===512&&framed.height===352,'PROP_I2V_FRAMING_GEOMETRY');
-   signal.throwIfAborted();tx(db,current);
-  }
+  stage='prepare';
+  require(typeof prepareInput==='function','PROP_I2V_FRAMING_UNAVAILABLE');
+  const prepared=await prepareInput({dir,source,renderProfile:profile??defaultPropFramingProfile,signal});
+  require(exactCanvas(png(prepared,maxImageBytes,{rgb:true})),'PROP_I2V_FRAMING_GEOMETRY');
+  signal.throwIfAborted();tx(db,current);
   stage='render';
-  const output=await renderer.render({dir,source:prepared,motionPrompt:p.prompt,signal});
+  const motionPrompt=profile?p.prompt:`${directGreenMotionPrompt} Requested prop motion: ${p.prompt}`;
+  const output=await renderer.render({dir,source:prepared,motionPrompt,signal});
   stage='validate';
-  require(!profile||output.width===512&&output.height===352,'PROP_I2V_FRAMING_GEOMETRY');
+  require(exactCanvas(output),'PROP_I2V_FRAMING_GEOMETRY');
   const {artifact,resultRef}=propI2VRGBStage(output,{...t,propId:p.propId,sourceSha256:media.sha256,detailCanvas:shape});
   signal.throwIfAborted();tx(db,current);
   stage='write';

@@ -1,4 +1,4 @@
-"""Opt-in preparation of a scoped prop I2V source. Never removes background."""
+"""Deterministically frame an authorized prop I2V source on chroma green. Never removes background."""
 import argparse
 from hashlib import sha256
 from io import BytesIO
@@ -11,6 +11,7 @@ MAX_INPUT_BYTES = 8 * 1024 * 1024
 MAX_INPUT_PIXELS = 8_388_608
 MAX_INPUT_DIMENSION = 4096
 PRESET = 'candle-headroom-v1'
+DEFAULT_PRESET = 'prop-green-headroom-v1'
 CANVAS = (512, 352)
 KEY = (0, 255, 0)
 FIT_PERCENT = 78
@@ -18,7 +19,7 @@ BOTTOM_MARGIN = 12
 
 
 def prepare(source, preset):
-    if preset != PRESET:
+    if preset not in (PRESET, DEFAULT_PRESET):
         raise ValueError('PROP_I2V_FRAMING_PRESET')
     if not isinstance(source, bytes) or not 57 <= len(source) <= MAX_INPUT_BYTES:
         raise ValueError('PROP_I2V_FRAMING_SOURCE_SIZE')
@@ -61,7 +62,7 @@ def prepare(source, preset):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--preset', choices=[PRESET], required=True)
+    parser.add_argument('--preset', choices=[PRESET, DEFAULT_PRESET], required=True)
     parser.add_argument('--source', type=Path, required=True)
     parser.add_argument('--output', type=Path, required=True)
     args = parser.parse_args()

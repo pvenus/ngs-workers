@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {chmodSync,mkdtempSync,realpathSync,rmSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
+import {crc32,deflateSync} from 'node:zlib';
 import {PlannerStore} from './vendor/planner-f24d23a/planner.mjs';
 import {canonical,sha} from './vendor/prop-composite-v1/envelope.mjs';
 import {buildPropGeneratePlan,propRef,propKeys} from './vendor/prop-composite-v1/prop-generate-plan.mjs';
@@ -10,8 +11,17 @@ import {runPropBaseFromPath,nextPropBaseFromPath} from './prop-base-worker.mjs';
 import {imageTick,parseImageArgs} from './image-runner.mjs';
 import {localPorts,propBasePath} from './local-ports.mjs';
 
-const template=Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVR4nGNgAAIAAAUAAXpeqz8AAAAASUVORK5CYII=','base64');
-const png=Buffer.from(template);png.writeUInt32BE(72,16);png.writeUInt32BE(96,20);
+const u32=n=>{const bytes=Buffer.alloc(4);bytes.writeUInt32BE(n);return bytes;};
+const chunk=(type,data)=>{const block=Buffer.concat([Buffer.from(type),data]);return Buffer.concat([u32(data.length),block,u32(crc32(block))]);};
+function basePng({width=1536,height=1024,alpha=false,transparentChunk=false}={}){
+ const channels=alpha?4:3;
+ const row=Buffer.alloc(1+width*channels);for(let x=0;x<width;x++)row[1+x*channels+1]=255;
+ return Buffer.concat([Buffer.from('89504e470d0a1a0a','hex'),
+  chunk('IHDR',Buffer.concat([u32(width),u32(height),Buffer.from([8,alpha?6:2,0,0,0])])),
+  ...(transparentChunk?[chunk('tRNS',Buffer.alloc(6))]:[]),
+  chunk('IDAT',deflateSync(Buffer.concat(Array(height).fill(row)))),chunk('IEND',Buffer.alloc(0))]);
+}
+const png=basePng();
 const masterFields=[
  {id:'visualStyle',text:JSON.stringify({schemaVersion:'ngs.character-style-contract.v1',styleBlock:'sealed style'})},
  {id:'visualProhibitions',text:JSON.stringify({schemaVersion:'ngs.character-style-constraints.v1',renderingExclusions:['frame']})},
@@ -50,6 +60,9 @@ function fixture(t,operation='prop.generate',mode='valid'){
    calls.push(['render',input]);
    if(mode==='revoked') db.prepare("UPDATE workflow_tasks SET result_ref=? WHERE task_id=?").run('newer',design.id);
    if(mode==='bad png')return Buffer.alloc(2);
+   if(mode==='alpha')return basePng({alpha:true});
+   if(mode==='wrong canvas')return basePng({width:8,height:352});
+   if(mode==='implicit alpha')return basePng({transparentChunk:true});
    return png;
   },
   pds:localPorts({transport:async r=>{
@@ -62,7 +75,7 @@ function fixture(t,operation='prop.generate',mode='valid'){
      artifact:mode==='wrong design'?{...artifact,appearancePrompt:'tampered'}:artifact,lineage:null},context};
    }
    assert.equal(r.path,propBasePath);
-   assert.deepEqual(r.body.artifact,{media:{sha256:sha(png),bytes:png.length,width:72,height:96,mediaType:'image/png'},base64:png.toString('base64')});
+   assert.deepEqual(r.body.artifact,{media:{sha256:sha(png),bytes:png.length,width:1536,height:1024,mediaType:'image/png'},base64:png.toString('base64')});
    return {ok:true,resultRef:mode==='wrong ack'?'bogus':propRef(propKeys.base,sha(png))};
   }})};
  return {options,state,db,base,design,calls,artifact};
@@ -75,19 +88,22 @@ for(const type of ['prop.generate','prop.regenerate'])test(type+' runs one appro
  assert.equal(f.state().result_ref,propRef(propKeys.base,sha(png)));
  const render=f.calls.filter(c=>c[0]==='render');
  assert.equal(render.length,1);
- assert.deepEqual(render[0][1],{projectId:'binari',propId:'12.candle',state:'base',lane:'detail',
+ assert.deepEqual(render[0][1],{projectId:'binari',propId:'12.candle',state:'base',lane:'detail',background:'green-screen.v1',
   intent:f.artifact.appearancePrompt,sources,contextSha256});
  assert.equal(parseImageArgs(['--execute','--db',f.options.dbPath,'--official-request-id',f.options.officialRequestId,'--task-id',
   f.base.id,'--operation',f.base.type]).operation,f.base.type);
  assert.equal((await imageTick(f.options)).state,'idle');
 });
-for(const mode of ['blocked','wrong design','bad png','wrong ack','revoked'])test(mode+' never falls back or marks uncertain publication as failed',async t=>{
+for(const mode of ['blocked','wrong design','bad png','alpha','wrong canvas','implicit alpha','wrong ack','revoked'])test(mode+' never falls back or marks uncertain publication as failed',async t=>{
  const f=fixture(t,'prop.generate',mode);
  const r=await runPropBaseFromPath(f.options);
  const published=f.calls.some(c=>c[0]==='http'&&c[1]==='POST'&&c[2]===propBasePath);
  switch(mode){
  case 'blocked': assert.equal(r.state,'not_claimable');assert.equal(f.state().status,'pending');break;
  case 'wrong design':
+ case 'alpha':
+ case 'wrong canvas':
+ case 'implicit alpha':
  case 'bad png': assert.equal(r.state,'failed');assert.equal(f.state().status,'failed');break;
  case 'revoked':
  case 'wrong ack': assert.equal(r.state,'requires_reconciliation');assert.equal(f.state().status,'running');break;

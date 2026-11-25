@@ -4,7 +4,8 @@ import {access,mkdir,mkdtemp,readFile,readdir,realpath,rm,writeFile} from 'node:
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import test from 'node:test';
-import {createPortraitRenderer,probePortraitRenderer} from './portrait-renderer.mjs';
+import {createPortraitRenderer,createPropImageRenderer,probePortraitRenderer} from './portrait-renderer.mjs';
+import {canonical} from './vendor/prop-composite-v1/envelope.mjs';
 
 const from=process.env.WORKFLOW_IMAGE_LEGACY_TEST_HOST_CONFIG;
 const sha=x=>createHash('sha256').update(x).digest('hex');
@@ -32,8 +33,15 @@ assert '--ephemeral' in args and args[args.index('--sandbox')+1]=='read-only'
 instruction=sys.stdin.read()
 journal=pathlib.Path(args[args.index('--cd')+1])/'native-journal'
 request=json.loads(next(journal.glob('*.arguments.json')).read_text())
-assert request['transparent_background'] is True
-if ${JSON.stringify(kind)} in ('modern','opaque','pixel-center','pixel-direction','original-combat'):
+kind=${JSON.stringify(kind)}
+assert request['transparent_background'] is (kind not in ('prop-green','prop-green-wrong-canvas'))
+if kind in ('prop-green','prop-green-wrong-canvas'):
+ assert '#00FF00' in request['prompt'] and '1536×1024' in request['prompt']
+ assert 'empty headroom' in request['prompt'] and 'approved bronze fixture' in request['prompt']
+ assert 'on a transparent background' not in request['prompt']
+elif kind=='prop-legacy':
+ assert 'on a transparent background' in request['prompt'] and '#00FF00' not in request['prompt']
+elif kind in ('modern','opaque','pixel-center','pixel-direction','original-combat'):
  assert 'common-art-block' in request['prompt']
  assert 'pose-only-block' in request['prompt']
  assert 'Current character and expression context' not in request['prompt']
@@ -58,8 +66,15 @@ if ${JSON.stringify(kind)} in ('idle','direction','pixel-center','pixel-directio
 pathlib.Path(${JSON.stringify(commandLog)}).write_text(json.dumps(request))
 raw=b"\\x89PNG\\r\\n\\x1a\\n"
 def pack(k,d):return struct.pack('>I',len(d))+k+d+struct.pack('>I',zlib.crc32(k+d))
-raw+=pack(b'IHDR',struct.pack('>IIBBBBB',5,5,8,6,0,0,0))
-rows=b''.join(bytes([0])+b''.join(bytes([1,2,3,255 if ${JSON.stringify(kind)}=='opaque' or (x,y)==(2,2) else 0]) for x in range(5)) for y in range(5))
+if kind in ('prop-green','prop-green-wrong-canvas'):
+ w,h=(1536,1024) if kind=='prop-green' else (40,32)
+ raw+=pack(b'IHDR',struct.pack('>IIBBBBB',w,h,8,2,0,0,0))
+ matte=bytes([0,255,0]);row=bytes([0])+w*matte
+ body=bytes([0])+(w//4)*matte+(w//2)*bytes([120,70,17])+(w//4)*matte
+ rows=(h//2)*row+(h//4)*body+(h//4)*row
+else:
+ raw+=pack(b'IHDR',struct.pack('>IIBBBBB',5,5,8,6,0,0,0))
+ rows=b''.join(bytes([0])+b''.join(bytes([1,2,3,255 if kind=='opaque' or (x,y)==(2,2) else 0]) for x in range(5)) for y in range(5))
 raw+=pack(b'IDAT',zlib.compress(rows))+pack(b'IEND',b'')
 out=pathlib.Path(${JSON.stringify(output)})/'call-fixture.png'
 out.write_bytes(raw)
@@ -147,4 +162,28 @@ test('original combat attaches the representative and explicitly does not pixeli
  assert.match(sent.prompt,/No pixel-art treatment/);
  assert.equal(sent.referenced_image_paths.length,1);
  await assert.rejects(render({...command,direction:'nw'}),/INPUT_INVALID/);
+});
+
+test('native provider sends opaque green only for formal base and retains legacy transparent generation',{skip:!from},async t=>{
+ const fields=[{id:'visualStyle',text:'{"schemaVersion":"ngs.character-style-contract.v1","styleBlock":"approved style"}'},
+  {id:'visualProhibitions',text:'{"schemaVersion":"ngs.character-style-constraints.v1","renderingExclusions":["stray decor"]}'}
+ ].map(f=>({...f,sha256:sha(f.text)}));
+ const markdown='# 프랍 디자인 설계\n\n'+['형태와 식별','재료와 색','상태 사이의 일관성','납품과 검수'].map(k=>'## '+k+'\n내용').join('\n');
+ const sources=[{role:'master-design',categoryId:'expression',sha256:sha(canonical(fields)),fields},
+  {role:'prop-design',categoryId:'category.add.26710502f5713d99018b77a29384d5da',sha256:sha(markdown),markdown}];
+ const contextSha256=sha(canonical(sources.map(x=>[x.role,x.categoryId,x.sha256])));
+ const candidate={projectId:'binari',propId:'legacy_fixture',state:'base',lane:'detail',intent:'approved bronze fixture',sources,contextSha256};
+ const green=await fixture(t,'prop-green'),render=createPropImageRenderer(green.options);
+ const result=await render({...candidate,background:'green-screen.v1'});
+ const sent=JSON.parse(await readFile(green.commandLog,'utf8'));
+ assert.equal(sent.transparent_background,false);
+ assert.deepEqual([result.readUInt32BE(16),result.readUInt32BE(20),result[25]],[1536,1024,2]);
+ await assert.rejects(render({...candidate,state:'open',background:'green-screen.v1'}),/PROP_IMAGE_INPUT_INVALID/);
+ await assert.rejects(render({...candidate,background:'blue-screen'}),/PROP_IMAGE_INPUT_INVALID/);
+ const wrong=await fixture(t,'prop-green-wrong-canvas');
+ await assert.rejects(createPropImageRenderer(wrong.options)({...candidate,background:'green-screen.v1'}),/WORKFLOW_IMAGE_OUTPUT_INVALID/);
+ const legacy=await fixture(t,'prop-legacy');
+ const prior=await createPropImageRenderer(legacy.options)(candidate);
+ assert.equal(prior[25],6);
+ assert.equal(JSON.parse(await readFile(legacy.commandLog,'utf8')).transparent_background,true);
 });

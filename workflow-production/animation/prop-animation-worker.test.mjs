@@ -8,7 +8,7 @@ import {crc32,deflateSync} from 'node:zlib';
 import {canonical,sha} from './vendor/planner-f24d23a/envelope.mjs';
 import {buildPropGeneratePlan} from './vendor/prop-composite/prop-generate-plan.mjs';
 import {propI2VRGBStage} from './prop-i2v-rgb-stage.mjs';
-import {createPropI2VInputFraming} from './prop-i2v-input-framing.mjs';
+import {createPropI2VInputFraming,defaultPropFramingProfile} from './prop-i2v-input-framing.mjs';
 import {candleChromaProfile,candleChromaPropId,validatePropAnimation} from './vendor/prop-composite/prop-generate-envelope.mjs';
 import {choosePropAnimation,executePropAnimation,propAnimationPorts} from './prop-animation-worker.mjs';
 
@@ -25,7 +25,7 @@ function png(c,w=16,h=16){
 }
 function fixture(t,{profile}={}){
  const intent=profile?{...payload,propId:candleChromaPropId,renderProfile:profile}:payload;
- const [w,h]=profile?[512,352]:[16,16];
+ const [w,h]=[512,352];
  const root=realpathSync(mkdtempSync(join(tmpdir(),'prop-motion-stage-')));
  const dbPath=join(root,'plan.sqlite');writeFileSync(dbPath,'',{mode:0o600});
  const db=new DatabaseSync(dbPath);t.after(()=>{db.close();rmSync(root,{recursive:true,force:true});});
@@ -49,14 +49,24 @@ function fixture(t,{profile}={}){
   events.push('write');assert.deepEqual(artifact,received.artifact);
   return {ok:true,resultRef:received.resultRef};
  }};
- const renderer={async render(job){events.push('render');if(!profile)assert.deepEqual(job.source,source);assert.equal(job.motionPrompt,intent.prompt);return output;}};
- const run=(sign=new AbortController().signal,prepareInput)=>executePropAnimation(db,tinfo,sign,{ports,renderer,prepareInput,makeDir:async()=>root,cleanup:async()=>{events.push('cleanup');}});
+ const renderer={async render(job){
+  events.push('render');assert.notDeepEqual(job.source,source);
+  if(profile)assert.equal(job.motionPrompt,intent.prompt);
+  else{assert.match(job.motionPrompt,/#00FF00/);assert.ok(job.motionPrompt.endsWith(intent.prompt));}
+  return output;
+ }};
+ const prepareFixture=async job=>{
+  events.push('prepare');assert.deepEqual(job.source,source);
+  assert.equal(job.renderProfile,profile??defaultPropFramingProfile);
+  return png(28,w,h);
+ };
+ const run=(sign=new AbortController().signal,prepareInput=prepareFixture)=>executePropAnimation(db,tinfo,sign,{ports,renderer,prepareInput,makeDir:async()=>root,cleanup:async()=>{events.push('cleanup');}});
  return {dbPath,db,tinfo,state,events,ports,renderer,run,plan,received,source,intent};
 }
 test('exact named request stages authorized RGB once with same-claim proof',async t=>{
  const f=fixture(t);assert.deepEqual({...choosePropAnimation(f.dbPath)},f.tinfo);
  const r=await f.run();assert.equal(r.state,'completed');assert.equal(r.alpha,'none');assert.equal(f.state().result_ref,f.received.resultRef);
- assert.deepEqual(f.events,['read','asset','render','write','cleanup']);assert.equal((await f.run()).state,'stale');
+ assert.deepEqual(f.events,['read','asset','prepare','render','write','cleanup']);assert.equal((await f.run()).state,'stale');
 });
 test('changed package pin, changed claim, unknown renderer and lost ACK never stage or retry incorrectly',async t=>{
  for(const mode of ['pin','claim','stop','ack']){
@@ -104,7 +114,7 @@ test('exact approved profile changes source preparation but not task graph; mism
 });
 test('actual Pillow helper is usable from the prop worker scratch pre-render boundary',
  {skip:!process.env.NGS_TEST_PROP_I2V_FRAMER_PYTHON},async t=>{
- const f=fixture(t,{profile:candleChromaProfile});
+ const f=fixture(t);
  const prepare=createPropI2VInputFraming(process.env.NGS_TEST_PROP_I2V_FRAMER_PYTHON);
  const old=f.renderer.render;
  f.renderer.render=async job=>{
@@ -112,4 +122,16 @@ test('actual Pillow helper is usable from the prop worker scratch pre-render bou
   assert.notEqual(sha(job.source),sha(f.source));return await old(job);
  };
  assert.equal((await f.run(undefined,prepare)).state,'completed');
+});
+
+test('generic append rejects a missing framer or off-canvas output before publication',async t=>{
+ const missing=fixture(t);
+ const denied=await missing.run(undefined,null);
+ assert.deepEqual([denied.state,denied.stage,denied.code],['failed','prepare','PROP_I2V_FRAMING_UNAVAILABLE']);
+ assert.deepEqual(missing.events,['read','asset','cleanup']);
+ const changed=fixture(t);
+ changed.renderer.render=async()=>({width:512,height:384,fps:24,frames:[]});
+ const result=await changed.run();
+ assert.deepEqual([result.state,result.stage,result.code],['failed','validate','PROP_I2V_FRAMING_GEOMETRY']);
+ assert.equal(changed.events.includes('write'),false);
 });

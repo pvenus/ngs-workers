@@ -111,14 +111,24 @@ export function propBaseRenderInput(packet,selected){
   exact(a.interaction,['pixelOpen','detailTrigger'])&&Object.values(a.interaction).every(box),
   'WORKFLOW_PROP_BASE_DESIGN_INVALID');
  const ctx=validatePropDesign(packet.context,{projectId,designContextSha256:i.designContextSha256});
- return {projectId,propId:i.propId,state:'base',lane:'detail',intent:a.appearancePrompt,sources:ctx.sources,contextSha256:ctx.contextSha256};
+ return {projectId,propId:i.propId,state:'base',lane:'detail',background:'green-screen.v1',intent:a.appearancePrompt,sources:ctx.sources,contextSha256:ctx.contextSha256};
 }
 function mediaArtifact(buffer){
  need(Buffer.isBuffer(buffer)&&buffer.length>=57&&buffer.length<=16*1024*1024&&buffer.subarray(0,8).equals(signature)&&
   buffer.readUInt32BE(8)===13&&buffer.toString('ascii',12,16)==='IHDR'&&buffer[24]===8&&
-  (buffer[25]===2||buffer[25]===6)&&buffer[26]===0&&buffer[27]===0&&buffer[28]===0,'WORKFLOW_PROP_BASE_PNG_INVALID');
+  buffer[25]===2&&buffer[26]===0&&buffer[27]===0&&buffer[28]===0,'WORKFLOW_PROP_BASE_PNG_INVALID');
  const width=buffer.readUInt32BE(16),height=buffer.readUInt32BE(20);
  need(width>=12&&width<=2048&&height>=12&&height<=2048,'WORKFLOW_PROP_BASE_PNG_INVALID');
+ // RGB may still carry tRNS, and APNG starts with PNG's same header.
+ let end=false, data=false;
+ for(let pos=8;pos+12<=buffer.length;){
+  const size=buffer.readUInt32BE(pos),kind=buffer.toString('ascii',pos+4,pos+8);
+  pos+=12+size;
+  need(pos<=buffer.length&&kind!=='tRNS'&&kind!=='acTL'&&kind!=='fcTL'&&kind!=='fdAT','WORKFLOW_PROP_BASE_PNG_INVALID');
+  if(kind==='IDAT')data=true;
+  if(kind==='IEND'){end=size===0&&pos===buffer.length;break;}
+ }
+ need(data&&end,'WORKFLOW_PROP_BASE_PNG_INVALID');
  return {media:{sha256:sha(buffer),bytes:buffer.length,width,height,mediaType:'image/png'},base64:buffer.toString('base64')};
 }
 const safe=e=>typeof e?.message==='string'&&/^(?:WORKFLOW_PROP_BASE_|PROP_IMAGE_DESIGN_)[A-Z_]{1,64}$/u.test(e.message)?

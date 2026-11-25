@@ -59,8 +59,8 @@ if(!isAppend){
  const base=execFileSync(python,['-B','-c',`
 import sys
 from PIL import Image,ImageDraw
-im=Image.new('RGBA',(40,32))
-ImageDraw.Draw(im).rectangle((10,8,29,22),fill=(int(sys.argv[1]),55,94,253))
+im=Image.new('RGB',(40,32),(0,255,0))
+ImageDraw.Draw(im).rectangle((10,8,29,22),fill=(int(sys.argv[1]),55,94))
 im.save(sys.stdout.buffer,format='PNG')
 `,operation==='prop.generate'?'90':'180']);
 
@@ -83,19 +83,22 @@ im.save(sys.stdout.buffer,format='PNG')
   assert.equal(await rawPorts.ready(),true);
   const raw=choosePropAnimation(dbPath);
   assert.deepEqual({...raw},{officialRequestId,taskId:taskId(propKeys.motion)});
-  const result=await executePropAnimation(db,raw,new AbortController().signal,{ports:rawPorts,...(isChroma?{prepareInput:createPropI2VInputFraming(python)}:{}),renderer:{async render(job){
-   assert.ok(job.source.length>50);assert.equal(job.motionPrompt,'Only the flame flickers');
-   if(isChroma)assert.deepEqual([job.source.readUInt32BE(16),job.source.readUInt32BE(20)],[512,352]);
+  const result=await executePropAnimation(db,raw,new AbortController().signal,{ports:rawPorts,prepareInput:createPropI2VInputFraming(python),renderer:{async render(job){
+   assert.ok(job.source.length>50);
+   if(isChroma)assert.equal(job.motionPrompt,'Only the flame flickers');
+   else{
+    assert.match(job.motionPrompt,/#00FF00/);
+    assert.ok(job.motionPrompt.endsWith('Requested prop motion: Only the flame flickers'));
+   }
+   assert.deepEqual([job.source.readUInt32BE(16),job.source.readUInt32BE(20)],[512,352]);
    const frames=[60,100,160].map(color=>execFileSync(python,['-B','-c',`
 import sys
 from PIL import Image,ImageDraw
-chroma=sys.argv[2]=='chroma'
-im=Image.new('RGB',(512,352) if chroma else (32,32),(0,255,0) if chroma else (0,0,0))
-ImageDraw.Draw(im).rectangle((128,110,383,310) if chroma else (8,8,23,23),
-                              fill=(255,int(sys.argv[1]),8) if chroma else (int(sys.argv[1]),55,94))
+im=Image.new('RGB',(512,352),(0,255,0))
+ImageDraw.Draw(im).rectangle((128,110,383,310),fill=(255,int(sys.argv[1]),8))
 im.save(sys.stdout.buffer,format='PNG')
-`,String(color),isChroma?'chroma':'plain']));
-   return {frames,width:isChroma?512:32,height:isChroma?352:32,fps:12};
+`,String(color)]));
+   return {frames,width:512,height:352,fps:12};
   }}});
   assert.equal(result.state,'completed',JSON.stringify(result));
   assert.equal(result.frameCount,3);
@@ -109,18 +112,25 @@ const render=async(job,binding,{signal}={})=>{
 import json,runpy,sys
 from pathlib import Path
 from PIL import Image
+sys.path.insert(0,str(Path(sys.argv[1]).parent))
 code=runpy.run_path(sys.argv[1]); root=Path(sys.argv[2])
-def matte(root,paths,key):
- if sys.argv[3]=='chroma': raise AssertionError('approved chroma cannot call learned matting')
- out=[]
- for i,src in enumerate(paths):
-  p=root/('fixture-%d.png'%i)
-  with Image.open(src) as image: rgba=image.convert('RGBA')
-  rgba.putalpha(Image.frombytes('L',rgba.size,bytes(0 if r==0 and g==0 and b==0 else 255 for r,g,b,a in rgba.getdata())))
-  rgba.save(p);out.append(p)
- return out
-(root/'result.png').write_bytes(code['process'](root,json.loads((root/'job.json').read_bytes()),matte))
-`,program,directory,isChroma?'chroma':'plain']);
+spec=json.loads((root/'job.json').read_bytes())
+corridor=spec['kind']=='detail'
+if corridor:
+ import cv2,numpy as np
+ from prop_corridor import prepare
+ prepare(root)
+ out=root/'corridor'/'cutout'
+ out.mkdir(parents=True)
+ for i,path in enumerate(sorted((root/'corridor-input').glob('*.png'))):
+  rgb=cv2.imread(str(path)).astype(np.uint16)*257
+  green=rgb[:,:,1]>np.maximum(rgb[:,:,0],rgb[:,:,2])
+  rgba=np.dstack((rgb,np.where(green,0,65535).astype(np.uint16)))
+  assert cv2.imwrite(str(out/f'{i:06d}.png'),rgba)
+def forbidden(*args):
+ raise AssertionError('legacy matting is not part of this chain')
+(root/'result.png').write_bytes(code['process'](root,spec,forbidden,corridor=corridor))
+`,program,directory]);
  }});}finally{await rm(scratch,{recursive:true,force:true});}
 };
 const derived={};
