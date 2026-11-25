@@ -218,7 +218,7 @@ function portraitArtifact(bytes,command){
 const safePortraitReasons=new Set([
  'WORKFLOW_PORTRAIT_PDS_CONNECT_TIMEOUT','WORKFLOW_PLAN_CHARACTER_CHANGED','WORKFLOW_PLAN_BASIS_INVALID',
  'WORKFLOW_PORTRAIT_PLAN_REQUIRED','WORKFLOW_PORTRAIT_PLAN_CHANGED','WORKFLOW_PORTRAIT_ART_REQUIRED',
- 'WORKFLOW_PLAN_MARKDOWN_CONTRACT','WORKFLOW_PORTRAIT_REFERENCE_INVALID','WORKFLOW_PORTRAIT_PNG_REQUIRED',
+ 'WORKFLOW_PLAN_MARKDOWN_CONTRACT','WORKFLOW_PORTRAIT_READ_OWNER_CHANGED','WORKFLOW_PORTRAIT_REFERENCE_INVALID','WORKFLOW_PORTRAIT_PNG_REQUIRED',
  'PLANNING_FOLDER_MCP_UNAVAILABLE','PLANNING_FOLDER_RESPONSE_INVALID','PLANNING_FOLDER_SNAPSHOT_CHANGED',
  'PLANNING_FOLDER_DIGEST_MISMATCH','PLANNING_FOLDER_MEDIA_NOT_ALLOWED','WORKFLOW_IMAGE_OUTPUT_INVALID',
  'WORKFLOW_IMAGE_TRANSPARENCY_REJECTED','WORKFLOW_IMAGE_NATIVE_START_FAILED','WORKFLOW_IMAGE_NATIVE_TIMEOUT',
@@ -227,9 +227,13 @@ const safePortraitReasons=new Set([
  'WORKFLOW_IMAGE_CANCELLED','WORKFLOW_IMAGE_INPUT_INVALID','WORKFLOW_IMAGE_INPUT_TOO_LARGE',
  'DOCUMENT_WORKER_LOCAL_TRANSPORT',
 ]);
+const databaseDiagnostic=error=>{
+ const code=Number.isInteger(error?.errcode)?error.errcode&255:null;
+ return code===5?'SQLITE_BUSY':code===6?'SQLITE_LOCKED':error?.code==='ERR_SQLITE_ERROR'?'SQLITE_ERROR':undefined;
+};
 const diagnosticFor=(stage,error)=>({
  stage,reason:error?.message==='DOCUMENT_WORKER_LOCAL_TRANSPORT'?'PDS_TRANSPORT_UNCONFIRMED'
-  :safePortraitReasons.has(error?.message)?error.message:'UNCLASSIFIED',
+  :safePortraitReasons.has(error?.message)?error.message:(databaseDiagnostic(error)??'UNCLASSIFIED'),
  ...(planningFolderDiagnostic(error)?{mcp:planningFolderDiagnostic(error)}:{}),
 });
 /** No polling, role fallback, PDS ownership reservation, nor re-execution of a running task. */
@@ -305,15 +309,20 @@ async function runSelected({db,taskId,officialRequestId,pds,operation=PRESET,ren
   stage='record_completion';finish(db,selected,resultRef);phase('completed');
   return {state:'completed',taskId,resultRef};
  }catch(error){
+  let failureTransition;
   if(image&&!publishStarted){
    try{
     if(readOwnerTracked?finishPortraitRead(db,readClaim,{failed:true}):
       markWorkflowTaskFailed(db,{...readClaim,workerType:'image'})){
      phase('failed');return {state:'failed',taskId,code:['WORKFLOW_IMAGE_TRANSPARENCY_REJECTED','WORKFLOW_PORTRAIT_PDS_CONNECT_TIMEOUT'].includes(error?.message)?error.message:'WORKFLOW_PORTRAIT_FAILED_BEFORE_PUBLISH',...diagnostics(error)};
     }
-   }catch{/* exact claim changed or DB transition not confirmed */}
+    failureTransition='CLAIM_NOT_UPDATED';
+   }catch(transitionError){
+    failureTransition=databaseDiagnostic(transitionError)??'TRANSITION_ERROR_UNCLASSIFIED';
+   }
   }
-  return {...unresolved,...diagnostics(error)};
+  const fields=diagnostics(error);
+  return {...unresolved,...fields,...(failureTransition?{diagnostic:{...fields.diagnostic,failureTransition}}:{})};
  }
 }
 export function runSelectedDocument(options){
