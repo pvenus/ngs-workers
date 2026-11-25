@@ -1,3 +1,4 @@
+import {hasPortraitReadOwner,finishPortraitRead} from './portrait-read-owner.mjs';
 /** One exact document task. Storage and rendering are supplied by trusted ports. */
 import {DatabaseSync} from 'node:sqlite';
 import {assertDatabasePath,protectSchema,nextWorkflowTaskFromPath,markWorkflowTaskFailed,workflowTaskEligibleSql,workflowTaskRetrySetSql} from './workflow-ready.mjs';
@@ -104,15 +105,17 @@ function claim(db,taskId,officialRequestId,operation){
   }
   const stamp=Math.max(Date.now(),row.task_updated_at+1);
   if(!Number.isSafeInteger(stamp))throw Error('WORKFLOW_PRESET_CLAIM_CLOCK');
-  const changed=db.prepare(`UPDATE workflow_tasks SET status='running',updated_at=?${canRetry?', '+workflowTaskRetrySetSql:''}
-    WHERE task_id=(SELECT task_id FROM (${query})) AND updated_at=?`).run(stamp,...primary,row.task_updated_at).changes;
+  const readOwnerTracked=canRetry&&hasPortraitReadOwner(db);
+  const claimOwner=readOwnerTracked?[process.pid]:[];
+  const changed=db.prepare(`UPDATE workflow_tasks SET status='running',updated_at=?${canRetry?', '+workflowTaskRetrySetSql:''}${readOwnerTracked?', portrait_read_owner_pid=?':''}
+    WHERE task_id=(SELECT task_id FROM (${query})) AND updated_at=?`).run(stamp,...claimOwner,...primary,row.task_updated_at).changes;
   if(changed!==1)throw Error('WORKFLOW_PRESET_CLAIM_CHANGED');
   const payload=JSON.parse(plan.payload);
   const command=Object.freeze({officialRequestId:row.official_request_id,taskId,projectId:row.project_id,
    npcId:expected.input.npcId,payloadSha256:row.payload_sha256,operation,
    predecessorReceiptRef:row.parent_result_ref??null});
   db.exec('COMMIT');
-  return {row,stamp,command,payload,expected,requireArt,pixel};
+  return {row,stamp,command,payload,expected,requireArt,pixel,readOwnerTracked};
  }catch(e){db.exec('ROLLBACK');throw e;}
 }
 function verifiedPreset(receipt,command){
@@ -227,7 +230,8 @@ async function runSelected({db,taskId,officialRequestId,pds,operation=PRESET,ren
  const selected=claim(db,taskId,officialRequestId,operation);
  if(!selected)return {state:'not_claimable',taskId};
  phase('claimed');
- let publishStarted=false;
+ let publishStarted=false,readOwnerTracked=selected.readOwnerTracked;
+ const readClaim={taskId,officialRequestId,claimStamp:selected.stamp};
  const unresolved={state:'requires_reconciliation',taskId,code:operation===PRESET?'WORKFLOW_PRESET_RECONCILIATION_REQUIRED':image?'WORKFLOW_PORTRAIT_RECONCILIATION_REQUIRED':'WORKFLOW_PLAN_RECONCILIATION_REQUIRED'};
  try{
   let artifact,basis;
@@ -247,6 +251,10 @@ async function runSelected({db,taskId,officialRequestId,pds,operation=PRESET,ren
    phase('verifying-source-folders');
    const resultImage=await withPlanningSnapshot({npcId,signal},async snapshot=>{
     const prepared=portraitInput(await readPlanningSources(snapshot,npcId),selected.payload,basis,input.planningContent,operation,officialRequestId,selected.requireArt,extra);
+    if(readOwnerTracked){
+     if(!finishPortraitRead(db,readClaim))throw Error('WORKFLOW_PORTRAIT_READ_OWNER_CHANGED');
+     readOwnerTracked=false;
+    }
     phase('rendering');return render(prepared,{signal});
    });
    artifact=portraitArtifact(resultImage,selected.command);
@@ -280,8 +288,9 @@ async function runSelected({db,taskId,officialRequestId,pds,operation=PRESET,ren
  }catch(error){
   if(image&&!publishStarted){
    try{
-    if(markWorkflowTaskFailed(db,{taskId,officialRequestId,claimStamp:selected.stamp,workerType:'image'})){
-     phase('failed');return {state:'failed',taskId,code:error?.message==='WORKFLOW_IMAGE_TRANSPARENCY_REJECTED'?error.message:'WORKFLOW_PORTRAIT_FAILED_BEFORE_PUBLISH'};
+    if(readOwnerTracked?finishPortraitRead(db,readClaim,{failed:true}):
+      markWorkflowTaskFailed(db,{...readClaim,workerType:'image'})){
+     phase('failed');return {state:'failed',taskId,code:['WORKFLOW_IMAGE_TRANSPARENCY_REJECTED','WORKFLOW_PORTRAIT_PDS_CONNECT_TIMEOUT'].includes(error?.message)?error.message:'WORKFLOW_PORTRAIT_FAILED_BEFORE_PUBLISH'};
     }
    }catch{/* exact claim changed or DB transition not confirmed */}
   }

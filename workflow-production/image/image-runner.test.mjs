@@ -27,7 +27,8 @@ const cap={enabled:true,schemaVersion:'workflow.representative-portrait-write.v1
 
 for(const mode of ['normal','new-art','missing-art','missing-pose','fresh-no-fallback','aged retry','capped retry','version-bearing basis','stale plan','invalid PNG','renderer error','uncertain ACK','publish disconnect'])test('representative image resident: '+mode,async t=>{
  const root=realpathSync(mkdtempSync(join(tmpdir(),'image-worker-test-'))),dbPath=join(root,'workflow.sqlite');
- const s=new PlannerStore(dbPath);addRetryCount(s.db);chmodSync(dbPath,0o600);
+ const s=new PlannerStore(dbPath);addRetryCount(s.db);
+ s.db.exec('ALTER TABLE workflow_tasks ADD COLUMN portrait_read_owner_pid INTEGER');chmodSync(dbPath,0o600);
  t.after(()=>{s.close();rmSync(root,{recursive:true,force:true});});
  const payload={schemaVersion:'ngs.npc-one-stop.replace.v1',projectId:'binari',intent:'official figure portrait',
   character:{npcId:'npc.ch1_dajeong',name:'다정',slug:'dajeong',role:'fixture',actId:'act1',chapterId:'ch1'},
@@ -71,8 +72,10 @@ for(const mode of ['normal','new-art','missing-art','missing-pose','fresh-no-fal
    assert.equal(running.status,'running');assert.equal(running.retry_count,isRetry?1:0);
    assert.deepEqual(packet.claim,{officialRequestId,taskId,projectId:'binari',npcId:payload.character.npcId,payloadSha256,claimStamp:running.updated_at});
    if(req.url===portraitPath+'/read'){
+    assert.equal(running.portrait_read_owner_pid,process.pid);
     assert.deepEqual(Object.keys(packet),['claim']);data={basis:mode==='version-bearing basis'?{...basis,inputSha256:'a'.repeat(64),generationId:'b'.repeat(48)}:basis,character:payload.character,planningContent};
    }else{
+    assert.equal(running.portrait_read_owner_pid,null);
     assert.deepEqual(packet,{claim:packet.claim,basis,artifact:{schemaVersion:'workflow.npc-representative-portrait-artifact.v1',
      taskId,projectId:'binari',npcId:payload.character.npcId,base64:png.toString('base64'),sha256:sha(png)}});
     if(mode==='publish disconnect'){res.destroy();return;}
@@ -118,6 +121,7 @@ for(const mode of ['normal','new-art','missing-art','missing-pose','fresh-no-fal
  }});
  let rendered=0;
  const render=async input=>{
+  assert.equal(get(officialRequestId).portrait_read_owner_pid,null);
   rendered++;
   if(isRetry){
    // Competing handle cannot claim the now-running retry or increment it again.

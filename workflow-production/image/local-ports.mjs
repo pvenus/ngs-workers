@@ -1,3 +1,4 @@
+import {armConnectionDeadline} from './connection-deadline.mjs';
 import {request} from 'node:http';
 import {exact} from './vendor/planner-f24d23a/planner.mjs';
 
@@ -33,13 +34,14 @@ function claimOf(command,claimStamp){
  return {officialRequestId,taskId,projectId,npcId,payloadSha256,claimStamp};
 }
 
-export function requestLocalJson({port,path,method,body,deadline,signal,responseLimit=65536}){
+export function requestLocalJson({port,path,method,body,deadline,signal,responseLimit=65536,portraitRead=false}){
  return new Promise((resolve,reject)=>{
   const payload=body?Buffer.from(JSON.stringify(body)):null;
-  const signals=[AbortSignal.timeout(deadline)];
-  if(signal)signals.unshift(signal);
-  const fail=()=>reject(Error('DOCUMENT_WORKER_LOCAL_TRANSPORT'));
-  const req=request({hostname:'127.0.0.1',port,path,method,agent:false,signal:AbortSignal.any(signals),
+  const timeout=portraitRead?undefined:AbortSignal.timeout(deadline);
+  const requestSignal=timeout&&signal?AbortSignal.any([signal,timeout]):signal??timeout;
+  const connectError=Error('WORKFLOW_PORTRAIT_PDS_CONNECT_TIMEOUT');
+  const fail=error=>reject(error===connectError?error:Error('DOCUMENT_WORKER_LOCAL_TRANSPORT'));
+  const req=request({hostname:'127.0.0.1',port,path,method,agent:false,signal:requestSignal,
    headers:{Accept:'application/json',...(payload?{'Content-Type':'application/json','Content-Length':payload.length}:{})}},resp=>{
    if(resp.statusCode!==200||!/^application\/json(?:\s*;|$)/i.test(String(resp.headers['content-type']??''))){resp.destroy();fail();return;}
    let len=0;const chunks=[];
@@ -47,6 +49,7 @@ export function requestLocalJson({port,path,method,body,deadline,signal,response
    resp.on('aborted',fail);resp.on('error',fail);
    resp.on('end',()=>{try{resolve(JSON.parse(new TextDecoder('utf-8',{fatal:true}).decode(Buffer.concat(chunks))));}catch{fail();}});
   });
+  if(portraitRead)armConnectionDeadline(req,deadline,connectError);
   req.on('error',fail);req.end(payload);
  });
 }
@@ -77,7 +80,7 @@ export function localPorts({transport=requestLocalJson}={}){
     body:{claim:claimOf(command,claimStamp),inputMode:'folder-snapshot'},deadline:5000});
   },
   async readPortrait(command,claimStamp,signal){
-   return await transport({port:8030,path:routes[command.operation].path+'/read',method:'POST',body:{claim:claimOf(command,claimStamp)},deadline:5000,signal,responseLimit:12*1024*1024});
+   return await transport({port:8030,path:routes[command.operation].path+'/read',method:'POST',body:{claim:claimOf(command,claimStamp)},deadline:5000,signal,responseLimit:12*1024*1024,portraitRead:true});
   },
   async publishPortrait(command,claimStamp,basis,signal){
    return await transport({port:8030,path:routes[command.operation].path,method:'POST',

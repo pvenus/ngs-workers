@@ -1,3 +1,4 @@
+import {armConnectionDeadline} from './connection-deadline.mjs';
 import {createHash} from 'node:crypto';
 import {constants} from 'node:fs';
 import {lstat,mkdir,mkdtemp,open,realpath,rm} from 'node:fs/promises';
@@ -29,8 +30,7 @@ function loopbackCall(url,signal){
  let seq=0,ready;
  const post=(body,limit,notification=false,handshake=false)=>new Promise((resolve,reject)=>{
   const bytes=Buffer.from(JSON.stringify(body));
-  const timeout=AbortSignal.timeout(60_000);
-  const req=request(endpoint,{method:'POST',agent:false,signal:signal?AbortSignal.any([signal,timeout]):timeout,headers:{
+  const req=request(endpoint,{method:'POST',agent:false,signal,headers:{
    Accept:'application/json, text/event-stream','Content-Type':'application/json','Content-Length':String(bytes.length),
    ...(handshake?{}:{'MCP-Protocol-Version':protocolVersion}),
   }},res=>{
@@ -55,6 +55,7 @@ function loopbackCall(url,signal){
     }catch{reject(wire());}
    });
   });
+  armConnectionDeadline(req,5000,wire());
   req.once('error',()=>reject(wire()));req.end(bytes);
  });
  const rpc=(method,params,limit,handshake)=>post({jsonrpc:'2.0',id:++seq,method,params},limit,false,handshake);
