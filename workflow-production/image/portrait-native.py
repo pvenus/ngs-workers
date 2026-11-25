@@ -285,6 +285,43 @@ def cinematic_source_prompt(data):
             json.dumps({k:data[k] for k in ("title","prompt")},ensure_ascii=False,sort_keys=True))
 
 
+
+def cli_failure_status(root):
+    # The pinned CLI runner leaves bounded control receipts in its temporary
+    # workspace. Never forward their text, raw process output or output paths.
+    def read_small(path, limit):
+        try:
+            if path.is_symlink() or not path.is_file() or path.stat().st_size > limit:
+                return None
+            with path.open("rb") as stream:
+                data = stream.read(limit + 1)
+            value = json.loads(data) if len(data) <= limit else None
+            return value if type(value) is dict else None
+        except (OSError, ValueError):
+            return None
+
+    jobs = list((root / "native-cli").glob("node.image.*"))
+    if len(jobs) != 1 or jobs[0].is_symlink():
+        return 22  # No confirmed CLI result.
+    job = jobs[0]
+    exit_receipt = read_small(job / "process-exit.json", 4096)
+    codes = exit_receipt.get("returnCodes") if exit_receipt else None
+    if (not exit_receipt or exit_receipt.get("kind") != "local-processes" or
+            exit_receipt.get("outcome") != "joined" or type(codes) is not list or
+            len(codes) != 1 or type(codes[0]) is not int):
+        return 22
+    if codes[0] != 0:
+        return 23  # CLI process exited with an error.
+    response = read_small(job / "response.json", 60000)
+    if response is None:
+        return 24  # CLI exited cleanly without a valid response.
+    if response.get("state") == "blocked":
+        return 25  # CLI reported no confirmed generated result.
+    if response.get("state") == "generated":
+        return 26  # Reported generated; provider proof or artifact check failed.
+    return 24
+
+
 def main():
     mode, path, expected = sys.argv[1:]
     stopped = threading.Event()
@@ -360,14 +397,19 @@ def main():
         if manifest is not None:
             claim["referenceManifest"] = manifest
         runner = factory(root, stopped)
-        raw, proof = runner.generate(claim)
+        try:
+            raw, proof = runner.generate(claim)
+        except Exception:
+            sys.exit(cli_failure_status(root))
         execution = runner.execution_evidence()
+        if not isinstance(raw, bytes) or len(raw) > _IMAGE_LIMIT or type(proof) is not dict:
+            sys.exit(26)
         actual = hashlib.sha256(raw).hexdigest()
-        if (stopped.is_set() or not execution or execution.get("outcome") != "joined" or
-                not isinstance(raw, bytes) or len(raw) > _IMAGE_LIMIT or proof.get("actualToolOutput") is not True or
+        if (stopped.is_set() or type(execution) is not dict or execution.get("outcome") != "joined" or
+                proof.get("actualToolOutput") is not True or
                 proof.get("sha256") != actual or any(proof.get(k) != claim[k] for k in
                     ("index", "providerClaim", "requestHash", "providerRequestHash"))):
-            raise ValueError("IMAGE_NATIVE_OUTPUT_UNCONFIRMED")
+            sys.exit(26)  # A returned result failed the own output-proof check.
         if manifest is None and not (cinematic or green_prop):
             try:
                 validate_transparency(raw, descriptor["outputContract"], "portrait")

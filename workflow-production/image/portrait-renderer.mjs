@@ -14,6 +14,15 @@ const python='/opt/homebrew/bin/python3.12';
 const maxPNG=8*1024*1024, maxPayload=192*1024;
 const signature=Buffer.from('89504e470d0a1a0a','hex');
 const fail=code=>Error(code);
+export const nativePortraitExitCode=status=>({
+ 21:'WORKFLOW_IMAGE_TRANSPARENCY_REJECTED',
+ 22:'WORKFLOW_IMAGE_CLI_OUTCOME_UNCONFIRMED',
+ 23:'WORKFLOW_IMAGE_CLI_PROCESS_FAILED',
+ 24:'WORKFLOW_IMAGE_CLI_RESPONSE_INVALID',
+ 25:'WORKFLOW_IMAGE_CLI_REPORTED_BLOCKED',
+ 26:'WORKFLOW_IMAGE_CLI_RESULT_REJECTED',
+}[status]??'WORKFLOW_IMAGE_NATIVE_UNCONFIRMED');
+
 
 function options({hostConfig=process.env.WORKFLOW_IMAGE_HOST_CONFIG,hostConfigSha256=process.env.WORKFLOW_IMAGE_HOST_CONFIG_SHA256,
  pythonPath=python}={}){
@@ -55,7 +64,7 @@ async function call({hostConfig,hostConfigSha256,pythonPath},mode,payload,signal
   child.stdin.on('error',()=>{code??='WORKFLOW_IMAGE_NATIVE_INPUT_FAILED';});
   child.on('close',status=>{
    clearTimeout(clock);signal?.removeEventListener('abort',abort);
-   if(code||status!==0)reject(fail(code??(status===21?'WORKFLOW_IMAGE_TRANSPARENCY_REJECTED':'WORKFLOW_IMAGE_NATIVE_UNCONFIRMED')));
+   if(code||status!==0)reject(fail(code??nativePortraitExitCode(status)));
    else resolve(Buffer.concat(chunks));
   });
   child.stdin.end(payload);

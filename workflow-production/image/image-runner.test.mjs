@@ -164,6 +164,17 @@ for(const mode of ['normal','new-art','missing-art','missing-pose','fresh-no-fal
  const result=await imageTick(opts);
  const ambiguous=['uncertain ACK','publish disconnect'].includes(mode),failed=!success&&!ambiguous;
  assert.equal(result.taskId,taskId);assert.equal(result.state,success?'completed':ambiguous?'requires_reconciliation':'failed');
+ const expectedDiagnostics={
+  'renderer error':{stage:'render_image',reason:'UNCLASSIFIED'},
+  'invalid PNG':{stage:'verify_image_result',reason:'WORKFLOW_PORTRAIT_PNG_REQUIRED'},
+  'uncertain ACK':{stage:'verify_publish_ack',reason:'UNCLASSIFIED'},
+  'publish disconnect':{stage:'publish_image',reason:'PDS_TRANSPORT_UNCONFIRMED'},
+  'version-bearing basis':{stage:'read_inputs',reason:'WORKFLOW_PLAN_BASIS_INVALID'},
+ };
+ if(Object.hasOwn(expectedDiagnostics,mode))assert.deepEqual(result.diagnostic,expectedDiagnostics[mode]);
+ if(success)assert.equal(result.diagnostic,undefined);
+ assert.doesNotMatch(JSON.stringify(result),/private fixture error/);
+
  assert.equal(get(officialRequestId).result_ref,null);
  assert.equal(get(officialRequestId).status,success?'completed':ambiguous?'running':'failed');
  assert.deepEqual(unaffected(),before);assert.equal(get(old).status,isRetry?'failed':'pending');assert.equal(get(later).status,'pending');

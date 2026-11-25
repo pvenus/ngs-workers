@@ -214,6 +214,22 @@ function portraitArtifact(bytes,command){
   projectId:command.projectId,npcId:command.npcId,sha256:sha(bytes),base64:bytes.toString('base64')});
 }
 
+const safePortraitReasons=new Set([
+ 'WORKFLOW_PORTRAIT_PDS_CONNECT_TIMEOUT','WORKFLOW_PLAN_CHARACTER_CHANGED','WORKFLOW_PLAN_BASIS_INVALID',
+ 'WORKFLOW_PORTRAIT_PLAN_REQUIRED','WORKFLOW_PORTRAIT_PLAN_CHANGED','WORKFLOW_PORTRAIT_ART_REQUIRED',
+ 'WORKFLOW_PLAN_MARKDOWN_CONTRACT','WORKFLOW_PORTRAIT_REFERENCE_INVALID','WORKFLOW_PORTRAIT_PNG_REQUIRED',
+ 'PLANNING_FOLDER_MCP_UNAVAILABLE','PLANNING_FOLDER_RESPONSE_INVALID','PLANNING_FOLDER_SNAPSHOT_CHANGED',
+ 'PLANNING_FOLDER_DIGEST_MISMATCH','PLANNING_FOLDER_MEDIA_NOT_ALLOWED','WORKFLOW_IMAGE_OUTPUT_INVALID',
+ 'WORKFLOW_IMAGE_TRANSPARENCY_REJECTED','WORKFLOW_IMAGE_NATIVE_START_FAILED','WORKFLOW_IMAGE_NATIVE_TIMEOUT',
+ 'WORKFLOW_IMAGE_CLI_OUTCOME_UNCONFIRMED','WORKFLOW_IMAGE_CLI_PROCESS_FAILED','WORKFLOW_IMAGE_CLI_RESPONSE_INVALID',
+ 'WORKFLOW_IMAGE_CLI_REPORTED_BLOCKED','WORKFLOW_IMAGE_CLI_RESULT_REJECTED','WORKFLOW_IMAGE_NATIVE_UNCONFIRMED',
+ 'WORKFLOW_IMAGE_CANCELLED','WORKFLOW_IMAGE_INPUT_INVALID','WORKFLOW_IMAGE_INPUT_TOO_LARGE',
+ 'DOCUMENT_WORKER_LOCAL_TRANSPORT',
+]);
+const diagnosticFor=(stage,error)=>({
+ stage,reason:error?.message==='DOCUMENT_WORKER_LOCAL_TRANSPORT'?'PDS_TRANSPORT_UNCONFIRMED'
+  :safePortraitReasons.has(error?.message)?error.message:'UNCLASSIFIED',
+});
 /** No polling, role fallback, PDS ownership reservation, nor re-execution of a running task. */
 async function runSelected({db,taskId,officialRequestId,pds,operation=PRESET,render,withPlanningSnapshot,signal,onPhase}){
  if(typeof operation!=='string'||!Object.hasOwn(contracts,operation))throw Error('WORKFLOW_DOCUMENT_OPERATION_DENIED');
@@ -230,14 +246,15 @@ async function runSelected({db,taskId,officialRequestId,pds,operation=PRESET,ren
  const selected=claim(db,taskId,officialRequestId,operation);
  if(!selected)return {state:'not_claimable',taskId};
  phase('claimed');
- let publishStarted=false,readOwnerTracked=selected.readOwnerTracked;
+ let publishStarted=false,readOwnerTracked=selected.readOwnerTracked,stage='claim';
+ const diagnostics=error=>image?{diagnostic:diagnosticFor(stage,error)}:{};
  const readClaim={taskId,officialRequestId,claimStamp:selected.stamp};
  const unresolved={state:'requires_reconciliation',taskId,code:operation===PRESET?'WORKFLOW_PRESET_RECONCILIATION_REQUIRED':image?'WORKFLOW_PORTRAIT_RECONCILIATION_REQUIRED':'WORKFLOW_PLAN_RECONCILIATION_REQUIRED'};
  try{
   let artifact,basis;
   if(operation===PRESET)artifact=canonical(presetArtifact(selected.payload,taskId));
   else if(image){
-   phase('reading-current-basis');
+   stage='read_inputs';phase('reading-current-basis');
    const input=await pds.readPortrait(selected.command,selected.stamp,signal);
    const needsReference=operation!==PORTRAIT,needsDirection=directionOperation(operation);
    const pixelReference=selected.pixel&&needsDirection?centerFor(operation):null;
@@ -248,16 +265,16 @@ async function runSelected({db,taskId,officialRequestId,pds,operation=PRESET,ren
    if(selected.pixel)Object.assign(extra,{imageStyle:pixelImageStyle,posePreset:poseFor(operation)});
    else if(operation===COMBAT_REFERENCE_PORTRAIT)Object.assign(extra,{imageStyle:'original-portrait.v1',posePreset:'combat'});
    const npcId=selected.payload.character.npcId;
-   phase('verifying-source-folders');
+   stage='verify_source_folders';phase('verifying-source-folders');
    const resultImage=await withPlanningSnapshot({npcId,signal},async snapshot=>{
     const prepared=portraitInput(await readPlanningSources(snapshot,npcId),selected.payload,basis,input.planningContent,operation,officialRequestId,selected.requireArt,extra);
     if(readOwnerTracked){
      if(!finishPortraitRead(db,readClaim))throw Error('WORKFLOW_PORTRAIT_READ_OWNER_CHANGED');
      readOwnerTracked=false;
     }
-    phase('rendering');return render(prepared,{signal});
+    stage='render_image';phase('rendering');return render(prepared,{signal});
    });
-   artifact=portraitArtifact(resultImage,selected.command);
+   stage='verify_image_result';artifact=portraitArtifact(resultImage,selected.command);
   }else{
    const input=readBasis(await pds.readRepresentative(selected.command,selected.stamp),selected.payload);
    basis=input.basis;
@@ -277,24 +294,24 @@ async function runSelected({db,taskId,officialRequestId,pds,operation=PRESET,ren
    resultRef=receipt.receiptId;
   }else{
    const command=Object.freeze({...selected.command,artifact});
-   phase('publishing');
+   stage='publish_image';phase('publishing');
    if(image){signal?.throwIfAborted();publishStarted=true;}
    const response=image?await pds.publishPortrait(command,selected.stamp,basis,signal):
     await pds.publishRepresentative(command,selected.stamp,basis);
-   if(!exact(response,['ok'])||response.ok!==true)return unresolved;
+   if(!exact(response,['ok'])||response.ok!==true){stage='verify_publish_ack';return {...unresolved,...diagnostics()};}
   }
-  finish(db,selected,resultRef);phase('completed');
+  stage='record_completion';finish(db,selected,resultRef);phase('completed');
   return {state:'completed',taskId,resultRef};
  }catch(error){
   if(image&&!publishStarted){
    try{
     if(readOwnerTracked?finishPortraitRead(db,readClaim,{failed:true}):
       markWorkflowTaskFailed(db,{...readClaim,workerType:'image'})){
-     phase('failed');return {state:'failed',taskId,code:['WORKFLOW_IMAGE_TRANSPARENCY_REJECTED','WORKFLOW_PORTRAIT_PDS_CONNECT_TIMEOUT'].includes(error?.message)?error.message:'WORKFLOW_PORTRAIT_FAILED_BEFORE_PUBLISH'};
+     phase('failed');return {state:'failed',taskId,code:['WORKFLOW_IMAGE_TRANSPARENCY_REJECTED','WORKFLOW_PORTRAIT_PDS_CONNECT_TIMEOUT'].includes(error?.message)?error.message:'WORKFLOW_PORTRAIT_FAILED_BEFORE_PUBLISH',...diagnostics(error)};
     }
    }catch{/* exact claim changed or DB transition not confirmed */}
   }
-  return unresolved;
+  return {...unresolved,...diagnostics(error)};
  }
 }
 export function runSelectedDocument(options){
