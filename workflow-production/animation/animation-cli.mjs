@@ -19,7 +19,7 @@ import {probeCutsceneEncoder} from './cutscene-i2v.mjs';
 import {WAN_I2V_MODEL_ID,WAN_I2V_QUANTIZATION} from './i2v-wan-graph.mjs';
 import {choosePresetFrames,executePresetFrames,presetFramePorts} from './preset-frame-worker.mjs';
 import {isSelectedMediaRun,isRegenerateRun,selectionSchemas,poseSelectionSchemas,regenerateType,regenerateSchemas,selectedMotionBranch,matchesMotionTask} from './vendor/npc-motion-selection-v1/media-branch.mjs';
-import {assertDatabasePath,protectSchema,nextWorkflowTaskFromPath,markWorkflowTaskFailed,workflowTaskEligibleSql,workflowTaskRetrySetSql} from './workflow-ready.mjs';
+import {assertDatabasePath,protectSchema,nextWorkflowTaskFromPath,oldestRunnable,markWorkflowTaskFailed,workflowTaskEligibleSql,workflowTaskRetrySetSql} from './workflow-ready.mjs';
 
 const path='/v1/npcs/ownership/workflow-animation',type='npc.animation-native-png';
 const directions=['n','ne','e','se','s','sw','w','nw'], motions=['walk','run'];
@@ -89,14 +89,16 @@ function chooseSelected(dbPath){
    motion:target.input.motion,direction:target.input.direction};
  }finally{db.close();}
 }
-function choose(dbPath){
+function animationCandidates(dbPath){
+ const candidates=[];
  for(const direction of directions)for(const motion of motions){
   const key='animation_'+motion+'_'+direction, parent='portrait_'+direction;
   const row=nextWorkflowTaskFromPath(dbPath,{workerType:'animation',taskType:type,taskKey:key,predecessorKey:parent});
-  if(row)return {...row,key,parent,motion,direction};
+  if(row)candidates.push({...row,key,parent,motion,direction});
  }
- return chooseSelected(dbPath);
+ return [...candidates,chooseSelected(dbPath)];
 }
+const choose=dbPath=>oldestRunnable(dbPath,animationCandidates(dbPath))[0];
 function claim(db,t){
  const selected=t.key.startsWith('animation_motion_');
  const fields=selected?'t.*,r.project_id,r.payload_sha256,r.payload,r.request_type,r.schema_version,r.state,r.reason,r.registered_at':
@@ -319,54 +321,58 @@ if(process.argv[1]===fileURLToPath(import.meta.url)){
  try{while(!signal.aborted){
   let idle=false;
   try{
-   const legacy=choose(dbPath);
-   const legacyPreset=legacy?undefined:choosePresetFrames(dbPath);
-   const propTask=!legacy&&!legacyPreset&&propReady.ready()?choosePropAnimation(dbPath):null;
-   const i2vTask=!legacy&&!legacyPreset&&!propTask&&i2vModel&&override?chooseI2V(dbPath):null;
-   const cinematicTask=!legacy&&!legacyPreset&&!propTask&&!i2vTask&&cinematicReady.ready()?chooseCinematic(dbPath):null;
-   const sequenceTask=!legacy&&!legacyPreset&&!propTask&&!i2vTask&&!cinematicTask&&sequenceReady.ready()?chooseCinematicSequence(dbPath):null;
-   const t=legacy??legacyPreset??propTask??i2vTask??cinematicTask??sequenceTask;
+   const byLane=[
+    ['npc',animationCandidates(dbPath)],
+    ['preset',[choosePresetFrames(dbPath)]],
+    ['prop',[propReady.ready()?choosePropAnimation(dbPath):null]],
+    ['i2v',[i2vModel&&override?chooseI2V(dbPath):null]],
+    ['cinematic',[cinematicReady.ready()?chooseCinematic(dbPath):null]],
+    ['sequence',[sequenceReady.ready()?chooseCinematicSequence(dbPath):null]],
+   ];
+   const choice=oldestRunnable(dbPath,byLane.flatMap(([lane,tasks])=>tasks.filter(Boolean).map(task=>({...task,lane}))))[0];
+   const {lane,...job}=choice??{};
+   const t=choice?job:undefined;
    if(!t){
     idle=true; // At the timeout boundary a runnable job takes precedence.
     if(!await warm.idle())throw Error('ANIMATION_PROCESS_STOP_UNCONFIRMED');
-   }else if(propTask){
+   }else if(lane==='prop'){
     modelSlot.assertKnown();
     insist(await prop.ready(signal),'PROP_I2V_PDS_UNAVAILABLE');
     signal.throwIfAborted();
-    const result=await executePropAnimation(db,propTask,signal,{ports:prop,prepareInput:preparePropInput,renderer:{render:job=>modelSlot.runI2V(job)}});
+    const result=await executePropAnimation(db,t,signal,{ports:prop,prepareInput:preparePropInput,renderer:{render:job=>modelSlot.runI2V(job)}});
     if(result.state==='completed')console.log(JSON.stringify(result));
     else if(result.state!=='stale')console.error(JSON.stringify(result));
     if(result.rendererStop==='unknown')await invalidateReady();
     idle=result.state==='stale'||result.rendererStop==='unknown';
-   }else if(i2vTask){
+   }else if(lane==='i2v'){
     modelSlot.assertKnown();
     insist(await i2v.ready(signal),'I2V_PDS_UNAVAILABLE');
     const ready=await i2vModel.probe();
     insist(ready?.ready===true&&ready.model===WAN_I2V_MODEL_ID&&ready.quantization===WAN_I2V_QUANTIZATION,'I2V_MODEL_UNAVAILABLE');
     signal.throwIfAborted();
-    const result=await executeI2V(db,i2vTask,signal,{ports:i2v,renderer:{render:job=>modelSlot.runI2V(job)}});
+    const result=await executeI2V(db,t,signal,{ports:i2v,renderer:{render:job=>modelSlot.runI2V(job)}});
     if(result.state==='completed')console.log(JSON.stringify(result));
     else if(result.state!=='stale')console.error(JSON.stringify(result));
     idle=result.state==='stale'||result.rendererStop==='unknown';
-   }else if(cinematicTask){
+   }else if(lane==='cinematic'){
     modelSlot.assertKnown();
     insist(await cinematic.ready(signal),'CINEMATIC_PDS_UNAVAILABLE');
     signal.throwIfAborted();
-    const result=await executeCinematic(db,cinematicTask,signal,{ports:cinematic,runI2V:job=>modelSlot.runI2V(job)});
+    const result=await executeCinematic(db,t,signal,{ports:cinematic,runI2V:job=>modelSlot.runI2V(job)});
     if(result.state==='completed')console.log(JSON.stringify(result));
     else if(result.state!=='stale')console.error(JSON.stringify(result));
     if(result.rendererStop==='unknown')await invalidateReady();
     idle=result.state==='stale'||result.rendererStop==='unknown';
-   }else if(sequenceTask){
+   }else if(lane==='sequence'){
     modelSlot.assertKnown();
     insist(await sequence.ready(signal),'CINEMATIC_SEQUENCE_PDS_UNAVAILABLE');
     signal.throwIfAborted();
-    const result=await executeCinematicSequence(db,sequenceTask,signal,{ports:sequence,runI2V:job=>modelSlot.runI2V(job)});
+    const result=await executeCinematicSequence(db,t,signal,{ports:sequence,runI2V:job=>modelSlot.runI2V(job)});
     if(result.state==='completed')console.log(JSON.stringify(result));
     else if(result.state!=='stale')console.error(JSON.stringify(result));
     if(result.rendererStop==='unknown')await invalidateReady();
     idle=result.state==='stale'||result.rendererStop==='unknown';
-   }else if(legacy){
+   }else if(lane==='npc'){
     modelSlot.enterWan();
     const r=await local(path,{signal});insist(r.enabled===true&&r.schemaVersion==='workflow.animation-write.v1','ANIMATION_PDS_UNAVAILABLE');
     if(warm.cold()){

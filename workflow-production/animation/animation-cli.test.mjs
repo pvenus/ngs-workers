@@ -28,3 +28,23 @@ test('only native animation after completed matching directional portrait is sel
  assert.equal(choose(file).key,'animation_run_e');
  assert.equal(s.db.prepare("SELECT status FROM workflow_tasks WHERE task_key='animation_walk_n'").get().status,'pending');
 });
+
+test('oldest runnable NPC animation beats the historical direction ordering',t=>{
+ const dir=realpathSync(mkdtempSync(join(tmpdir(),'workflow-wan-order-')));
+ const file=join(dir,'workflow.sqlite'),s=new PlannerStore(file);chmodSync(file,0o600);
+ s.db.exec('ALTER TABLE workflow_tasks ADD COLUMN retry_count INTEGER NOT NULL DEFAULT 0 CHECK(retry_count BETWEEN 0 AND 3)');
+ t.after(()=>{s.close();rmSync(dir,{recursive:true,force:true});});
+ const payload={schemaVersion:'ngs.npc-one-stop.replace.v1',projectId:'binari',intent:'fixture portrait',
+  character:{npcId:'npc.fixture',name:'fixture',slug:'fixture',role:'fixture',actId:'act1',chapterId:'ch1'},sourceRefs:['story.fixture'],includeCombat:false};
+ const older='request.official.'+sha('older anim'),newer='request.official.'+sha('newer anim');
+ for(const [id,at,key] of [[older,1,'portrait_w'],[newer,2,'portrait_e']]){
+  s.stage({officialRequestId:id,projectId:'binari',requestType:'npc.workflow',schemaVersion:payload.schemaVersion,payload,
+   payloadSha256:sha(canonical(payload)),status:'registered',registeredAt:at});
+  s.acknowledge(id);
+  s.db.prepare("UPDATE workflow_tasks SET status='completed' WHERE official_request_id=? AND task_key=?").run(id,key);
+ }
+ assert.equal(choose(file).officialRequestId,older);
+ assert.equal(choose(file).key,'animation_walk_w');
+ s.db.prepare("UPDATE workflow_tasks SET status='failed',updated_at=? WHERE official_request_id=? AND task_key IN ('animation_walk_w','animation_run_w')").run(Date.now(),older);
+ assert.equal(choose(file).officialRequestId,newer);
+});

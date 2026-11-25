@@ -299,3 +299,21 @@ test('document polling retries only its exact aged failed task with completed pr
  assert.deepEqual(others(),siblings);assert.deepEqual(request(),run);
  assert.deepEqual(await documentTick(opts),{state:'idle'});assert.equal(calls,1);
 });
+
+test('older request continues its representative document before a new preset',async t=>{
+ const f=setup(t),s=f.s;
+ const earlier=f.officialRequestId,newer='request.official.'+sha('later document');
+ const first=s.db.prepare("SELECT payload,registered_at FROM workflow_runs WHERE official_request_id=?").get(earlier);
+ const payload=JSON.parse(first.payload);
+ s.stage({officialRequestId:newer,projectId:'binari',requestType:'npc.workflow',schemaVersion:payload.schemaVersion,payload,
+  payloadSha256:sha(canonical(payload)),status:'registered',registeredAt:first.registered_at+1});
+ s.acknowledge(newer);
+ s.db.prepare("UPDATE workflow_tasks SET status='completed' WHERE task_key='delete'").run();
+ s.db.prepare("UPDATE workflow_tasks SET status='completed' WHERE official_request_id=? AND task_key='preset'").run(earlier);
+ const {documentTick}=await import('./runner.mjs');
+ const opts={dbPath:f.dbPath,pds:{capability:async()=>true},rendererFor:()=>undefined,
+  run:async({operation,officialRequestId})=>({state:'picked',operation,officialRequestId})};
+ assert.deepEqual(await documentTick(opts),{state:'picked',operation:'npc.plan-representative',officialRequestId:earlier});
+ s.db.prepare("UPDATE workflow_tasks SET status='failed',updated_at=? WHERE official_request_id=? AND task_key='planning_representative'").run(Date.now(),earlier);
+ assert.deepEqual(await documentTick(opts),{state:'picked',operation:'npc.preset',officialRequestId:newer});
+});

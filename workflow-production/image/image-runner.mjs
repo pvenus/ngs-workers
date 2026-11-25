@@ -1,7 +1,8 @@
+import {oldestRunnable} from './workflow-ready.mjs';
 import {sourceType,nextCinematicSourceFromPath,runCinematicSourceFromPath} from './cinematic-source-worker.mjs';
 import {propBaseOperations,nextPropBaseFromPath,runPropBaseFromPath} from './prop-base-worker.mjs';
 import {propImageOperation,nextPropImageFromPath,runPropImageFromPath} from './prop-image-worker.mjs';
-import {PORTRAIT,imageOperations,nextPortraitFromPath,probePresetDatabase,runPortraitFromPath} from './worker.mjs';
+import {PORTRAIT,imageOperations,portraitCandidatesFromPath,probePresetDatabase,runPortraitFromPath} from './worker.mjs';
 import {motionImageOperation,nextMotionImageFromPath,runMotionImageFromPath} from './motion-neutral-reference.mjs';
 
 export function parseImageArgs(args){
@@ -29,22 +30,18 @@ export async function imageHealth({dbPath,pds,providerReady,signal,operation=POR
  return {ready:true};
 }
 
-function selectImageTask(dbPath){
- const portrait=nextPortraitFromPath(dbPath);
- if(portrait)return portrait;
+export function selectImageTasks(dbPath){
  const motion=nextMotionImageFromPath(dbPath);
- if(motion)return {...motion,operation:motionImageOperation};
  const prop=nextPropImageFromPath(dbPath);
- if(prop)return {...prop,operation:propImageOperation};
- const base=nextPropBaseFromPath(dbPath);
- if(base)return base;
  const source=nextCinematicSourceFromPath(dbPath);
- return source?{...source,operation:sourceType}:null;
+ return oldestRunnable(dbPath,[...portraitCandidatesFromPath(dbPath),
+  motion&&{...motion,operation:motionImageOperation},prop&&{...prop,operation:propImageOperation},
+  nextPropBaseFromPath(dbPath),source&&{...source,operation:sourceType}]);
 }
 const executeImage=options=>options.operation===sourceType?runCinematicSourceFromPath(options):Object.hasOwn(propBaseOperations,options.operation)?runPropBaseFromPath(options):options.operation===propImageOperation?runPropImageFromPath(options):options.operation===motionImageOperation?runMotionImageFromPath(options):runPortraitFromPath(options);
 
 /** At most one runnable image task per tick. Never reclaims running rows. */
-export async function imageTick(options,{select=selectImageTask,execute=executeImage,check=imageHealth}={}){
+export async function imageTick(options,{select=selectImageTasks,execute=executeImage,check=imageHealth}={}){
  const {mode,dbPath,signal,admissionSignal,onHealth}=options;
  const stopping=()=>signal?.aborted||admissionSignal?.aborted;
  if(stopping())return {state:'stopping'};
@@ -55,12 +52,14 @@ export async function imageTick(options,{select=selectImageTask,execute=executeI
  if(mode==='watch')return {state:'ready'};
  if(mode==='execute')return execute(options);
  if(mode!=='run')throw Error('IMAGE_WORKER_EXPLICIT_MODE_REQUIRED');
- const target=select(dbPath);
- if(!target)return {state:'idle'};
- if(target.operation&&target.operation!==PORTRAIT&&!await options.pds.capability(signal,target.operation))
-  return {state:'not_ready',code:'IMAGE_WORKER_STAGE_PDS_UNAVAILABLE'};
- if(stopping())return {state:'stopping'};
- return execute({...options,...target});
+ const choice=select(dbPath);
+ const targets=Array.isArray(choice)?choice:[choice].filter(Boolean);
+ for(const target of targets){
+  if(target.operation&&target.operation!==PORTRAIT&&!await options.pds.capability(signal,target.operation))continue;
+  if(stopping())return {state:'stopping'};
+  return execute({...options,...target});
+ }
+ return targets.length?{state:'not_ready',code:'IMAGE_WORKER_STAGE_PDS_UNAVAILABLE'}:{state:'idle'};
 }
 
 /** Keep OPS liveness independent of a long asynchronous renderer call. */

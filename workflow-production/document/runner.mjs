@@ -3,7 +3,7 @@ import {runPropDesignFromPath} from './prop-design-worker.mjs';
 import {probePresetDatabase,runDocumentFromPath} from './worker.mjs';
 
 import {motionPoseRegistry} from './vendor/planner-npc-motion-selection-v1/envelope.mjs';
-import {nextWorkflowTaskFromPath} from './workflow-ready.mjs';
+import {nextWorkflowTaskFromPath,oldestRunnable} from './workflow-ready.mjs';
 
 const CONCEPT='concept.category-generate',UPDATE='npc.planning.update',ADD='npc.planning.add';
 const PRESET='npc.preset',OVERVIEW='npc.plan-overview',ART='npc.plan-portrait-art',REP='npc.plan-representative',IDLE='npc.plan-idle',COMBAT='npc.plan-combat';
@@ -56,18 +56,22 @@ export async function executeOnce({dbPath,officialRequestId,taskId,pds,operation
 export async function documentTick({dbPath,pds,operation,rendererFor,withPlanningSnapshot,signal,
  next=nextWorkflowTaskFromPath,run=runDocumentFromPath,runProp=runPropDesignFromPath}){
  if(signal?.aborted)return {state:'stopping'};
- let pending=false;
+ const candidates=[];
  for(const spec of supported){
   if(operation&&operation!==spec.taskType)continue;
   let task;
   try{task=next(dbPath,spec);}catch{return {state:'not_ready',code:'DOCUMENT_WORKER_DATABASE_UNAVAILABLE'};}
-  if(!task)continue;
-  pending=true;
-  if(!await pds.capability(signal,spec.taskType))continue;
-  if(signal?.aborted)return {state:'stopping'};
-  const result=await (isPropDesignOperation(spec.taskType)?runProp:run)({dbPath,pds,operation:spec.taskType,...task,withPlanningSnapshot,signal,
-   render:spec.taskType===PRESET?undefined:rendererFor(spec.taskType)});
-  return {...result,operation:spec.taskType};
+  if(task)candidates.push({...task,operation:spec.taskType});
  }
- return pending?{state:'not_ready',code:'DOCUMENT_WORKER_PDS_UNAVAILABLE'}:{state:'idle'};
+ let ready;
+ try{ready=oldestRunnable(dbPath,candidates);}catch{return {state:'not_ready',code:'DOCUMENT_WORKER_DATABASE_UNAVAILABLE'};}
+ for(const task of ready){
+  const operation=task.operation;
+  if(!await pds.capability(signal,operation))continue;
+  if(signal?.aborted)return {state:'stopping'};
+  const result=await (isPropDesignOperation(operation)?runProp:run)({dbPath,pds,...task,withPlanningSnapshot,signal,
+   render:operation===PRESET?undefined:rendererFor(operation)});
+  return {...result,operation};
+ }
+ return ready.length?{state:'not_ready',code:'DOCUMENT_WORKER_PDS_UNAVAILABLE'}:{state:'idle'};
 }

@@ -1,7 +1,7 @@
 import {hasPortraitReadOwner,finishPortraitRead} from './portrait-read-owner.mjs';
 /** One exact document task. Storage and rendering are supplied by trusted ports. */
 import {DatabaseSync} from 'node:sqlite';
-import {assertDatabasePath,protectSchema,nextWorkflowTaskFromPath,markWorkflowTaskFailed,workflowTaskEligibleSql,workflowTaskRetrySetSql} from './workflow-ready.mjs';
+import {assertDatabasePath,protectSchema,nextWorkflowTaskFromPath,oldestRunnable,markWorkflowTaskFailed,workflowTaskEligibleSql,workflowTaskRetrySetSql} from './workflow-ready.mjs';
 export {nextWorkflowTaskFromPath} from './workflow-ready.mjs';
 import {buildPlan,directions,exact} from './vendor/planner-f24d23a/planner.mjs';
 import {buildPlan as buildPixelPlan,pixelImageStyle,portraitPixelTaskType} from './vendor/planner-pixel-sprite-v1/planner.mjs';
@@ -328,15 +328,18 @@ export const runDocumentFromPath=options=>runFromPath(runSelectedDocument,option
 export const runPortraitFromPath=options=>runFromPath(runSelectedPortrait,options);
 export const runPresetFromPath=options=>runDocumentFromPath({...options,operation:PRESET});
 
-export function nextPortraitFromPath(dbPath){
+export function portraitCandidatesFromPath(dbPath){
+ const candidates=[];
  for(const operation of imageOperations){
   const {key,parent}=contracts[operation];
   for(const taskKey of key?[key]:directions.map(value=>directionKey(operation,value))){
    const candidate=predecessorKey=>nextWorkflowTaskFromPath(dbPath,{workerType:'image',taskType:operation,taskKey,predecessorKey,
     ...(referenceOperation(operation)?{alsoCompleted:idleImagePrerequisite}:{})});
-   const target=candidate(parent)??(operation===DIRECTION_PORTRAIT?candidate(pixelCenterKey):null);
-   if(target)return {...target,operation};
+   for(const target of operation===DIRECTION_PORTRAIT?[candidate(parent),candidate(pixelCenterKey)]:[candidate(parent)]){
+    if(target)candidates.push({...target,operation});
+   }
   }
  }
- return null;
+ return candidates;
 }
+export const nextPortraitFromPath=dbPath=>oldestRunnable(dbPath,portraitCandidatesFromPath(dbPath))[0]??null;

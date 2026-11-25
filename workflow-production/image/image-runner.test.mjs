@@ -343,3 +343,25 @@ test('resident stop during per-stage preflight refuses to claim',async ()=>{
   execute:()=>assert.fail('must not claim')};
  assert.deepEqual(await imageTick(opts,ports),{state:'stopping'});
 });
+
+test('older runnable idle portrait takes precedence over a newer representative',async t=>{
+ const root=realpathSync(mkdtempSync(join(tmpdir(),'image-request-order-'))),dbPath=join(root,'workflow.sqlite');
+ const s=new PlannerStore(dbPath);addRetryCount(s.db);chmodSync(dbPath,0o600);
+ t.after(()=>{s.close();rmSync(root,{recursive:true,force:true});});
+ const payload={schemaVersion:'ngs.npc-one-stop.replace.v1',projectId:'binari',intent:'fixture portrait',
+  character:{npcId:'npc.fixture',name:'fixture',slug:'fixture',role:'fixture',actId:'act1',chapterId:'ch1'},sourceRefs:['story.fixture'],includeCombat:false};
+ const older='request.official.'+sha('older'),newer='request.official.'+sha('newer');
+ for(const [id,at] of [[older,1],[newer,2]]){
+  s.stage({officialRequestId:id,projectId:'binari',requestType:'npc.workflow',schemaVersion:payload.schemaVersion,payload,payloadSha256:sha(canonical(payload)),status:'registered',registeredAt:at});
+  s.acknowledge(id);
+ }
+ const set=(id,key)=>s.db.prepare("UPDATE workflow_tasks SET status='completed' WHERE official_request_id=? AND task_key=?").run(id,key);
+ set(newer,'planning_representative');set(older,'planning_idle');
+ const run=()=>imageTick({mode:'run',dbPath,pds:{capability:async()=>true}},{
+  check:async()=>({ready:true}),execute:async({officialRequestId,operation})=>[officialRequestId,operation]});
+ assert.deepEqual(await run(),[newer,'npc.portrait-representative']);
+ set(older,'portrait_representative');
+ assert.deepEqual(await run(),[older,'npc.portrait-idle-reference']);
+ s.db.prepare("UPDATE workflow_tasks SET status='failed',updated_at=? WHERE official_request_id=? AND task_key='portrait_idle_reference'").run(Date.now(),older);
+ assert.deepEqual(await run(),[newer,'npc.portrait-representative']);
+});

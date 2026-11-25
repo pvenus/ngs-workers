@@ -58,3 +58,22 @@ export function markWorkflowTaskFailed(db,{taskId,officialRequestId,claimStamp,w
    AND updated_at=? AND result_ref IS NULL`)
   .run(Math.max(Date.now(),claimStamp+1),taskId,officialRequestId,workerType,claimStamp).changes===1;
 }
+
+// Merge the already-eligible head of each worker lane. Request registration
+// time is immutable; task updated_at is only an eligibility/retry clock.
+// Lane order breaks ties only inside the same parent request.
+export function oldestRunnable(dbPath, candidates) {
+ const ready=candidates.filter(Boolean);
+ const ids=[...new Set(ready.map(task=>task.officialRequestId))];
+ if(ids.length<=1)return ready;
+ assertDatabasePath(dbPath);
+ const db=new DatabaseSync(dbPath,{readOnly:true});
+ try {
+  const parents=db.prepare(`SELECT official_request_id FROM workflow_runs
+   WHERE state='planned' AND official_request_id IN (${ids.map(()=>'?').join(',')})
+   ORDER BY registered_at,official_request_id`).all(...ids);
+  const ranks=new Map(parents.map((row,i)=>[row.official_request_id,i]));
+  return ready.filter(task=>ranks.has(task.officialRequestId))
+   .sort((a,b)=>ranks.get(a.officialRequestId)-ranks.get(b.officialRequestId));
+ }finally{db.close();}
+}
