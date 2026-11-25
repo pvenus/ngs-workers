@@ -88,7 +88,9 @@ export function validateOneStop(value,projectId){
      !['act1','act01'].includes(c.actId)||!/^(?:ch|chapter0)[1-5]$/.test(c.chapterId))throw invalid();
  }else if(!/^npc\.[A-Za-z0-9][A-Za-z0-9._-]*$/i.test(c.npcId)||
    (replace&&!/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(c.slug)))throw invalid();
- if(selected)validateMotionSelection(value.motionSelection);
+ if(selected){
+  if(replace||!Array.isArray(value.motionSelection)||value.motionSelection.length)validateMotionSelection(value.motionSelection);
+ }
  else {
   if(Object.hasOwn(value,'motionPresets')&&(!keys(value.motionPresets,['walk','run'])||
      value.motionPresets.walk!=='walk'||value.motionPresets.run!=='run'))throw invalid();
