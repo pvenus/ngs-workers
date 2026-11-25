@@ -8,7 +8,7 @@ import {validatePlanningMarkdown} from './planning-markdown.mjs';
 import {presetArtifact} from './preset.mjs';
 import {resolvePlanningDocument} from './planning-document-storage.mjs';
 import {preparePlanningSources,readPlanningSources} from './planning-input.mjs';
-import {buildPlan as buildSelectionPlan,isSelectionSchema} from './vendor/planner-npc-motion-selection-v1/planner.mjs';
+import {buildPlan as buildSelectionPlan,isSelectionSchema,isBasicSchema} from './vendor/planner-npc-motion-selection-v1/planner.mjs';
 import {motionPoseRegistry} from './vendor/planner-npc-motion-selection-v1/envelope.mjs';
 import {canonical,sha} from './vendor/planner-f24d23a/envelope.mjs';
 
@@ -71,8 +71,9 @@ function claim(db,taskId,officialRequestId,operation){
   if(!row){db.exec('COMMIT');return null;}
   const taskInput=JSON.parse(row.task_input);
   const pixel=taskInput.imageStyle===pixelImageStyle;
-  if((pixel&&!referenceOperation(operation)&&!directionOperation(operation))||(!pixel&&poseFor(operation)!==undefined&&poseFor(operation)!=='idle'))throw Error('WORKFLOW_PORTRAIT_STYLE_INVALID');
-  const build=isSelectionSchema(row.schema_version)?buildSelectionPlan:pixel?buildPixelPlan:buildPlan;
+  const basic=isBasicSchema(row.schema_version);
+  if((pixel&&!referenceOperation(operation)&&!directionOperation(operation))||(!pixel&&poseFor(operation)!==undefined&&poseFor(operation)!=='idle'&&!(basic&&operation===COMBAT_REFERENCE_PORTRAIT)))throw Error('WORKFLOW_PORTRAIT_STYLE_INVALID');
+  const build=(basic||isSelectionSchema(row.schema_version))?buildSelectionPlan:pixel?buildPixelPlan:buildPlan;
   const plan=build({officialRequestId:row.official_request_id,projectId:row.project_id,
    requestType:row.request_type,schemaVersion:row.schema_version,payload:JSON.parse(row.payload),
    payloadSha256:row.payload_sha256,status:'registered',registeredAt:row.registered_at},{pixelPortraits:pixel});
@@ -241,6 +242,7 @@ async function runSelected({db,taskId,officialRequestId,pds,operation=PRESET,ren
    const extra=needsReference?{reference:portraitReference(input.reference),...(needsDirection?{direction:input.direction}:{})}:{};
    if(pixelReference&&extra.reference.assetId!==basis.referenceAssetId)throw Error('WORKFLOW_PORTRAIT_PIXEL_REFERENCE_CHANGED');
    if(selected.pixel)Object.assign(extra,{imageStyle:pixelImageStyle,posePreset:poseFor(operation)});
+   else if(operation===COMBAT_REFERENCE_PORTRAIT)Object.assign(extra,{imageStyle:'original-portrait.v1',posePreset:'combat'});
    const npcId=selected.payload.character.npcId;
    phase('verifying-source-folders');
    const resultImage=await withPlanningSnapshot({npcId,signal},async snapshot=>{

@@ -33,7 +33,7 @@ instruction=sys.stdin.read()
 journal=pathlib.Path(args[args.index('--cd')+1])/'native-journal'
 request=json.loads(next(journal.glob('*.arguments.json')).read_text())
 assert request['transparent_background'] is True
-if ${JSON.stringify(kind)} in ('modern','opaque','pixel-center','pixel-direction'):
+if ${JSON.stringify(kind)} in ('modern','opaque','pixel-center','pixel-direction','original-combat'):
  assert 'common-art-block' in request['prompt']
  assert 'pose-only-block' in request['prompt']
  assert 'Current character and expression context' not in request['prompt']
@@ -42,7 +42,7 @@ else:
  assert 'The original guide in a blue coat.' in request['prompt']
 assert 'never-fetch-this-marker' not in request['prompt']
 assert 'image_gen__imagegen' in instruction
-if ${JSON.stringify(kind)} in ('idle','direction','pixel-center','pixel-direction'):
+if ${JSON.stringify(kind)} in ('idle','direction','pixel-center','pixel-direction','original-combat'):
  import hashlib
  refs=request['referenced_image_paths']
  assert len(refs)==1
@@ -52,6 +52,7 @@ if ${JSON.stringify(kind)} in ('idle','direction','pixel-center','pixel-directio
  assert 'tools.view_image' in instruction
  if ${JSON.stringify(kind)}=='idle': assert 'noncombat idle reference' in request['prompt']
  elif ${JSON.stringify(kind)}=='direction': assert 'do not mirror or rotate the flat image' in request['prompt']
+ elif ${JSON.stringify(kind)}=='original-combat': assert 'original full-body combat portrait' in request['prompt']
  elif ${JSON.stringify(kind)}=='pixel-center': assert 'central idle pixel sprite' in request['prompt'] and 'original representative portrait' in request['prompt']
  else: assert 'already downscaled and pixel-corrected canonical center idle sprite' in request['prompt'] and 'direction NW' in request['prompt']
 pathlib.Path(${JSON.stringify(commandLog)}).write_text(json.dumps(request))
@@ -130,4 +131,20 @@ for(const kind of ['pixel-center','pixel-direction'])test('native image tool get
  assert.match(sent.referenced_image_paths[0],new RegExp(reference.sha256+'\\.png$'));
  await assert.rejects(access(sent.referenced_image_paths[0]),{code:'ENOENT'});
  await assert.rejects(render({...command,reference:undefined}),/INPUT_INVALID/);
+});
+
+
+test('original combat attaches the representative and explicitly does not pixelize',{skip:!from},async t=>{
+ const {options,commandLog}=await fixture(t,'original-combat');
+ const image=Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVR4nGNgAAIAAAUAAXpeqz8AAAAASUVORK5CYII=','base64');
+ const reference={assetId:sha(image)+'.png',sha256:sha(image),base64:image.toString('base64')};
+ const command={character:input.character,artDirection:'common-art-block',poseDirection:'pose-only-block',reference,
+  imageStyle:'original-portrait.v1',posePreset:'combat'};
+ const render=createPortraitRenderer(options);
+ assert((await render(command)).length>0);
+ const sent=JSON.parse(await readFile(commandLog,'utf8'));
+ assert.match(sent.prompt,/original full-body combat portrait/);
+ assert.match(sent.prompt,/No pixel-art treatment/);
+ assert.equal(sent.referenced_image_paths.length,1);
+ await assert.rejects(render({...command,direction:'nw'}),/INPUT_INVALID/);
 });

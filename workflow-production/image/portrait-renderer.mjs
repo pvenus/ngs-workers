@@ -105,7 +105,8 @@ export function createPortraitRenderer(config){
   const direction=input?.direction;
   const styled=input!=null&&(Object.hasOwn(input,'imageStyle')||Object.hasOwn(input,'posePreset'));
   if(!exact(input,[...base,...(ref?['reference']:[]),...(direction?['direction']:[]),...(styled?['imageStyle','posePreset']:[])])||
-     (styled&&(!ref||input.imageStyle!=='pixel-sprite.v1'||!['idle','combat'].includes(input.posePreset)))||
+     (styled&&(!ref||!(input.imageStyle==='pixel-sprite.v1'&&['idle','combat'].includes(input.posePreset)||
+      input.imageStyle==='original-portrait.v1'&&input.posePreset==='combat'&&!direction)))||
      (direction&&(!ref||!['n','ne','e','se','s','sw','w','nw'].includes(direction)))||
      (ref&&(!exact(ref,['assetId','sha256','base64'])||typeof ref.base64!=='string'||!(/^[a-f0-9]{64}$/).test(ref.sha256)||ref.assetId!==ref.sha256+'.png'))||
      !exact(input.character,['npcId','slug','name','role','actId','chapterId'])||

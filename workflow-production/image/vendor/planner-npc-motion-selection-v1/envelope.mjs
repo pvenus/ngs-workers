@@ -9,7 +9,9 @@ export const selectionSchemaVersion='ngs.npc-one-stop.selection.v1',
 export const legacyOneStopSchemas=Object.freeze([schemaVersion,replaceSchemaVersion]);
 export const poseSelectionSchemas=Object.freeze([poseSelectionSchemaVersion,poseSelectionReplaceSchemaVersion]);
 export const selectionSchemas=Object.freeze([selectionSchemaVersion,selectionReplaceSchemaVersion,...poseSelectionSchemas]);
-export const oneStopSchemas=Object.freeze([...legacyOneStopSchemas,...selectionSchemas]);
+export const basicSchemaVersion='ngs.npc-one-stop.basic.v1';
+export const isBasicSchema=schema=>schema===basicSchemaVersion;
+export const oneStopSchemas=Object.freeze([...legacyOneStopSchemas,...selectionSchemas,basicSchemaVersion]);
 export const isSelectionSchema=schema=>selectionSchemas.includes(schema);
 export const isPoseSelectionSchema=schema=>poseSelectionSchemas.includes(schema);
 export const isReplaceSchema=schema=>schema===replaceSchemaVersion||schema===selectionReplaceSchemaVersion||schema===poseSelectionReplaceSchemaVersion;
@@ -69,7 +71,12 @@ export function validateOneStop(value,projectId){
  const fields=['schemaVersion','projectId','intent','character','sourceRefs'];
  if(!object(value)||!oneStopSchemas.includes(value.schemaVersion))throw invalid();
  const selected=isSelectionSchema(value.schemaVersion);
- const validShape=selected?keys(value,[...fields,'motionSelection']):
+ const basic=isBasicSchema(value.schemaVersion);
+ const hasCombatRequirements=Object.hasOwn(value,'combatRequirements');
+ const validShape=basic?keys(value,[...fields,'includeCombat',...(hasCombatRequirements?['combatRequirements']:[])])&&
+  typeof value.includeCombat==='boolean'&&(!hasCombatRequirements||(value.includeCombat===true&&
+   fits(value.combatRequirements,1,900)&&value.combatRequirements===value.combatRequirements.trim()&&
+   !/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f]/u.test(value.combatRequirements))):selected?keys(value,[...fields,'motionSelection']):
   fields.every(k=>Object.hasOwn(value,k))&&typeof value.includeCombat==='boolean'&&
   !Object.keys(value).some(k=>!fields.includes(k)&&!['includeCombat','motionPresets','combatMotionPresets'].includes(k))&&
   Object.hasOwn(value,'includeCombat');
@@ -80,6 +87,8 @@ export function validateOneStop(value,projectId){
  if(!keys(c,['npcId','name','slug','role','actId','chapterId'])||
     !['npcId','slug','actId','chapterId'].every(k=>ident(c[k]))||
     !fits(c.name,1,60)||!c.name.trim()||!fits(c.role,1,300)||!c.role.trim())throw invalid();
+ if(basic&&(!/^[a-z0-9][a-z0-9._-]{1,79}$/.test(c.slug)||c.npcId!=='npc.'+c.slug||
+   !['act1','act01'].includes(c.actId)||!/^(?:ch|chapter0)[1-5]$/.test(c.chapterId)))throw invalid();
  const replace=isReplaceSchema(value.schemaVersion);
  if(c.npcId.startsWith('character.')){
   // Imported, enrolled NPCs keep their canonical legacy owner ID on replacement.
@@ -91,7 +100,7 @@ export function validateOneStop(value,projectId){
  if(selected){
   if(replace||!Array.isArray(value.motionSelection)||value.motionSelection.length)validateMotionSelection(value.motionSelection);
  }
- else {
+ else if(!basic){
   if(Object.hasOwn(value,'motionPresets')&&(!keys(value.motionPresets,['walk','run'])||
      value.motionPresets.walk!=='walk'||value.motionPresets.run!=='run'))throw invalid();
   if(value.includeCombat){

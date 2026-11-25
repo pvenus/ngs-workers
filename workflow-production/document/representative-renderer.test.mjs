@@ -295,3 +295,15 @@ test('combat output with no concrete weapon cannot be published by the renderer'
    portraitArtContent:'아트 원본',representativeContent:'대표 원본'},{fourDoc:true}),/WORKFLOW_PLAN_COMBAT_WEAPON_REQUIRED/);
  }
 });
+
+test('combat-only requirements reach exactly the combat CLI input',async t=>{
+ const combatRequirements='전용 예시: 오른손 환도';
+ const roleInput={...input,portraitArtContent:'아트 원본',representativeContent:'대표 원본',combatRequirements};
+ const operation='npc.plan-combat';
+ const content='# 전투 기획\n'+planningHeadings[operation].map(h=>'## '+h+'\n'+(h==='전투 자세'?'무기: 환도, 오른손.':'기획 본문')).join('\n');
+ const {binary,read}=await fixture(t,emit({content}));
+ assert.equal(await createRepresentativeRenderer({codexPath:binary,operation})(roleInput,{fourDoc:true}),content);
+ const {prompt}=await read();
+ assert.equal(JSON.parse(prompt.trimEnd().split('\n').at(-1)).combatRequirements,combatRequirements);
+ await assert.rejects(createRepresentativeRenderer({codexPath:binary,operation:'npc.plan-idle'})(roleInput,{fourDoc:true}),/WORKFLOW_PLAN_COMBAT_INPUT_INVALID/);
+});

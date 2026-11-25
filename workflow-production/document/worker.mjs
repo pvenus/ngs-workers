@@ -11,7 +11,7 @@ import {buildPlan as buildFourDocPlan} from './vendor/planner-four-doc-v1/planne
 import {validatePlanningMarkdown} from './planning-markdown.mjs';
 import {presetArtifact} from './preset.mjs';
 import {readPlanningSources,assertCurrentPlanning} from './planning-input.mjs';
-import {buildPlan as buildSelectionPlan,isSelectionSchema} from './vendor/planner-npc-motion-selection-v1/planner.mjs';
+import {buildPlan as buildSelectionPlan,isSelectionSchema,isBasicSchema} from './vendor/planner-npc-motion-selection-v1/planner.mjs';
 import {motionPoseRegistry} from './vendor/planner-npc-motion-selection-v1/envelope.mjs';
 import {canonical,sha} from './vendor/planner-89c7568/envelope.mjs';
 
@@ -76,7 +76,7 @@ function claim(db,taskId,officialRequestId,operation){
   const extra=db.prepare("SELECT task_key FROM workflow_tasks WHERE official_request_id=? AND task_key IN ('planning_overview','planning_portrait_art')").all(officialRequestId);
   if(extra.length!==0&&extra.length!==2)throw Error('WORKFLOW_DOCUMENT_GRAPH_INVALID');
   const fourDoc=extra.length===2;
-  const selection=isSelectionSchema(row.schema_version);
+  const selection=isSelectionSchema(row.schema_version)||isBasicSchema(row.schema_version);
   if(selection&&!fourDoc)throw Error('WORKFLOW_DOCUMENT_GRAPH_INVALID');
   const plan=(operation===ADD?buildAddPlan:operation===UPDATE?buildUpdatePlan:operation===CONCEPT?buildConceptPlan:selection?buildSelectionPlan:fourDoc?buildFourDocPlan:buildLegacyPlan)({officialRequestId:row.official_request_id,projectId:row.project_id,
    requestType:row.request_type,schemaVersion:row.schema_version,payload:JSON.parse(row.payload),
@@ -283,13 +283,14 @@ export async function runSelectedDocument({db,taskId,officialRequestId,pds,opera
   else{
    const input=readBasis(await pds[read](selected.command,selected.stamp),selected,operation);
    basis=input.basis;
-   const {character,intent,sourceRefs}=selected.payload;
+   const {character,intent,sourceRefs,combatRequirements}=selected.payload;
    const content=await withPlanningSnapshot({npcId:character.npcId,signal},async snapshot=>
     {
      const sources=await readPlanningSources(snapshot,character.npcId);
      const prior=Object.fromEntries(input.upstream.map(([name,parent])=>[name,assertCurrentPlanning(sources,
       contracts[parent].role,input.prior[name],selected.fourDoc?targetCategory(officialRequestId,parent):undefined)]));
      return render({character:{...character},intent,sourceRefs:[...sourceRefs],presetMetadata:input.presetMetadata,
+      ...(operation==='npc.plan-combat'&&combatRequirements?{combatRequirements}:{}),
       ...prior,sources},{signal,fourDoc:selected.fourDoc});
     });
    if(!goodText(content))throw Error('WORKFLOW_PLAN_CONTENT_INVALID');

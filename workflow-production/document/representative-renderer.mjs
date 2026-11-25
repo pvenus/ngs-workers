@@ -68,7 +68,8 @@ const typed=(value,max,min=1)=>typeof value==='string'&&value.trim().length>=min
  &&!/[\u0000-\u0008\u000B-\u001F\u007F]/u.test(value);
 
 function buildInput(input={},operation,fourDoc){
- const {character,intent,sourceRefs,presetMetadata,sources}=input;
+ const {character,intent,sourceRefs,presetMetadata,sources,combatRequirements}=input;
+ if(combatRequirements!==undefined&&(operation!=='npc.plan-combat'||!typed(combatRequirements,900)))throw Error('WORKFLOW_PLAN_COMBAT_INPUT_INVALID');
  const limits=[128,60,124,300,128,128];
  if(!character||inputKeys.some((key,i)=>!typed(character[key],limits[i]))||!typed(intent,3500,5)||!typed(presetMetadata,8000)||
   !Array.isArray(sourceRefs)||sourceRefs.length<1||sourceRefs.length>64||sourceRefs.some(ref=>!typed(ref,300))){
@@ -79,6 +80,7 @@ function buildInput(input={},operation,fourDoc){
  if(fourDoc&&(!Object.hasOwn(upstreamKeys,operation)))throw Error('WORKFLOW_PLAN_OPERATION_INVALID');
  const selection=preparePlanningSources(sources,character.npcId,{includeStatus:fourDoc});
  return {data:{character:Object.fromEntries(inputKeys.map(key=>[key,character[key]])),intent,sourceRefs,presetMetadata,
+  ...(combatRequirements!==undefined?{combatRequirements}:{}),
   ...Object.fromEntries(upstream.map(k=>[k,input[k]])),sources:selection.sources},sourceSelection:selection.sourceSelection};
 }
 

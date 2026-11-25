@@ -122,7 +122,9 @@ def prompt(data, pairs, direction_views):
         values = {key: data[key] for key in ("character", "intent", "planningContent", "conceptSources")}
         return guidance + guard + json.dumps(values, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
     if "artDirection" in data:
-        if "direction" in data:
+        if data.get("imageStyle") == "original-portrait.v1":
+            guidance = ("Render one original full-body combat portrait. Preserve the attached representative's face, outfit and colors. Follow the documented combat stance below. No pixel-art treatment. ")
+        elif "direction" in data:
             guidance = ("Render one full-body portrait from " + direction_views[data["direction"]] +
                         ". Rotate the camera around the idle reference, never mirror or rotate a flat image. ")
         elif "reference" in data:
@@ -299,8 +301,9 @@ def main():
                 {"character", "intent", "sourceRefs", "planningContent", "conceptSources"})
         styled = "imageStyle" in data or "posePreset" in data
         if styled:
-            if (data.get("imageStyle") != "pixel-sprite.v1" or data.get("posePreset") not in ("idle", "combat")
-                    or "reference" not in data):
+            pixel = data.get("imageStyle") == "pixel-sprite.v1" and data.get("posePreset") in ("idle", "combat")
+            original = modern and data.get("imageStyle") == "original-portrait.v1" and data.get("posePreset") == "combat" and "direction" not in data
+            if not (pixel or original) or "reference" not in data:
                 raise ValueError("IMAGE_NATIVE_INPUT_INVALID")
             base |= {"imageStyle", "posePreset"}
         if (set(data) not in (base, base | {"reference"}, base | {"direction", "reference"}) or stopped.is_set() or
