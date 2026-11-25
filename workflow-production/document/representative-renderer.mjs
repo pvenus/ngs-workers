@@ -1,3 +1,4 @@
+import {readNpcPlanningGuide,requireCombatWeapon} from './planning-guides.mjs';
 import {buildAuthoringPrompt} from './authoring-prompt.mjs';
 import {npcPlanningAddSchema,validateNPCPlanningAdd} from './npc-planning-add-envelope.mjs';
 /** One bounded Codex invocation for a representative planning document. */
@@ -27,35 +28,6 @@ const idleHeader=[
  'Use the same character identity, appearance, clothing, palette, and coverage as the supplied current workflow representative plan. Do not redesign the NPC.',
  'Apply the supplied current Filex character and expression concept sections where consistent with the registered intent and representative plan.',
 ].join('\n');
-const layoutGuidance={
- 'npc.plan-overview':[
-  'Define the approved NPC identity/role, relationships and narrative function, and the confirmed state for the specified act/chapter. Distinguish approved facts, bounded proposals and unknowns vividly. Never invent permanent biography, relationships, equipment or events; do not turn generic master principles into NPC facts.',
- ],
- 'npc.plan-portrait-art':[
-  'Use the supplied character overview as the common identity and state authority. Prepare one canonical visual proposal for the common portrait appearance used by later poses, not a scene or pose sheet.',
-  'In 이미지 제작 지시, provide one concise self-contained visual brief that can be handed directly to an image renderer: exact NPC and role, confirmed or proposed apparent age/build/face/hair, upper and lower garments, footwear, main/accent colors and style. Explicitly describe one isolated full-body game character on transparent background, no furniture, scenery, caption, other subjects or unstated props. Keep head, garment hem and feet inside frame without exposing otherwise covered legs.',
-  'Distinguish confirmed appearance from a single concrete compatible visual proposal. If an approved detail exists retain it; if it is unknown do not say “keep the existing look”, leave a contradiction, or invent permanent facts. Scene-specific art direction does not apply to this isolated portrait.',
- ],
- 'npc.plan-representative':[
-  'Apply the supplied portrait-art plan as the shared appearance authority without redesigning the person. Draft only one signature representative pose and expression, with an explicit single full-body view, camera angle, garment framing and readable silhouette.',
-  'In 포즈 제작 지시, provide one short standalone visual pose delta over the art brief. No background, scenery, extra subject, furniture, labels, marketing composition, direction grid, or unstated props. Keep explicit garment coverage even when head, feet and the hem are in frame.',
- ],
- 'npc.plan-idle':[
-  'Use both the shared portrait-art plan and current representative pose plan. Keep the exact accepted face, hair, age, body proportions, clothing and palette; list what is inherited separately from the new pose. Do not redesign the character.',
-  'In 포즈 제작 지시, give the concise idle-only visual delta: natural neutral full-body standing pose, feet and center of gravity, hands, head and gaze, and garment coverage. State a directional occlusion only when grounded in the applicable rule; strict side stationary occlusion is not a walking/running restriction. Do not add scene elements.',
- ],
- 'npc.plan-combat':[
-  'Use the shared portrait-art and representative pose plans as the character and costume authorities. Define a single stable battle-ready full-body stance with a readable center of gravity, hand placement, silhouette and garment coverage.',
-  'In 포즈 제작 지시, provide only the combat pose delta. Carry forward exactly the approved face, outfit, palette and equipment. If no weapon or accessory is approved, do not invent one. Do not describe an attack in motion or add scenery, effects, text or extra figures.',
- ],
-};
-const masterScopeGuidance={
- 'npc.plan-overview':'Master character guidance governs identity, persona and mutable state. Master expression is narrative-tone guidance here; do not turn visual or scene advice into approved facts.',
- 'npc.plan-portrait-art':'Master character guidance preserves identity. From expression prioritize visual style, prohibitions, common art and NPC scope. Scene image directions are not isolated-portrait instructions.',
- 'npc.plan-representative':'Master character guidance preserves identity. Expression informs the pose and readability within the exact accepted portrait-art design; do not replay scene instructions or redesign.',
- 'npc.plan-combat':'Master character guidance preserves identity. Expression informs the combat silhouette, readiness and directional readability without changing equipment or motion rules.',
- 'npc.plan-idle':'Master character guidance preserves identity. Expression informs neutral pose, silhouette and readability within the exact earlier art and representative plans; do not apply scene directions or change motion rules.',
-};
 const updateType='npc.planning.update',addType='npc.planning.add';
 const updateRoleOperation=Object.freeze({overview:'npc.plan-overview','portrait.art':'npc.plan-portrait-art',
  'portrait.representative':'npc.plan-representative','portrait.idle':'npc.plan-idle'});
@@ -66,11 +38,10 @@ const upstreamKeys={
  'npc.plan-idle':['portraitArtContent','representativeContent'],
  'npc.plan-combat':['portraitArtContent','representativeContent'],
 };
-function structuredHeader(operation){
+async function structuredHeader(operation){
  return [
   'Write one NPC planning document in Korean.',
-  ...layoutGuidance[operation],
-  masterScopeGuidance[operation],
+  await readNpcPlanningGuide(operation),
   'First art/pose block: at most 1000 characters, concise visual description only; no URLs, file paths, source hashes or references in place of actual description.',
   'Explicit registered intent and approved character facts are binding. A proposed master-concept item is guidance and not a fact. Keep sources and suggestions distinct, and record unknowns without claiming unavailable evidence.',
  ].join('\n');
@@ -135,11 +106,11 @@ function planningUpdateInput(input){
   ...Object.fromEntries(upstreamKeys[operation].map(k=>[k,input[k]])),sources:selection.sources},
   sourceSelection:selection.sourceSelection};
 }
-function planningUpdatePrompt(operation){
+async function planningUpdatePrompt(operation){
  return [
   'Revise exactly one existing NPC planning document in Korean.',
   'Follow the registered requirements without changing stable identity and keep unaffected original content.',
-  ...layoutGuidance[operation],masterScopeGuidance[operation],
+  await readNpcPlanningGuide(operation),
  ].join('\n');
 }
 function readFinalJson(bytes){
@@ -271,9 +242,9 @@ export function createRepresentativeRenderer({codexPath=REPRESENTATIVE_CODEX_PAT
   }else if(planningAdd){({data,sourceSelection}=planningAddInput(input));}
   else if(planningUpdate){({data,sourceSelection,operation:updatedOperation}=planningUpdateInput(input));}
   else ({data,sourceSelection}=buildInput(input,operation,fourDoc));
-  const purpose=planningAdd?planningAddPrompt:planningUpdate?planningUpdatePrompt(updatedOperation):
+  const purpose=planningAdd?planningAddPrompt:planningUpdate?await planningUpdatePrompt(updatedOperation):
    concept?(update?conceptUpdateHeader:sections?conceptAddHeader:conceptHeader):
-   fourDoc?structuredHeader(operation):operation==='npc.plan-idle'?idleHeader:promptHeader;
+   fourDoc?await structuredHeader(operation):operation==='npc.plan-idle'?idleHeader:promptHeader;
   const predefinedItems=sections?data.requiredSections:planningUpdate?planningHeadings[updatedOperation]:
    !concept&&fourDoc?planningHeadings[operation]:null;
   const prompt=buildAuthoringPrompt({purpose,data,predefinedItems,sectionBodies:sections});
@@ -292,7 +263,10 @@ export function createRepresentativeRenderer({codexPath=REPRESENTATIVE_CODEX_PAT
    ],root,prompt,timeoutMs,signal,update?12*1024*1024:maxOutput);
    const content=parseOutput(stdout,{update,sectionCount:sections?data.requiredSections.length:0});
    if(planningUpdate)validatePlanningMarkdown(content,updatedOperation);
-   else if(!concept&&!planningAdd&&fourDoc)validatePlanningMarkdown(content,operation);
+   else if(!concept&&!planningAdd&&fourDoc){
+    const sections=validatePlanningMarkdown(content,operation);
+    if(operation==='npc.plan-combat')requireCombatWeapon(sections);
+   }
    if(auditDirectory!==undefined){
     try{await writeFile(join(auditDirectory,'result.json'),JSON.stringify({content}),{flag:'wx',mode:0o600});}
     catch{throw Error('REPRESENTATIVE_AUDIT_UNAVAILABLE');}

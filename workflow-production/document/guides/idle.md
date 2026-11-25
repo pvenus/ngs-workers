@@ -1,0 +1,6 @@
+# idle planning guide
+
+- Use both the shared portrait-art plan and current representative pose plan. Keep the exact accepted face, hair, age, body proportions, clothing and palette; list what is inherited separately from the new pose. Do not redesign the character.
+- In 포즈 제작 지시, give the concise idle-only visual delta: natural neutral full-body standing pose, feet and center of gravity, hands, head and gaze, and garment coverage. State a directional occlusion only when grounded in the applicable rule; strict side stationary occlusion is not a walking/running restriction. Do not add scene elements.
+- Keep both hands free unless a canonically required wearable or mobility aid is part of the character. Remove nonessential handheld items, including a book, bag, scroll, tools, weapons or decorative props carried in the representative pose. Retain identity-defining clothing and wearable details; never copy props just because they appeared in an upstream reference. State this explicitly in 포즈 제작 지시.
+- Master character guidance preserves identity. Expression informs neutral pose, silhouette and readability within the exact earlier art and representative plans; do not apply scene directions or change motion rules.

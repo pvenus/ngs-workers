@@ -187,3 +187,21 @@ heading. A failed new add does not automatically render again.
 고정 Codex CLI 권한 읽기 전용, 도구/웹/플러그인 비활성, 임시 경로·입출력·시간 상한을 재사용합니다. 요청/자료는 형식화된 입력값 하나이며 임의 경로·실행 코드가 아닙니다. 결과는 하나의 `ngs.prop-design-spec.v1` 메타데이터입니다. 제목, 한 프랍 기본 이미지용 설명, 명시적으로 요청한 경우의 한 동작, 픽셀·비픽셀 이미지 자체의 독립 클릭 범위를 포함합니다. 범위는 정수 천분율로 기록하며 배치나 퍼즐 전이를 쓰지 않습니다. 설정되지 않은 동작이나 클릭 범위는 생성 후 암묵 적용하지 않습니다.
 
 `POST /v1/props/ownership/workflow-design`는 작업의 정확한 claim과 하나의 typed artifact를 전달합니다. PDS가 `{ok:true,resultRef:"prop.design-spec.<canonical JSON sha256>"}`를 확인한 뒤에만 작업의 결과를 기록합니다. ACK가 불명확하면 성공/실패나 처리 재실행으로 돌리지 않습니다. 이 단계는 독립 산출물 저장일 뿐 최종 프랍 Filex 확정이나 미디어 생성은 아닙니다.
+
+### Packaged NPC planning guides
+
+The document worker reads one version-controlled Markdown guide from
+`guides/` for each built-in NPC planning category: overview, portrait art,
+representative pose, idle pose, and combat pose. The operation must be in the
+worker's own planning registry; no request can supply a filename or replace
+the guide. Change its Markdown in this repository and release the document
+worker to apply the revision. There is no NGS guide editor.
+
+For every built-in category, the worker supplies the registered NPC intake
+brief, the current Filex Master Concept character/expression sections, and
+only the verified earlier documents from the same version that the category
+needs. The guide provides authoring instructions; Filex content and upstream
+documents provide project evidence. The existing section headings and JSON
+output contract remain in force. Combat must name a concrete weapon in the
+combat stance section; if canon has not specified it, label a compatible
+choice as a proposal. Idle and combat exclude unrelated handheld props.

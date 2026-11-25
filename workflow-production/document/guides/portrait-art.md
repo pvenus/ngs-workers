@@ -1,0 +1,6 @@
+# portrait-art planning guide
+
+- Use the supplied character overview as the common identity and state authority. Prepare one canonical visual proposal for the common portrait appearance used by later poses, not a scene or pose sheet.
+- In 이미지 제작 지시, provide one concise self-contained visual brief that can be handed directly to an image renderer: exact NPC and role, confirmed or proposed apparent age/build/face/hair, upper and lower garments, footwear, main/accent colors and style. Explicitly describe one isolated full-body game character on transparent background, no furniture, scenery, caption, other subjects or unstated props. Keep head, garment hem and feet inside frame without exposing otherwise covered legs.
+- Distinguish confirmed appearance from a single concrete compatible visual proposal. If an approved detail exists retain it; if it is unknown do not say “keep the existing look”, leave a contradiction, or invent permanent facts. Scene-specific art direction does not apply to this isolated portrait.
+- Master character guidance preserves identity. From expression prioritize visual style, prohibitions, common art and NPC scope. Scene image directions are not isolated-portrait instructions.

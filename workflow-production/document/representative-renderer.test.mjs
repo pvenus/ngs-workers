@@ -261,8 +261,8 @@ test('NPC custom add CLI only fills externally ordered Markdown section bodies; 
  assert.doesNotMatch(prompt,/이번 프리셋|PRIVATE-FIELD-SOURCES/);
 });
 
-for(const operation of Object.keys(planningHeadings))test('actual Codex CLI mandatory rules on '+operation,async t=>{
- const content='# 제목\n\n'+planningHeadings[operation].map(h=>'## '+h+'\n\n기획 본문').join('\n\n');
+for(const operation of Object.keys(planningHeadings))test('CLI boundary combines the registered brief, active Master Concept, and packaged guide for '+operation,async t=>{
+ const content='# 제목\n\n'+planningHeadings[operation].map(h=>'## '+h+'\n\n'+(h==='전투 자세'?'무기: 환도, 오른손으로 쥔다.':'기획 본문')).join('\n\n');
  const {binary,read}=await fixture(t,emit({content}));
  const render=createRepresentativeRenderer({codexPath:binary,operation});
  assert.equal(await render({...input,overviewContent:'개요 원본',portraitArtContent:'아트 원본',
@@ -270,10 +270,28 @@ for(const operation of Object.keys(planningHeadings))test('actual Codex CLI mand
  const {prompt}=await read();
  assertMandatory(prompt);
  for(const heading of planningHeadings[operation])assert(prompt.includes('## '+heading+'\n'));
+ const packet=JSON.parse(prompt.trimEnd().split('\n').at(-1));
+ assert.equal(packet.intent,input.intent);
+ assert.equal(packet.character.role,input.character.role);
+ assert.deepEqual([...new Set(packet.sources.files.map(f=>f.path.split('/')[1]))],['character','expression']);
+ assert.match(prompt,new RegExp('# '+operation.slice('npc.plan-'.length)+' planning guide'));
+ if(operation==='npc.plan-idle')assert.match(prompt,/Remove nonessential handheld items/);
+ if(operation==='npc.plan-combat')assert.match(prompt,/A concrete primary weapon is mandatory/);
+
 });
 test('a future author supplies purpose and data only and still receives mandatory Markdown and main-item policy',()=>{
  const p=buildAuthoringPrompt({purpose:'Draft a future lane.',data:{outline:'Ordered future main items'}});
  assertMandatory(p);
  assert.match(p,/Return the entire finished Markdown/);
  assert.match(p,/Draft a future lane\./);
+});
+
+test('combat output with no concrete weapon cannot be published by the renderer',async t=>{
+ const operation='npc.plan-combat';
+ for(const weapon of ['','무기: 없음','무기: 미정']){
+  const content='# 전투 기획\n\n'+planningHeadings[operation].map(h=>'## '+h+'\n\n기획 본문'+(h==='전투 자세'?'\n'+weapon:'')).join('\n\n');
+  const {binary}=await fixture(t,emit({content}));
+  await assert.rejects(createRepresentativeRenderer({codexPath:binary,operation})({...input,
+   portraitArtContent:'아트 원본',representativeContent:'대표 원본'},{fourDoc:true}),/WORKFLOW_PLAN_COMBAT_WEAPON_REQUIRED/);
+ }
 });
