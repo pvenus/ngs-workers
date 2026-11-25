@@ -86,6 +86,11 @@ export function localPorts({transport=requestLocalJson}={}){
   async readCinematicSource(claim,signal){
    return await transport({port:8030,path:cinematicSourcePath+'/read',method:'POST',body:{claim},deadline:5000,signal});
   },
+  async readCinematicConcept(signal){
+   // The loopback PDS provides the canonical Filex snapshot. The worker
+   // scopes the snapshot to the sole registered cinematic design section.
+   return await transport({port:8030,path:'/api/concept',method:'GET',deadline:8000,signal,responseLimit:2*1024*1024});
+  },
   async publishCinematicSource(claim,artifact){
    return await transport({port:8030,path:cinematicSourcePath,method:'POST',body:{claim,artifact},deadline:120000});
   },

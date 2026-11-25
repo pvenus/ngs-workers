@@ -9,9 +9,14 @@ import {fileURLToPath} from 'node:url';
 import {crc32,deflateSync} from 'node:zlib';
 import {canonical,sha} from './vendor/planner-f24d23a/envelope.mjs';
 import {imageTick} from './image-runner.mjs';
-import {sourceType,sourceSchema,sourceKey} from './cinematic-source-worker.mjs';
+import {sourceType,sourceSchema,sourceKey,cinematicDesignId,selectCinematicDesign} from './cinematic-source-worker.mjs';
 
 const input={title:'빈 마루',prompt:'저녁의 마당, 바람에 흔들리는 한 점의 불빛.'};
+const title='시네마틱 영상 디자인',markdown='# '+title+'\n\n## 먹선과 형태\n\n마른 붓의 굵은 먹선과 큰 여백.\n';
+const design={categoryId:cinematicDesignId,markdown,sha256:sha(markdown)};
+const concept=()=>({document:{projectId:'ProjectBS',hierarchy:{groups:[{id:'group.art-design',categoryIds:[cinematicDesignId,'other']}],
+ archivedCategoryIds:[]},sections:[{id:cinematicDesignId,title,fields:[{id:'content',value:markdown}]},
+  {id:'other',title:'다른 디자인',fields:[{id:'content',value:'exclude-this-other-section'}]}]}});
 const officialRequestId='request.official.'+'5'.repeat(64);
 const taskId='workflow.task.'+sha(canonical([officialRequestId,sourceKey]));
 const u32=n=>{const b=Buffer.alloc(4);b.writeUInt32BE(n);return b;};
@@ -42,14 +47,16 @@ test('resident claims an image-only job and retries exact PNG bytes only after l
  const pds={capability:async(_signal,operation)=>{assert.equal(operation,sourceType);return true;},
  readCinematicSource:async claim=>{order.push('read');assert.deepEqual(claim,{officialRequestId,taskId,projectId:'binari',
   payloadSha256:sha(f.payload),claimStamp:f.state().updated_at});return input;},
+ readCinematicConcept:async()=>{order.push('design');return concept();},
  publishCinematicSource:async(claim,artifact)=>{
   order.push('publish');assert.equal(claim.claimStamp,f.state().updated_at);
   assert.deepEqual(artifact,{sha256:sha(png),bytes:png.length,width:1536,height:1024,base64:png.toString('base64')});
-  if(order.length===3)throw Error('lost');return {ok:true,resultRef};
+  if(order.length===4)throw Error('lost');return {ok:true,resultRef};
  }};
- const renderCinematicSource=async direction=>{order.push('render');assert.deepEqual(direction,input);return png;};
- assert.equal((await imageTick({...f,mode:'run',pds,renderCinematicSource},{check:safeCheck})).state,'completed');
- assert.deepEqual(order,['read','render','publish','publish']);
+ const renderCinematicSource=async direction=>{order.push('render');assert.deepEqual(direction,{...input,design});return png;};
+ const result=await imageTick({...f,mode:'run',pds,renderCinematicSource},{check:safeCheck});
+ assert.equal(result.state,'completed');assert.equal(result.designSha256,design.sha256);
+ assert.deepEqual(order,['read','design','render','publish','publish']);
  assert.equal(f.state().result_ref,resultRef);
  assert.equal((await imageTick({...f,mode:'run',pds,renderCinematicSource},{check:safeCheck})).state,'idle');
 });
@@ -57,7 +64,7 @@ test('mismatched PDS input has no side effects; ambiguous native invocation is n
  for(const mismatched of [true,false]){
   const f=fixture(t);let gen=0;
   const pds={capability:async()=>true,readCinematicSource:async()=>mismatched?{...input,title:'다른 제목'}:input,
-   publishCinematicSource:async()=>assert.fail('must not publish')};
+   readCinematicConcept:async()=>concept(),publishCinematicSource:async()=>assert.fail('must not publish')};
   const renderCinematicSource=async()=>{gen++;throw Error('unknown model outcome');};
   const options={...f,mode:'run',pds,renderCinematicSource};
   assert.equal((await imageTick(options,{check:safeCheck})).state,mismatched?'failed':'requires_reconciliation');
@@ -65,6 +72,24 @@ test('mismatched PDS input has no side effects; ambiguous native invocation is n
   assert.equal(gen,mismatched?0:1);
  }
 });
+test('selects the registered active design only and fails closed without worker fallback',async t=>{
+ assert.deepEqual(selectCinematicDesign(concept()),design);
+ const badCases=[
+  doc=>{doc.projectId='other-project';},
+  doc=>{doc.sections[0].id='some-other-style';},
+  doc=>{doc.hierarchy.archivedCategoryIds.push(cinematicDesignId);},
+  doc=>{doc.hierarchy.groups[0].categoryIds=[];},
+  doc=>{doc.sections[0].fields[0].value='missing markdown title';},
+ ];
+ for(const mutate of badCases){
+  const source=concept();mutate(source.document);const f=fixture(t);
+  const pds={capability:async()=>true,readCinematicSource:async()=>input,readCinematicConcept:async()=>source,
+   publishCinematicSource:async()=>assert.fail('must not publish')};
+  const result=await imageTick({...f,mode:'run',pds,renderCinematicSource:()=>assert.fail('must not invoke model')},{check:safeCheck});
+  assert.equal(result.state,'failed');assert.equal(result.code,'CINEMATIC_DESIGN_UNAVAILABLE');
+ }
+});
+
 test('Python trusted bridge sends one opaque native descriptor and skips alpha validation',()=>{
  const helper=fileURLToPath(new URL('./portrait-native.py',import.meta.url));
  const script=String.raw`
@@ -74,7 +99,11 @@ def digest(x): return hashlib.sha256(json.dumps(x,sort_keys=True).encode()).hexd
 class Runner:
  def generate(self,claim):
   d=claim["providerRequest"]; assert d["arguments"]["transparent_background"] is False
-  assert "1536×1024" in d["arguments"]["prompt"] and "빈 마루" in d["arguments"]["prompt"]
+  prompt=d["arguments"]["prompt"]
+  assert "1536×1024" in prompt and "빈 마루" in prompt
+  assert prompt.index("마른 붓의 굵은 먹선과 큰 여백") < prompt.index("[2 Exact shot request]")
+  assert json.loads(prompt.split("[2 Exact shot request]\n",1)[1])["prompt"] == "저녁의 마당, 바람에 흔들리는 한 점의 불빛."
+  assert "exclude-this-other-section" not in prompt
   raw=b'not-a-generated-image-in-this-bridge-test'
   return raw,{**claim,"sha256":hashlib.sha256(raw).hexdigest(),"actualToolOutput":True}
  def execution_evidence(self): return {"outcome":"joined"}
@@ -83,7 +112,7 @@ main.__globals__["bind"]=lambda *_:(prohibited,lambda *_:Runner(),None,None,dige
 sys.argv=["helper","render-cinematic-source","config","pin"]
 main()
 `;
- const p=spawnSync('/usr/bin/python3',['-B','-c',script,helper],{input:JSON.stringify(input),encoding:'utf8'});
+ const p=spawnSync('/usr/bin/python3',['-B','-c',script,helper],{input:JSON.stringify({...input,design}),encoding:'utf8'});
  assert.equal(p.status,0,p.stderr);
  assert.equal(p.stdout,'not-a-generated-image-in-this-bridge-test');
 });

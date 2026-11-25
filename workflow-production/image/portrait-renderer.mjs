@@ -1,4 +1,4 @@
-import {validCinematicSource,sourceGeometry} from './cinematic-source-worker.mjs';
+import {validCinematicSourceRenderInput,sourceGeometry} from './cinematic-source-worker.mjs';
 /** Explicit runner for one original portrait, using the pinned legacy native provider. */
 import {spawn} from 'node:child_process';
 import {constants} from 'node:fs';
@@ -126,7 +126,7 @@ export function createPortraitRenderer(config){
 export function createCinematicSourceRenderer(config){
  const pinned=options(config);
  return async (input,{signal}={})=>{
-  if(!validCinematicSource(input))throw fail('CINEMATIC_SOURCE_INPUT_INVALID');
+  if(!validCinematicSourceRenderInput(input))throw fail('CINEMATIC_SOURCE_INPUT_INVALID');
   const raw=await call(pinned,'render-cinematic-source',Buffer.from(JSON.stringify(input)),signal);
   sourceGeometry(raw);
   return raw;

@@ -12,6 +12,36 @@ const official=id=>typeof id==='string'&&id.length===81&&/^request\.official\.[a
 const validText=(v,points,max)=>typeof v==='string'&&v.trim()===v&&v.length>0&&v.isWellFormed()&&Array.from(v).length<=points&&Buffer.byteLength(v)<=max&&
  !/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f]/u.test(v)&&!(/\bembedding:/iu.test(v));
 export const validCinematicSource=v=>exact(v,inputKeys)&&validText(v.title,120,480)&&validText(v.prompt,2000,4000);
+export const cinematicDesignId='category.add.ab33d46cb2f60e8467b4a3a37db9ca3d';
+const cinematicDesignTitle='시네마틱 영상 디자인';
+const cinematicDesignGroup='group.art-design';
+// The canonical Binari Filex namespace stores the game's legacy Master Concept project key.
+const masterConceptProjectId='ProjectBS';
+function validCinematicDesign(d){
+ return exact(d,['categoryId','sha256','markdown'])&&d.categoryId===cinematicDesignId&&
+  typeof d.markdown==='string'&&d.markdown.length>0&&validText(d.markdown.trim(),12000,24000)&&
+  Buffer.byteLength(d.markdown)<=24000&&d.markdown.startsWith('# '+cinematicDesignTitle+'\n')&&
+  d.sha256===sha(d.markdown);
+}
+export function selectCinematicDesign(snapshot){
+ const doc=snapshot?.document,groups=doc?.hierarchy?.groups,archived=doc?.hierarchy?.archivedCategoryIds;
+ require(doc?.projectId===masterConceptProjectId&&Array.isArray(doc.sections)&&Array.isArray(groups)&&
+  Array.isArray(archived)&&!archived.includes(cinematicDesignId)&&
+  groups.every(g=>Array.isArray(g?.categoryIds)),'CINEMATIC_DESIGN_UNAVAILABLE');
+ const group=groups.filter(g=>g.id===cinematicDesignGroup);
+ require(group.length===1&&group[0].categoryIds.includes(cinematicDesignId)&&
+  groups.flatMap(g=>g.categoryIds).filter(id=>id===cinematicDesignId).length===1,'CINEMATIC_DESIGN_UNAVAILABLE');
+ const design=doc.sections.filter(x=>x?.id===cinematicDesignId),section=design[0];
+ require(design.length===1&&section.title===cinematicDesignTitle&&Array.isArray(section.fields)&&
+  section.fields.length===1&&section.fields[0]?.id==='content'&&typeof section.fields[0]?.value==='string',
+  'CINEMATIC_DESIGN_UNAVAILABLE');
+ const markdown=section.fields[0].value;
+ const selected={categoryId:cinematicDesignId,markdown,sha256:sha(markdown)};
+ require(validCinematicDesign(selected),'CINEMATIC_DESIGN_UNAVAILABLE');
+ return selected;
+}
+export const validCinematicSourceRenderInput=v=>exact(v,['title','prompt','design'])&&
+ validCinematicSource({title:v.title,prompt:v.prompt})&&validCinematicDesign(v.design);
 const signature=Buffer.from('89504e470d0a1a0a','hex');
 export function sourceGeometry(png){
  require(Buffer.isBuffer(png)&&png.length>=57&&png.length<=8*1024*1024&&
@@ -65,7 +95,7 @@ function claimSource(db,t){
 }
 
 export async function runCinematicSourceFromPath({dbPath,officialRequestId,taskId,pds,renderCinematicSource,signal}){
- require(typeof pds?.readCinematicSource==='function'&&typeof pds?.publishCinematicSource==='function'&&typeof renderCinematicSource==='function','CINEMATIC_SOURCE_PORT_REQUIRED');
+ require(typeof pds?.readCinematicSource==='function'&&typeof pds?.readCinematicConcept==='function'&&typeof pds?.publishCinematicSource==='function'&&typeof renderCinematicSource==='function','CINEMATIC_SOURCE_PORT_REQUIRED');
  if(signal?.aborted)return {state:'not_claimable',taskId};
  assertDatabasePath(dbPath);
  const db=new DatabaseSync(dbPath);
@@ -80,13 +110,17 @@ export async function runCinematicSourceFromPath({dbPath,officialRequestId,taskI
    require(next&&['payload','task_input','payload_sha256','registered_at'].every(k=>row[k]===next.row[k]),'CINEMATIC_SOURCE_CLAIM_CHANGED');
   };
   const verifyCurrent=()=>tx(db,current);
-  let sent=false,nativePending=false;
+  let sent=false,nativePending=false,readingDesign=false;
   try{
    verifyCurrent();
    const bound=await pds.readCinematicSource(claim,signal);
    require(validCinematicSource(bound)&&canonical(bound)===canonical(input),'CINEMATIC_SOURCE_READ_MISMATCH');
+   readingDesign=true;
+   const design=selectCinematicDesign(await pds.readCinematicConcept(signal));
+   readingDesign=false;
+   signal?.throwIfAborted();verifyCurrent();
    nativePending=true;
-   const png=await renderCinematicSource(input,{signal});
+   const png=await renderCinematicSource({...input,design},{signal});
    nativePending=false;
    const geometry=sourceGeometry(png),sha256=sha(png),resultRef=refFor(sha256);
    const artifact={sha256,bytes:png.length,...geometry,base64:png.toString('base64')};
@@ -102,10 +136,10 @@ export async function runCinematicSourceFromPath({dbPath,officialRequestId,taskI
      WHERE task_id=? AND official_request_id=? AND status='running' AND result_ref IS NULL AND updated_at=?`)
      .run(resultRef,Math.max(Date.now(),claim.claimStamp+1),taskId,officialRequestId,claim.claimStamp).changes===1);
    });
-   return {state:'completed',taskId,resultRef};
+   return {state:'completed',taskId,resultRef,designSha256:design.sha256};
   }catch{
    if(!sent&&!nativePending&&markWorkflowTaskFailed(db,{...claim,workerType}))
-    return {state:'failed',taskId,code:'CINEMATIC_SOURCE_FAILED_BEFORE_PUBLISH'};
+    return {state:'failed',taskId,code:readingDesign?'CINEMATIC_DESIGN_UNAVAILABLE':'CINEMATIC_SOURCE_FAILED_BEFORE_PUBLISH'};
    return {state:'requires_reconciliation',taskId,code:'CINEMATIC_SOURCE_RECONCILIATION_REQUIRED'};
   }
  }finally{db.close();}
