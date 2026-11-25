@@ -1,3 +1,4 @@
+import {planningFolderDiagnostic} from './planning-folders.mjs';
 import {hasPortraitReadOwner,finishPortraitRead} from './portrait-read-owner.mjs';
 /** One exact document task. Storage and rendering are supplied by trusted ports. */
 import {DatabaseSync} from 'node:sqlite';
@@ -229,6 +230,7 @@ const safePortraitReasons=new Set([
 const diagnosticFor=(stage,error)=>({
  stage,reason:error?.message==='DOCUMENT_WORKER_LOCAL_TRANSPORT'?'PDS_TRANSPORT_UNCONFIRMED'
   :safePortraitReasons.has(error?.message)?error.message:'UNCLASSIFIED',
+ ...(planningFolderDiagnostic(error)?{mcp:planningFolderDiagnostic(error)}:{}),
 });
 /** No polling, role fallback, PDS ownership reservation, nor re-execution of a running task. */
 async function runSelected({db,taskId,officialRequestId,pds,operation=PRESET,render,withPlanningSnapshot,signal,onPhase}){

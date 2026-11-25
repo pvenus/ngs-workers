@@ -6,7 +6,7 @@ import {createServer} from 'node:http';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import test from 'node:test';
-import {createPlanningFolderDownloader} from './planning-folders.mjs';
+import {createPlanningFolderDownloader,planningFolderDiagnostic} from './planning-folders.mjs';
 
 const npcId='npc.ch1_dajeong',a='binari/concept',b='binari/npcs/'+npcId+'/planning';
 const records={
@@ -124,4 +124,38 @@ test('rejects media in either manifest before any file chunks are requested',asy
   assert.equal(calls.some(row=>row.tool==='npc_folder_file_chunk'),false);
   assert.deepEqual(await readdir(tempParent),[]);
  }
+});
+
+
+for(const kind of ['tool_error','unknown tool code','rpc_error','http_status','response_json','tool_response_schema'])test('MCP diagnostics: '+kind,async t=>{
+ const tempParent=await parent(t);
+ const server=createServer(async(req,res)=>{
+  const body=JSON.parse(Buffer.concat(await Array.fromAsync(req)).toString());
+  if(body.method==='notifications/initialized'){res.writeHead(202).end();return;}
+  let result;
+  if(body.method==='initialize')result={protocolVersion:'2025-06-18',capabilities:{tools:{}}};
+  else if(kind==='http_status'){res.writeHead(503).end('SENSITIVE');return;}
+  else if(kind==='response_json'){res.writeHead(200,{'content-type':'application/json'}).end('SENSITIVE');return;}
+  else if(kind==='rpc_error'){
+   res.writeHead(200,{'content-type':'application/json'}).end(JSON.stringify({jsonrpc:'2.0',id:body.id,error:{code:-32602,message:'SENSITIVE'}}));return;
+  }else if(kind==='tool_response_schema')result={content:[]};
+  else result={isError:true,content:[{type:'text',text:JSON.stringify({status:503,error:kind==='tool_error'?'FOLDER_BUSY':'SENSITIVE'})}]};
+  res.writeHead(200,{'content-type':'application/json'}).end(JSON.stringify({jsonrpc:'2.0',id:body.id,result}));
+ });
+ t.after(()=>{server.closeAllConnections();server.close();});server.listen(0,'127.0.0.1');await once(server,'listening');
+ const url='http://127.0.0.1:'+server.address().port+'/mcp';
+ await assert.rejects(createPlanningFolderDownloader({url,tempParent})({npcId},()=>assert.fail('should not proceed')),e=>{
+  assert.equal(e.message,'PLANNING_FOLDER_MCP_UNAVAILABLE');
+  const info=planningFolderDiagnostic(e);
+  const {httpStatus,toolCode,toolStatus,rpcCode}=info;
+  assert.equal(info.kind,kind==='unknown tool code'?'tool_error':kind);
+  assert.equal(info.operation,'compare');assert.equal(info.scopeKind,'concept');
+  assert.equal(httpStatus,kind==='http_status'?503:200);
+  if(kind==='tool_error')assert.deepEqual([toolCode,toolStatus],['FOLDER_BUSY',503]);
+  if(kind==='unknown tool code')assert.equal(toolCode,'UNRECOGNIZED');
+  if(kind==='rpc_error')assert.equal(rpcCode,-32602);
+  assert.doesNotMatch(JSON.stringify(info),/SENSITIVE|\/mcp|binari\/concept/);
+  return true;
+ });
+ assert.deepEqual(await readdir(tempParent),[]);
 });

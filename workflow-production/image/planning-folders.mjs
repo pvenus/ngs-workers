@@ -24,50 +24,91 @@ function validPath(path){
  return parts.length<=64&&parts.every(p=>p&&!p.startsWith('.')&&Buffer.byteLength(p)<=255);
 }
 
+const mcpDiagnostics=new WeakMap();
+export const planningFolderDiagnostic=error=>mcpDiagnostics.get(error);
+const toolErrors=new Set([
+ 'FOLDER_BUSY','FOLDER_COMPARE_INVALID','FOLDER_DOMAIN_CATALOG_UNAVAILABLE','FOLDER_DOMAIN_COMMIT_IN_PROGRESS',
+ 'FOLDER_FILE_LIMIT','FOLDER_HASH_REQUIRED','FOLDER_LOOPBACK_REQUIRED','FOLDER_OFFSET_INVALID',
+ 'FOLDER_PATH_INVALID','FOLDER_QUERY_INVALID','FOLDER_SCOPE_NOT_FOUND','FOLDER_SOURCE_CHANGED',
+ 'FOLDER_SOURCE_UNAVAILABLE','FOLDER_SOURCE_UNSAFE','FOLDER_TREE_LIMIT',
+ 'PROJECT_COMPARE_INVALID','PROJECT_FILE_CHANGED','PROJECT_FILE_HASH_REQUIRED','PROJECT_FILE_INVALID',
+ 'PROJECT_FILE_NAME_INVALID','PROJECT_FILE_UNSAFE','PROJECT_FOLDER_CHANGED','PROJECT_FOLDER_NOT_FOUND',
+ 'PROJECT_FOLDER_UNSAFE','PROJECT_FOLDERS_ROOT_UNAVAILABLE','PROJECT_ID_INVALID',
+]);
+const transportErrors=new Set(['ECONNREFUSED','ECONNRESET','EPIPE','ETIMEDOUT','ABORT_ERR','EHOSTUNREACH','ENETUNREACH']);
+function mcpFailure(kind,context,extra={}){
+ const e=wire();
+ mcpDiagnostics.set(e,Object.freeze({kind,...context,...extra}));
+ return e;
+}
+function safeToolError(v){
+ const text=v?.content?.[0]?.text;
+ if(!Array.isArray(v?.content)||v.content.length!==1||v.content[0]?.type!=='text'||typeof text!=='string'||text.length>192)return {};
+ try{
+  const result=JSON.parse(text);
+  if(!hasKeys(result,'error,status')||!Number.isInteger(result.status)||result.status<400||result.status>599)return {};
+  return {toolStatus:result.status,toolCode:toolErrors.has(result.error)?result.error:'UNRECOGNIZED'};
+ }catch{return {};}
+}
+
 function loopbackCall(url,signal){
  const endpoint=new URL(url);
  if(endpoint.protocol!=='http:'||endpoint.hostname!=='127.0.0.1'||!endpoint.port||url!==endpoint.origin+'/mcp')throw wire();
  let seq=0,ready;
- const post=(body,limit,notification=false,handshake=false)=>new Promise((resolve,reject)=>{
-  const bytes=Buffer.from(JSON.stringify(body));
+ const post=(body,limit,context,notification=false,handshake=false)=>new Promise((resolve,reject)=>{
+  const bytes=Buffer.from(JSON.stringify(body)),fail=(kind,extra)=>mcpFailure(kind,context,extra);
   const req=request(endpoint,{method:'POST',agent:false,signal,headers:{
    Accept:'application/json, text/event-stream','Content-Type':'application/json','Content-Length':String(bytes.length),
    ...(handshake?{}:{'MCP-Protocol-Version':protocolVersion}),
   }},res=>{
-   res.once('error',()=>reject(wire()));
-   if(notification){
-    if(res.statusCode!==202){res.destroy();reject(wire());return;}
-    res.resume();res.once('end',()=>resolve());return;
+   const httpStatus=res.statusCode;
+   res.once('error',()=>reject(fail('response_transport',{httpStatus})));
+   if(httpStatus!==(notification?202:200)){reject(fail('http_status',{httpStatus}));res.destroy();return;}
+   if(notification){res.resume();res.once('end',()=>resolve());return;}
+   if(!/^application\/json(?:\s*;|$)/i.test(res.headers['content-type']??'')){
+    reject(fail('response_content_type',{httpStatus}));res.destroy();return;
    }
-   if(res.statusCode!==200||!/^application\/json(?:\s*;|$)/i.test(res.headers['content-type']??'')){res.destroy();reject(wire());return;}
    const chunks=[];let size=0;
    res.on('data',chunk=>{
     size+=chunk.length;
-    if(size>limit){res.destroy();reject(wire());return;}
+    if(size>limit){reject(fail('response_limit',{httpStatus}));res.destroy();return;}
     chunks.push(chunk);
    });
-   res.once('aborted',()=>reject(wire()));
+   res.once('aborted',()=>reject(fail('response_aborted',{httpStatus})));
    res.once('end',()=>{
-    try{
-     const v=JSON.parse(new TextDecoder('utf-8',{fatal:true}).decode(Buffer.concat(chunks,size)));
-     if(v?.jsonrpc!=='2.0'||v.id!==body.id||v.error||!v.result)throw wire();
-     resolve(v.result);
-    }catch{reject(wire());}
+    let v;
+    try{v=JSON.parse(new TextDecoder('utf-8',{fatal:true}).decode(Buffer.concat(chunks,size)));}
+    catch{reject(fail('response_json',{httpStatus}));return;}
+    if(v?.jsonrpc!=='2.0'||v.id!==body.id){reject(fail('response_envelope',{httpStatus}));return;}
+    if(v.error){
+     const code=v.error.code;
+     const rpcCode=Number.isInteger(code)&&code>=-32768&&code<=-32000?code:undefined;
+     reject(fail('rpc_error',{httpStatus,rpcCode}));return;
+    }
+    if(!v.result){reject(fail('response_envelope',{httpStatus}));return;}
+    resolve(v.result);
    });
   });
-  armConnectionDeadline(req,5000,wire());
-  req.once('error',()=>reject(wire()));req.end(bytes);
+  const timeout=fail('connect_timeout');
+  armConnectionDeadline(req,5000,timeout);
+  req.once('error',error=>reject(error===timeout?timeout:fail('request_transport',
+   {transportCode:transportErrors.has(error?.code)?error.code:'UNRECOGNIZED'})));
+  req.end(bytes);
  });
- const rpc=(method,params,limit,handshake)=>post({jsonrpc:'2.0',id:++seq,method,params},limit,false,handshake);
+ const rpc=(method,params,limit,context,handshake)=>post({jsonrpc:'2.0',id:++seq,method,params},limit,context,false,handshake);
  return async(name,args,limit=3*maxChunk)=>{
   if(!ready)ready=(async()=>{
-   const info=await rpc('initialize',{protocolVersion,capabilities:{},clientInfo:{name:'workflow-planning-folders',version:'1'}},8192,true);
-   if(info.protocolVersion!==protocolVersion||!info.capabilities?.tools)throw wire();
-   await post({jsonrpc:'2.0',method:'notifications/initialized'},0,true);
+   const context={operation:'initialize'};
+   const info=await rpc('initialize',{protocolVersion,capabilities:{},clientInfo:{name:'workflow-planning-folders',version:'1'}},8192,context,true);
+   if(info.protocolVersion!==protocolVersion||!info.capabilities?.tools)throw mcpFailure('protocol_capability',context,{httpStatus:200});
+   await post({jsonrpc:'2.0',method:'notifications/initialized'},0,{operation:'initialized'},true);
   })();
   await ready;
-  const v=await rpc('tools/call',{name,arguments:args},limit);
-  if(v.isError||!v.structuredContent||typeof v.structuredContent!=='object')throw wire();
+  const context={operation:name==='npc_folders_compare'?'compare':'read_chunk',
+   scopeKind:args.scope==='binari/concept'?'concept':'npc_planning'};
+  const v=await rpc('tools/call',{name,arguments:args},limit,context);
+  if(v.isError)throw mcpFailure('tool_error',context,{httpStatus:200,...safeToolError(v)});
+  if(!v.structuredContent||typeof v.structuredContent!=='object')throw mcpFailure('tool_response_schema',context,{httpStatus:200});
   return v.structuredContent;
  };
 }
