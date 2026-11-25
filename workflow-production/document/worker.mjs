@@ -41,7 +41,7 @@ const targetCategory=(officialRequestId,operation)=>'category.preset.'+
  sha(canonical(['npc.standard','3',taskKey(officialRequestId,'preset'),contracts[operation].category])).slice(0,32);
 const goodText=v=>typeof v==='string'&&v.isWellFormed()&&v.trim()&&[...v].length<=16000;
 const planningFailureCodes=new Set([
- 'NPC_PLANNING_PDS_READ_TIMEOUT','DOCUMENT_WORKER_LOCAL_TRANSPORT',
+ 'NPC_PLANNING_PDS_READ_TIMEOUT','DOCUMENT_WORKER_LOCAL_TRANSPORT','DOCUMENT_PDS_CONNECT_REFUSED_BEFORE_SEND',
  'WORKFLOW_PLAN_CHARACTER_CHANGED','WORKFLOW_PLAN_BASIS_INVALID','WORKFLOW_PLAN_PRESET_METADATA_INVALID','WORKFLOW_PLAN_UPSTREAM_INVALID',
  'PLANNING_FOLDER_MCP_UNAVAILABLE','PLANNING_FOLDER_RESPONSE_INVALID','PLANNING_FOLDER_MEDIA_NOT_ALLOWED',
  'PLANNING_FOLDER_LOCAL_PATH_INVALID','PLANNING_FOLDER_DIGEST_MISMATCH','PLANNING_FOLDER_SNAPSHOT_CHANGED',
@@ -326,29 +326,31 @@ export async function runSelectedDocument({db,taskId,officialRequestId,pds,opera
   let resultRef=null;
   if(operation===PRESET){
    const command=Object.freeze({...selected.command,artifactSha256:sha(artifact),artifact});
-   publicationStarted=true;
+   publicationStarted=true;planningFailureStage='publish-request';
    const receipt=await pds.publishExactPreset(command,selected.stamp);
-   if(!verifiedPreset(receipt,command))return unresolved;
+   if(!verifiedPreset(receipt,command))return {...unresolved,failureStage:'verify-publish-ack'};
    resultRef=receipt.receiptId;
   }else{
    const command=Object.freeze({...selected.command,artifact});
-   publicationStarted=true;
+   publicationStarted=true;planningFailureStage='publish-request';
    const response=[CONCEPT,UPDATE,ADD].includes(operation)?await pds[publish](command,selected.stamp,signal):
     await pds[publish](command,selected.stamp,basis);
-   if(!exact(response,['ok'])||response.ok!==true)return unresolved;
+   if(!exact(response,['ok'])||response.ok!==true)return {...unresolved,failureStage:'verify-publish-ack'};
   }
+  planningFailureStage='record-completion';
   finish(db,selected,resultRef);
   return {state:'completed',taskId,resultRef,...(operation===CONCEPT&&selected.payload.operation==='migrate'?
    {conversion:'deterministic-markdown'}:{})};
  }catch(error){
   // Once the PDS RPC was invoked, even a locally thrown error can mask
-  // a committed write. Missing/invalid ACK or a failed completion CAS
-  // is never treated as a safe task failure.
+  // a committed write. Only a proven refusal before TCP connection or the
+  // typed no-write preset response may be converted to ordinary failure.
   const presetRejected=operation===PRESET&&error?.message==='WORKFLOW_PRESET_REJECTED_BEFORE_WRITE';
-  if(publicationStarted&&!presetRejected)return unresolved;
+  const notSent=error?.message==='DOCUMENT_PDS_CONNECT_REFUSED_BEFORE_SEND';
+  if(publicationStarted&&!presetRejected&&!notSent)return {...unresolved,...planningFailureFields(planningFailureStage,error)};
   try{
    const changed=await settleFailure(()=>markWorkflowTaskFailed(db,{taskId,officialRequestId,claimStamp:selected.stamp,workerType:'document'}));
-   if(changed===true)return {state:'failed',taskId,code:presetRejected?error.message:'WORKFLOW_DOCUMENT_FAILED_BEFORE_PUBLICATION',
+   if(changed===true)return {state:'failed',taskId,code:presetRejected||notSent?error.message:'WORKFLOW_DOCUMENT_FAILED_BEFORE_PUBLICATION',
     ...planningFailureFields(planningFailureStage,error)};
   }catch{
    // An unconfirmed terminal DB write requires reconciliation as well.

@@ -207,3 +207,8 @@ combat stance section; if canon has not specified it, label a compatible
 choice as a proposal. Idle and combat exclude unrelated handheld props.
 
 A preset write carrying the exact loopback PDS no-write rejection proof is a normal failure, eligible under the existing retry policy. A generic 409, disconnect, or uncertain receipt is not proof. Transient SQLite write contention only retries the same failure-state compare-and-swap, not the task or the PDS write.
+
+A loopback POST with connection refused before establishing TCP did not send a
+write and is a normal failure. If the connection was accepted and later breaks,
+or the completion update is uncertain, retain reconciliation and record the
+safe stage label. Do not replay any storage RPC to infer its outcome.

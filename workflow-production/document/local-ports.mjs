@@ -59,7 +59,17 @@ export function requestLocalJson({port,path,method,body,deadline,signal,response
     }else resolve(reply);
    }catch{fail();}});
   });
-  req.on('error',fail);req.end(payload);
+  let connected=false;
+  req.once('socket',socket=>{
+   if(!socket.connecting)connected=true;
+   else socket.once('connect',()=>{connected=true;});
+  });
+  req.on('error',error=>{
+   if(method==='POST'&&!connected&&error?.code==='ECONNREFUSED'&&error?.syscall==='connect')
+    reject(Error('DOCUMENT_PDS_CONNECT_REFUSED_BEFORE_SEND'));
+   else fail();
+  });
+  req.end(payload);
  });
 }
 

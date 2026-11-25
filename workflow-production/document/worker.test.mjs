@@ -113,3 +113,13 @@ test('a verified preset rejection becomes normal failure without re-running or i
  assert.equal(f.task('preset').result_ref,null);assert.equal(f.task('planning_representative').status,'pending');
  assert.equal(publishes,1);
 });
+
+test('definite pre-connect refusal from PDS is an ordinary failure, not a rerender',async t=>{
+ const f=setup(t,{newNPC:true});f.s.acknowledge(f.id);
+ let count=0;const rejected='DOCUMENT_PDS_CONNECT_REFUSED_BEFORE_SEND';
+ const result=await runSelectedPreset({...f.entry,pds:{publishExactPreset(){count++; throw Error(rejected);}}});
+ assert.equal(result.state,'failed');assert.equal(result.code,rejected);
+ assert.equal(result.failureStage,'publish-request');
+ assert.equal(f.task('preset').status,'failed');assert.equal(f.task('preset').retry_count,0);
+ assert.equal(count,1);
+});

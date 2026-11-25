@@ -38,3 +38,13 @@ test('only the exact preset rejection proof on the intended HTTP route permits o
  data={error:'WORKFLOW_PRESET_NOT_CONFIRMED'};
  await assert.rejects(requestLocalJson(args),{message:'DOCUMENT_WORKER_LOCAL_TRANSPORT'});
 });
+
+test('closed port is unsent; an accepted request with a broken ACK remains ambiguous',async t=>{
+ const peer=createServer((req,res)=>{req.resume();req.on('end',()=>res.destroy());});
+ await new Promise(resolve=>peer.listen(0,'127.0.0.1',resolve));
+ const port=peer.address().port;
+ const args={port,path:'/v1/npcs/ownership/workflow-plan-overview',method:'POST',body:{},deadline:1500};
+ await assert.rejects(requestLocalJson(args),{message:'DOCUMENT_WORKER_LOCAL_TRANSPORT'});
+ await new Promise(resolve=>peer.close(resolve));
+ await assert.rejects(requestLocalJson(args),{message:'DOCUMENT_PDS_CONNECT_REFUSED_BEFORE_SEND'});
+});
