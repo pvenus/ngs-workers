@@ -158,7 +158,10 @@ for(const mode of ['write ACK','negative ACK','legacy receipt','render failed','
  f.s.db.prepare("UPDATE workflow_tasks SET status='completed' WHERE task_key='preset'").run();
  const others=f.s.db.prepare('SELECT * FROM workflow_tasks WHERE task_id<>? ORDER BY task_id');
  const before=others.all(taskId);
- assert.equal((await executeOnce({...held,pds,render,withPlanningSnapshot})).state,accepted?'completed':mode==='render failed'?'failed':'requires_reconciliation');
+ const result=await executeOnce({...held,pds,render,withPlanningSnapshot});
+ assert.equal(result.state,accepted?'completed':mode==='render failed'?'failed':'requires_reconciliation');
+ if(mode==='render failed'){assert.equal(result.failureStage,'render');assert.equal(result.reasonCode,'NPC_PLANNING_STAGE_FAILED');
+  assert.doesNotMatch(JSON.stringify(result),/fixture definitive render error/);}
  assert.deepEqual(calls.slice(1),[['GET',representativePath+'?inputMode=folder-snapshot'],['POST',representativePath+'/read'],['render'],...(beforePublicationFailure?[]:[['POST',representativePath]])]);
  assert.equal(readdirSync(realpathSync(new URL('.', 'file://'+f.dbPath))).some(n=>n.startsWith('workflow-planning-folders-')),false);
  assert.deepEqual(mcpCalls.filter(x=>x.tool==='npc_folders_compare').map(x=>x.args.scope),
@@ -177,6 +180,7 @@ test('representative refuses wrong PDS character and never invokes renderer or p
   publishRepresentative:async()=>assert.fail('no publication')};
  const out=await executeOnce({...f,taskId:picked().task_id,pds,operation:'npc.plan-representative',render:()=>assert.fail('no renderer'),withPlanningSnapshot:()=>assert.fail('no snapshot')});
  assert.equal(out.state,'failed');assert.equal(out.code,'WORKFLOW_DOCUMENT_FAILED_BEFORE_PUBLICATION');
+ assert.equal(out.failureStage,'pds-contract');assert.equal(out.reasonCode,'WORKFLOW_PLAN_CHARACTER_CHANGED');
  assert.equal(picked().status,'failed');
  assert.equal(picked().result_ref,null);
 });

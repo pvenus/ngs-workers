@@ -39,6 +39,22 @@ const taskKey=(officialRequestId,key)=>'workflow.task.'+sha(canonical([officialR
 const targetCategory=(officialRequestId,operation)=>'category.preset.'+
  sha(canonical(['npc.standard','3',taskKey(officialRequestId,'preset'),contracts[operation].category])).slice(0,32);
 const goodText=v=>typeof v==='string'&&v.isWellFormed()&&v.trim()&&[...v].length<=16000;
+const planningFailureCodes=new Set([
+ 'NPC_PLANNING_PDS_READ_TIMEOUT','DOCUMENT_WORKER_LOCAL_TRANSPORT',
+ 'WORKFLOW_PLAN_CHARACTER_CHANGED','WORKFLOW_PLAN_BASIS_INVALID','WORKFLOW_PLAN_PRESET_METADATA_INVALID','WORKFLOW_PLAN_UPSTREAM_INVALID',
+ 'PLANNING_FOLDER_MCP_UNAVAILABLE','PLANNING_FOLDER_RESPONSE_INVALID','PLANNING_FOLDER_MEDIA_NOT_ALLOWED',
+ 'PLANNING_FOLDER_LOCAL_PATH_INVALID','PLANNING_FOLDER_DIGEST_MISMATCH','PLANNING_FOLDER_SNAPSHOT_CHANGED',
+ 'WORKFLOW_PLAN_SOURCE_SHAPE','WORKFLOW_PLAN_SOURCE_BINDING','WORKFLOW_PLAN_SOURCE_ORDER','WORKFLOW_PLAN_SOURCE_SCOPE_EMPTY',
+ 'WORKFLOW_PLAN_MANIFEST_CHANGED','WORKFLOW_PLAN_SNAPSHOT_REQUIRED','WORKFLOW_PLAN_SNAPSHOT_UNTRUSTED',
+ 'WORKFLOW_PLAN_SNAPSHOT_FILE_INVALID','WORKFLOW_PLAN_SNAPSHOT_FILE_UNTRUSTED','WORKFLOW_PLAN_SOURCE_JSON_INVALID',
+ 'WORKFLOW_PLAN_CONCEPT_SECTION','WORKFLOW_PLAN_CONCEPT_SUMMARY','WORKFLOW_PLAN_PROMPT_TOO_LARGE','REPRESENTATIVE_INPUT_INVALID',
+ 'REPRESENTATIVE_CODEX_UNAVAILABLE','REPRESENTATIVE_CODEX_START_FAILED','REPRESENTATIVE_CODEX_TIMEOUT',
+ 'REPRESENTATIVE_CODEX_FAILED','REPRESENTATIVE_CODEX_OUTPUT_INVALID','REPRESENTATIVE_CODEX_STDIO_FAILED',
+ 'WORKFLOW_PLAN_MARKDOWN_INVALID','WORKFLOW_PLAN_CONTENT_INVALID','WORKFLOW_PLAN_COMBAT_WEAPON_REQUIRED',
+]);
+const planningFailureFields=(stage,error)=>stage?{
+ failureStage:stage,reasonCode:planningFailureCodes.has(error?.message)?error.message:'NPC_PLANNING_STAGE_FAILED',
+}:{};
 const roleOperation=Object.freeze({overview:OVERVIEW,'portrait.art':ART,
  'portrait.representative':REPRESENTATIVE,'portrait.idle':IDLE});
 function buildAddPlan(row){
@@ -271,7 +287,7 @@ export async function runSelectedDocument({db,taskId,officialRequestId,pds,opera
  protectSchema(db);
  const selected=claim(db,taskId,officialRequestId,operation);
  if(!selected)return {state:'not_claimable',taskId};
- let publicationStarted=false;
+ let publicationStarted=false,planningFailureStage;
  const unresolved={state:'requires_reconciliation',taskId,code:operation===PRESET?'WORKFLOW_PRESET_RECONCILIATION_REQUIRED':'WORKFLOW_PLAN_RECONCILIATION_REQUIRED'};
  try{
   let artifact,basis;
@@ -281,18 +297,25 @@ export async function runSelectedDocument({db,taskId,officialRequestId,pds,opera
   else if(operation===CONCEPT)artifact=canonical({schemaVersion:spec.artifact,categoryId:selected.command.categoryId,
    title:selected.payload.title,...await generateConceptCategory(selected,pds,render,signal)});
   else{
-   const input=readBasis(await pds[read](selected.command,selected.stamp),selected,operation);
+   planningFailureStage='pds-read';
+   const reply=await pds[read](selected.command,selected.stamp);
+   planningFailureStage='pds-contract';
+   const input=readBasis(reply,selected,operation);
+   planningFailureStage='snapshot-download';
    basis=input.basis;
    const {character,intent,sourceRefs,combatRequirements}=selected.payload;
    const content=await withPlanningSnapshot({npcId:character.npcId,signal},async snapshot=>
     {
+     planningFailureStage='snapshot-contract';
      const sources=await readPlanningSources(snapshot,character.npcId);
      const prior=Object.fromEntries(input.upstream.map(([name,parent])=>[name,assertCurrentPlanning(sources,
       contracts[parent].role,input.prior[name],selected.fourDoc?targetCategory(officialRequestId,parent):undefined)]));
+     planningFailureStage='render';
      return render({character:{...character},intent,sourceRefs:[...sourceRefs],presetMetadata:input.presetMetadata,
       ...(operation==='npc.plan-combat'&&combatRequirements?{combatRequirements}:{}),
       ...prior,sources},{signal,fourDoc:selected.fourDoc});
     });
+   planningFailureStage='result-contract';
    if(!goodText(content))throw Error('WORKFLOW_PLAN_CONTENT_INVALID');
    if(selected.fourDoc)validatePlanningMarkdown(content,operation);
    artifact=canonical({schemaVersion:spec.artifact,taskId,
@@ -324,7 +347,7 @@ export async function runSelectedDocument({db,taskId,officialRequestId,pds,opera
   try{
    const changed=markWorkflowTaskFailed(db,{taskId,officialRequestId,claimStamp:selected.stamp,workerType:'document'});
    if(changed===true)return {state:'failed',taskId,code:'WORKFLOW_DOCUMENT_FAILED_BEFORE_PUBLICATION',
-    ...(error?.message==='NPC_PLANNING_PDS_READ_TIMEOUT'?{reasonCode:'NPC_PLANNING_PDS_READ_TIMEOUT'}:{})};
+    ...planningFailureFields(planningFailureStage,error)};
   }catch{
    // An unconfirmed terminal DB write requires reconciliation as well.
   }
