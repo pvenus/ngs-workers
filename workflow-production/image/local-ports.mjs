@@ -97,6 +97,9 @@ export function localPorts({transport=requestLocalJson}={}){
   async publishCinematicSource(claim,artifact){
    return await transport({port:8030,path:cinematicSourcePath,method:'POST',body:{claim,artifact},deadline:120000});
   },
+  async reconcileCinematicSource(claim,signal){
+   return await transport({port:8030,path:cinematicSourcePath+'/reconcile',method:'POST',body:{claim},deadline:10000,signal});
+  },
   async readPropBase(claim,signal){
    return transport({port:8030,path:propBasePath+'/read',method:'POST',body:{claim},deadline:5000,signal,responseLimit:128*1024});
   },

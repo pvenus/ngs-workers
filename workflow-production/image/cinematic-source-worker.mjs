@@ -1,5 +1,6 @@
 /** Official cinematic source lane. Native ImageGen output, no video generation. */
 import {DatabaseSync} from 'node:sqlite';
+import {setTimeout as delay} from 'node:timers/promises';
 import {settleFailure} from './failure-state.mjs';
 import {finishPortraitRead,hasPortraitReadOwner} from './portrait-read-owner.mjs';
 import {canonical,sha} from './vendor/planner-f24d23a/envelope.mjs';
@@ -99,7 +100,39 @@ function claimSource(db,t){
  });
 }
 
-export async function runCinematicSourceFromPath({dbPath,officialRequestId,taskId,pds,renderCinematicSource,signal}){
+const validAck=(ack,resultRef)=>exact(ack,['ok','resultRef'])&&ack.ok===true&&ack.resultRef===resultRef;
+class PublicationAbsentFenced extends Error{}
+
+async function finishPublication({pds,claim,artifact,resultRef,verifyCurrent,signal,reconcileDelays}){
+ let lastError;
+ // Replay the exact same PNG, not the model. It can finish a partial Filex write.
+ for(let i=0;i<2;i++){
+  verifyCurrent();
+  try{
+   const ack=await pds.publishCinematicSource(claim,artifact);
+   if(validAck(ack,resultRef))return;
+   lastError=Error('CINEMATIC_SOURCE_ACK_UNCONFIRMED');
+  }catch(error){lastError=error;}
+ }
+ if(typeof pds.reconcileCinematicSource!=='function')throw lastError;
+ // A lost ACK proves neither absence nor completion. Filex serializes receipt
+ // inspection and an attempt fence against the same lock used for publication.
+ for(const wait of reconcileDelays){
+  if(wait)await delay(wait,undefined,{signal});
+  verifyCurrent();
+  let evidence;
+  try{evidence=await pds.reconcileCinematicSource(claim,signal);}
+  catch{continue;}
+  if(exact(evidence,['state'])&&evidence.state==='absent_fenced')throw new PublicationAbsentFenced('CINEMATIC_SOURCE_PUBLICATION_ABSENT_FENCED');
+  if(exact(evidence,['state','resultRef'])&&evidence.state==='published'){
+   require(evidence.resultRef===resultRef,'CINEMATIC_SOURCE_ACK_UNCONFIRMED');return;
+  }
+ }
+ throw lastError;
+}
+
+export async function runCinematicSourceFromPath({dbPath,officialRequestId,taskId,pds,renderCinematicSource,signal,
+ reconcileDelays=[0,1000,2000,4000,8000,10000,15000,20000]}){
  require(typeof pds?.readCinematicSource==='function'&&typeof pds?.readCinematicConcept==='function'&&typeof pds?.publishCinematicSource==='function'&&typeof renderCinematicSource==='function','CINEMATIC_SOURCE_PORT_REQUIRED');
  if(signal?.aborted)return {state:'not_claimable',taskId};
  assertDatabasePath(dbPath);
@@ -137,11 +170,7 @@ export async function runCinematicSourceFromPath({dbPath,officialRequestId,taskI
    signal?.throwIfAborted();
    stage='publish';
    sent=true;
-   let ack;
-   try{ack=await pds.publishCinematicSource(claim,artifact);}
-   catch{verifyCurrent();ack=await pds.publishCinematicSource(claim,artifact);}
-   stage='verify-publish-ack';
-   require(exact(ack,['ok','resultRef'])&&ack.ok===true&&ack.resultRef===resultRef,'CINEMATIC_SOURCE_ACK_UNCONFIRMED');
+   await finishPublication({pds,claim,artifact,resultRef,verifyCurrent,signal,reconcileDelays});
    stage='record-completion';
    tx(db,()=>{
     current();
@@ -153,6 +182,7 @@ export async function runCinematicSourceFromPath({dbPath,officialRequestId,taskI
   }catch(error){
    const allowed=new Set(['CINEMATIC_SOURCE_PNG_INVALID','CINEMATIC_SOURCE_PNG_GEOMETRY_INVALID','CINEMATIC_SOURCE_READ_MISMATCH',
     'CINEMATIC_SOURCE_OWNER_CHANGED','CINEMATIC_SOURCE_ACK_UNCONFIRMED','CINEMATIC_DESIGN_UNAVAILABLE',
+    'CINEMATIC_SOURCE_PUBLICATION_ABSENT_FENCED',
     'WORKFLOW_IMAGE_CLI_OUTCOME_UNCONFIRMED','WORKFLOW_IMAGE_CLI_PROCESS_FAILED','WORKFLOW_IMAGE_CLI_RESPONSE_INVALID',
     'WORKFLOW_IMAGE_CLI_REPORTED_BLOCKED','WORKFLOW_IMAGE_CLI_RESULT_REJECTED','WORKFLOW_IMAGE_NATIVE_UNCONFIRMED',
     'WORKFLOW_IMAGE_NATIVE_TIMEOUT','WORKFLOW_IMAGE_CANCELLED','WORKFLOW_IMAGE_OUTPUT_INVALID','DOCUMENT_WORKER_LOCAL_TRANSPORT']);
@@ -161,10 +191,10 @@ export async function runCinematicSourceFromPath({dbPath,officialRequestId,taskI
     [error.width,error.height].every(n=>Number.isSafeInteger(n)&&n>=0&&n<16384)?{width:error.width,height:error.height}:{})};
    // Native generation only returns private scratch bytes; it never publishes.
    // Any failure before the first storage RPC is safe for the normal retry policy.
-   if(!sent){
+   if(!sent||error instanceof PublicationAbsentFenced){
     try{
      const changed=await settleFailure(()=>ownerTracked?finishPortraitRead(db,claim,{failed:true}):markWorkflowTaskFailed(db,{...claim,workerType}));
-     if(changed)return {state:'failed',taskId,code:stage==='read-design'?'CINEMATIC_DESIGN_UNAVAILABLE':'CINEMATIC_SOURCE_FAILED_BEFORE_PUBLISH',diagnostic};
+     if(changed)return {state:'failed',taskId,code:sent?reason:stage==='read-design'?'CINEMATIC_DESIGN_UNAVAILABLE':'CINEMATIC_SOURCE_FAILED_BEFORE_PUBLISH',diagnostic};
      diagnostic.failureTransition='CLAIM_NOT_UPDATED';
     }catch{
      diagnostic.failureTransition='STATE_WRITE_UNCONFIRMED';

@@ -135,3 +135,40 @@ test('bad original geometry records exact dimensions without publishing; lost pu
   else assert.equal(r.diagnostic.stage,'publish');
  }
 });
+
+test('after publish transport loss, use fenced absence or an exact persisted result, never guess',async t=>{
+ for(const scenario of ['absent','published','unexpected','unavailable']){
+  await t.test(scenario,async t=>{
+   const f=fixture(t);let rendered=0,sent=0,reads=0,canonicalArtifact;
+   const pds={capability:async()=>true,readCinematicSource:async()=>input,
+    readCinematicConcept:async()=>concept(),publishCinematicSource:async(_claim,artifact)=>{
+     sent++;
+     if(canonicalArtifact)assert.deepEqual(artifact,canonicalArtifact);
+     canonicalArtifact=artifact;throw Error('DOCUMENT_WORKER_LOCAL_TRANSPORT');
+    },
+    reconcileCinematicSource:async claim=>{
+     assert.equal(claim.claimStamp,f.state().updated_at);reads++;
+     if(scenario==='absent')return {state:'absent_fenced'};
+     if(scenario==='published'){
+      if(reads===1)throw Error('PDS restarting');
+      return {state:'published',resultRef};
+     }
+     if(scenario==='unexpected')return {state:'published',resultRef:'binari/cinematics/sources/changed.json'};
+     return {};
+    }};
+   const opts={...f,officialRequestId,taskId,pds,renderCinematicSource:async()=>{rendered++;return png;},reconcileDelays:[0,0]};
+   const {runCinematicSourceFromPath}=await import('./cinematic-source-worker.mjs');
+   const result=await runCinematicSourceFromPath(opts);
+   assert.equal(sent,2);assert.equal(rendered,1);
+   if(scenario==='absent'){
+    assert.equal(result.state,'failed');assert.equal(result.code,'CINEMATIC_SOURCE_PUBLICATION_ABSENT_FENCED');
+    assert.equal(f.state().status,'failed');assert.equal(f.state().retry_count,0);assert.equal(f.state().result_ref,null);
+    assert.equal((await runCinematicSourceFromPath(opts)).state,'not_claimable');
+   }else if(scenario==='published'){
+    assert.equal(reads,2);assert.equal(result.state,'completed');assert.equal(f.state().result_ref,resultRef);
+   }else{
+    assert.equal(result.state,'requires_reconciliation');assert.equal(f.state().status,'running');
+   }
+  });
+ }
+});
