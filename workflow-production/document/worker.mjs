@@ -316,14 +316,15 @@ export async function runSelectedDocument({db,taskId,officialRequestId,pds,opera
   finish(db,selected,resultRef);
   return {state:'completed',taskId,resultRef,...(operation===CONCEPT&&selected.payload.operation==='migrate'?
    {conversion:'deterministic-markdown'}:{})};
- }catch{
+ }catch(error){
   // Once the PDS RPC was invoked, even a locally thrown error can mask
   // a committed write. Missing/invalid ACK or a failed completion CAS
   // is never treated as a safe task failure.
   if(publicationStarted)return unresolved;
   try{
    const changed=markWorkflowTaskFailed(db,{taskId,officialRequestId,claimStamp:selected.stamp,workerType:'document'});
-   if(changed===true)return {state:'failed',taskId,code:'WORKFLOW_DOCUMENT_FAILED_BEFORE_PUBLICATION'};
+   if(changed===true)return {state:'failed',taskId,code:'WORKFLOW_DOCUMENT_FAILED_BEFORE_PUBLICATION',
+    ...(error?.message==='NPC_PLANNING_PDS_READ_TIMEOUT'?{reasonCode:'NPC_PLANNING_PDS_READ_TIMEOUT'}:{})};
   }catch{
    // An unconfirmed terminal DB write requires reconciliation as well.
   }

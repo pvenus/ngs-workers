@@ -36,12 +36,14 @@ function conceptClaim(command,claimStamp){
  return {officialRequestId,taskId,projectId,categoryId,payloadSha256,claimStamp};
 }
 
-export function requestLocalJson({port,path,method,body,deadline,signal,responseLimit=131072}){
+export const npcPlanningReadDeadlineMs=30_000;
+export function requestLocalJson({port,path,method,body,deadline,signal,responseLimit=131072,npcPlanningRead=false}){
  return new Promise((resolve,reject)=>{
   const payload=body?Buffer.from(JSON.stringify(body)):null;
-  const signals=[AbortSignal.timeout(deadline)];
+  const timeout=AbortSignal.timeout(deadline);
+  const signals=[timeout];
   if(signal)signals.unshift(signal);
-  const fail=()=>reject(Error('DOCUMENT_WORKER_LOCAL_TRANSPORT'));
+  const fail=()=>reject(Error(npcPlanningRead&&timeout.aborted?'NPC_PLANNING_PDS_READ_TIMEOUT':'DOCUMENT_WORKER_LOCAL_TRANSPORT'));
   const req=request({hostname:'127.0.0.1',port,path,method,agent:false,signal:AbortSignal.any(signals),
    headers:{Accept:'application/json',...(payload?{'Content-Type':'application/json','Content-Length':payload.length}:{})}},resp=>{
    if(resp.statusCode!==200||!/^application\/json(?:\s*;|$)/i.test(String(resp.headers['content-type']??''))){resp.destroy();fail();return;}
@@ -107,11 +109,11 @@ export function localPorts({transport=requestLocalJson}={}){
   },
   async readOverview(command,claimStamp){
    return await transport({port:8030,path:overviewPath+'/read',method:'POST',
-    body:{claim:claimOf(command,claimStamp),inputMode:'folder-snapshot'},deadline:5000});
+    body:{claim:claimOf(command,claimStamp),inputMode:'folder-snapshot'},deadline:npcPlanningReadDeadlineMs,npcPlanningRead:true});
   },
   async readPortraitArt(command,claimStamp){
    return await transport({port:8030,path:portraitArtPath+'/read',method:'POST',
-    body:{claim:claimOf(command,claimStamp),inputMode:'folder-snapshot'},deadline:5000});
+    body:{claim:claimOf(command,claimStamp),inputMode:'folder-snapshot'},deadline:npcPlanningReadDeadlineMs,npcPlanningRead:true});
   },
   async publishOverview(command,claimStamp,basis){
    return await transport({port:8030,path:overviewPath,method:'POST',
@@ -123,15 +125,15 @@ export function localPorts({transport=requestLocalJson}={}){
   },
   async readRepresentative(command,claimStamp){
    return await transport({port:8030,path:representativePath+'/read',method:'POST',
-    body:{claim:claimOf(command,claimStamp),inputMode:'folder-snapshot'},deadline:5000});
+    body:{claim:claimOf(command,claimStamp),inputMode:'folder-snapshot'},deadline:npcPlanningReadDeadlineMs,npcPlanningRead:true});
   },
   async readIdle(command,claimStamp){
    return await transport({port:8030,path:idlePath+'/read',method:'POST',
-    body:{claim:claimOf(command,claimStamp),inputMode:'folder-snapshot'},deadline:5000});
+    body:{claim:claimOf(command,claimStamp),inputMode:'folder-snapshot'},deadline:npcPlanningReadDeadlineMs,npcPlanningRead:true});
   },
   async readCombat(command,claimStamp){
    return await transport({port:8030,path:combatPath+'/read',method:'POST',
-    body:{claim:claimOf(command,claimStamp),inputMode:'folder-snapshot'},deadline:5000,responseLimit:512*1024});
+    body:{claim:claimOf(command,claimStamp),inputMode:'folder-snapshot'},deadline:npcPlanningReadDeadlineMs,npcPlanningRead:true,responseLimit:512*1024});
   },
   async publishCombat(command,claimStamp,basis){
    return await transport({port:8030,path:combatPath,method:'POST',
