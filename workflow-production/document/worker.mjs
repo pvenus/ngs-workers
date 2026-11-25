@@ -4,6 +4,7 @@ import {npcPlanningUpdateSchema,validateNPCPlanningUpdate} from './npc-planning-
 import {formatConceptSections} from './concept-sections.mjs';
 /** One exact document task. Storage and rendering are supplied by trusted ports. */
 import {DatabaseSync} from 'node:sqlite';
+import {settleFailure} from './failure-state.mjs';
 import {assertDatabasePath,markWorkflowTaskFailed,protectSchema,documentTaskEligibleSql,workflowTaskRetrySetSql} from './workflow-ready.mjs';
 import {buildPlan as buildLegacyPlan,exact} from './vendor/planner-89c7568/planner.mjs';
 import {buildPlan as buildConceptPlan} from './vendor/planner-concept-v1/planner.mjs';
@@ -343,10 +344,11 @@ export async function runSelectedDocument({db,taskId,officialRequestId,pds,opera
   // Once the PDS RPC was invoked, even a locally thrown error can mask
   // a committed write. Missing/invalid ACK or a failed completion CAS
   // is never treated as a safe task failure.
-  if(publicationStarted)return unresolved;
+  const presetRejected=operation===PRESET&&error?.message==='WORKFLOW_PRESET_REJECTED_BEFORE_WRITE';
+  if(publicationStarted&&!presetRejected)return unresolved;
   try{
-   const changed=markWorkflowTaskFailed(db,{taskId,officialRequestId,claimStamp:selected.stamp,workerType:'document'});
-   if(changed===true)return {state:'failed',taskId,code:'WORKFLOW_DOCUMENT_FAILED_BEFORE_PUBLICATION',
+   const changed=await settleFailure(()=>markWorkflowTaskFailed(db,{taskId,officialRequestId,claimStamp:selected.stamp,workerType:'document'}));
+   if(changed===true)return {state:'failed',taskId,code:presetRejected?error.message:'WORKFLOW_DOCUMENT_FAILED_BEFORE_PUBLICATION',
     ...planningFailureFields(planningFailureStage,error)};
   }catch{
    // An unconfirmed terminal DB write requires reconciliation as well.

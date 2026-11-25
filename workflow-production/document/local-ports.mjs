@@ -37,7 +37,7 @@ function conceptClaim(command,claimStamp){
 }
 
 export const npcPlanningReadDeadlineMs=30_000;
-export function requestLocalJson({port,path,method,body,deadline,signal,responseLimit=131072,npcPlanningRead=false}){
+export function requestLocalJson({port,path,method,body,deadline,signal,responseLimit=131072,npcPlanningRead=false,presetPublication=false}){
  return new Promise((resolve,reject)=>{
   const payload=body?Buffer.from(JSON.stringify(body)):null;
   const timeout=AbortSignal.timeout(deadline);
@@ -46,11 +46,18 @@ export function requestLocalJson({port,path,method,body,deadline,signal,response
   const fail=()=>reject(Error(npcPlanningRead&&timeout.aborted?'NPC_PLANNING_PDS_READ_TIMEOUT':'DOCUMENT_WORKER_LOCAL_TRANSPORT'));
   const req=request({hostname:'127.0.0.1',port,path,method,agent:false,signal:AbortSignal.any(signals),
    headers:{Accept:'application/json',...(payload?{'Content-Type':'application/json','Content-Length':payload.length}:{})}},resp=>{
-   if(resp.statusCode!==200||!/^application\/json(?:\s*;|$)/i.test(String(resp.headers['content-type']??''))){resp.destroy();fail();return;}
+   const presetConflict=presetPublication&&path===presetPath&&method==='POST'&&resp.statusCode===409;
+   if((resp.statusCode!==200&&!presetConflict)||!/^application\/json(?:\s*;|$)/i.test(String(resp.headers['content-type']??''))){resp.destroy();fail();return;}
    let len=0;const chunks=[];
    resp.on('data',part=>{len+=part.length;if(len>responseLimit){req.destroy();fail();}else chunks.push(part);});
    resp.on('aborted',fail);resp.on('error',fail);
-   resp.on('end',()=>{try{resolve(JSON.parse(new TextDecoder('utf-8',{fatal:true}).decode(Buffer.concat(chunks))));}catch{fail();}});
+   resp.on('end',()=>{try{
+    const reply=JSON.parse(new TextDecoder('utf-8',{fatal:true}).decode(Buffer.concat(chunks)));
+    if(presetConflict){
+     if(exact(reply,['error'])&&reply.error==='WORKFLOW_PRESET_REJECTED_BEFORE_WRITE')reject(Error(reply.error));
+     else fail();
+    }else resolve(reply);
+   }catch{fail();}});
   });
   req.on('error',fail);req.end(payload);
  });
@@ -75,7 +82,7 @@ export function localPorts({transport=requestLocalJson}={}){
   async publishExactPreset(command,claimStamp){
    const {predecessorReceiptRef,artifact}=command;
    return await transport({port:8030,path:presetPath,method:'POST',
-    body:{claim:claimOf(command,claimStamp),artifact:JSON.parse(artifact),predecessorReceiptRef},deadline:120000});
+    body:{claim:claimOf(command,claimStamp),artifact:JSON.parse(artifact),predecessorReceiptRef},deadline:120000,presetPublication:true});
   },
   async readPropDesign(claim,signal){
    return await transport({port:8030,path:propDesignPath+'/read',method:'POST',body:{claim},deadline:5000,signal});

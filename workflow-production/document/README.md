@@ -205,3 +205,5 @@ documents provide project evidence. The existing section headings and JSON
 output contract remain in force. Combat must name a concrete weapon in the
 combat stance section; if canon has not specified it, label a compatible
 choice as a proposal. Idle and combat exclude unrelated handheld props.
+
+A preset write carrying the exact loopback PDS no-write rejection proof is a normal failure, eligible under the existing retry policy. A generic 409, disconnect, or uncertain receipt is not proof. Transient SQLite write contention only retries the same failure-state compare-and-swap, not the task or the PDS write.

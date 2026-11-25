@@ -121,7 +121,7 @@ for(const mode of ['normal','new-art','missing-art','missing-pose','fresh-no-fal
  }});
  let rendered=0;
  const render=async input=>{
-  assert.equal(get(officialRequestId).portrait_read_owner_pid,null);
+  assert.equal(get(officialRequestId).portrait_read_owner_pid,process.pid);
   rendered++;
   if(isRetry){
    // Competing handle cannot claim the now-running retry or increment it again.

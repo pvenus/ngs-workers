@@ -101,3 +101,15 @@ test('new exact NPC has no predecessor and awaiting RS cannot start',async t=>{
  const out=await runSelectedPreset({...f.entry,pds:{publishExactPreset(c){assert.equal(c.predecessorReceiptRef,null);return verified(c);}}});
  assert.equal(out.state,'completed');
 });
+
+test('a verified preset rejection becomes normal failure without re-running or incrementing retries',async t=>{
+ const f=setup(t,{newNPC:true});f.s.acknowledge(f.id);
+ let publishes=0;
+ const result=await runSelectedPreset({...f.entry,pds:{publishExactPreset(){
+  publishes++;throw Error('WORKFLOW_PRESET_REJECTED_BEFORE_WRITE');
+ }}});
+ assert.equal(result.state,'failed');assert.equal(result.code,'WORKFLOW_PRESET_REJECTED_BEFORE_WRITE');
+ assert.equal(f.task('preset').status,'failed');assert.equal(f.task('preset').retry_count,0);
+ assert.equal(f.task('preset').result_ref,null);assert.equal(f.task('planning_representative').status,'pending');
+ assert.equal(publishes,1);
+});

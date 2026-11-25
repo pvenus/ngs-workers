@@ -23,3 +23,18 @@ test('only a planning PDS deadline reports its fixed code; other local transport
  await assert.rejects(requestLocalJson({...params,npcPlanningRead:true}),{message:'NPC_PLANNING_PDS_READ_TIMEOUT'});
  await assert.rejects(requestLocalJson(params),{message:'DOCUMENT_WORKER_LOCAL_TRANSPORT'});
 });
+
+test('only the exact preset rejection proof on the intended HTTP route permits ordinary failure',async t=>{
+ let data;
+ const server=createServer((req,res)=>{
+  req.resume();res.writeHead(409,{'Content-Type':'application/json'}).end(JSON.stringify(data));
+ });
+ await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
+ t.after(()=>new Promise(resolve=>server.close(resolve)));
+ const args={port:server.address().port,path:'/v1/npcs/ownership/workflow-preset',method:'POST',body:{},deadline:2000,presetPublication:true};
+ data={error:'WORKFLOW_PRESET_REJECTED_BEFORE_WRITE'};
+ await assert.rejects(requestLocalJson(args),{message:'WORKFLOW_PRESET_REJECTED_BEFORE_WRITE'});
+ await assert.rejects(requestLocalJson({...args,path:'/unrelated'}),{message:'DOCUMENT_WORKER_LOCAL_TRANSPORT'});
+ data={error:'WORKFLOW_PRESET_NOT_CONFIRMED'};
+ await assert.rejects(requestLocalJson(args),{message:'DOCUMENT_WORKER_LOCAL_TRANSPORT'});
+});

@@ -240,15 +240,16 @@ other workspace is created by the image worker.
 
 Cinematic source images are a separate official `cinematic.source.generate` job. The existing resident image worker validates the exact planner/PDS text, then reads the current canonical Binari Master Concept from loopback PDS. It selects only the active **시네마틱 영상 디자인** category and provides its digest-verified Markdown as the shared visual style, separate from the exact shot title and prompt. If the document is missing, archived, or invalid, the job does not call the model. The worker logs the selected design digest on success, uses the pinned native scene provider once (`transparent_background=false`), and publishes the original 1536×1024 PNG to the source library. It does not enqueue animation or interleave with other image calls. Unsupported geometry/format is rejected rather than resized; ambiguous native generation is not automatically repeated.
 
-### Abandoned NPC portrait reads
+### Abandoned NPC portrait work before publication
 
 When the local Planner provides `portrait_read_owner_pid`, the NPC portrait
 worker writes its process identity in the running-claim transaction, and removes
-the marker with an exact compare-and-swap before invoking the renderer. The
+the marker with an exact compare-and-swap immediately before dispatching
+the result to PDS, not before rendering. The
 resident worker records `WORKFLOW_PORTRAIT_READ_OWNER_LOST` and an ordinary task
-failure only for the same running read if the local process is proven absent
+failure only for that pre-publication claim if the local process is proven absent
 (`ESRCH`). It leaves active owners, unmarked legacy claims, unknown process
-states, rendering and publishing untouched. PID reuse is conservative: a live
+states, and attempts whose publication may have begun untouched. PID reuse is conservative: a live
 PID suppresses this classification. Retry count, delay, artifacts and conflicts
 retain their existing policy. No path here submits, resets or republishes work.
 The marker is intended only for the same Mac and local Planner database.

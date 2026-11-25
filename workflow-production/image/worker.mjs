@@ -2,6 +2,7 @@ import {planningFolderDiagnostic} from './planning-folders.mjs';
 import {hasPortraitReadOwner,finishPortraitRead} from './portrait-read-owner.mjs';
 /** One exact document task. Storage and rendering are supplied by trusted ports. */
 import {DatabaseSync} from 'node:sqlite';
+import {settleFailure} from './failure-state.mjs';
 import {assertDatabasePath,protectSchema,nextWorkflowTaskFromPath,oldestRunnable,markWorkflowTaskFailed,workflowTaskEligibleSql,workflowTaskRetrySetSql} from './workflow-ready.mjs';
 export {nextWorkflowTaskFromPath} from './workflow-ready.mjs';
 import {buildPlan,directions,exact} from './vendor/planner-f24d23a/planner.mjs';
@@ -274,10 +275,6 @@ async function runSelected({db,taskId,officialRequestId,pds,operation=PRESET,ren
    stage='verify_source_folders';phase('verifying-source-folders');
    const resultImage=await withPlanningSnapshot({npcId,signal},async snapshot=>{
     const prepared=portraitInput(await readPlanningSources(snapshot,npcId),selected.payload,basis,input.planningContent,operation,officialRequestId,selected.requireArt,extra);
-    if(readOwnerTracked){
-     if(!finishPortraitRead(db,readClaim))throw Error('WORKFLOW_PORTRAIT_READ_OWNER_CHANGED');
-     readOwnerTracked=false;
-    }
     stage='render_image';phase('rendering');return render(prepared,{signal});
    });
    stage='verify_image_result';artifact=portraitArtifact(resultImage,selected.command);
@@ -301,7 +298,18 @@ async function runSelected({db,taskId,officialRequestId,pds,operation=PRESET,ren
   }else{
    const command=Object.freeze({...selected.command,artifact});
    stage='publish_image';phase('publishing');
-   if(image){signal?.throwIfAborted();publishStarted=true;}
+   if(image){
+    signal?.throwIfAborted();
+    // Keep the recoverable owner proof through snapshot and render. Clear it
+    // durably before the publish boundary; never assume an in-flight write failed.
+    if(readOwnerTracked){
+     stage='release_prewrite_owner';
+     if(!await settleFailure(()=>finishPortraitRead(db,readClaim)))throw Error('WORKFLOW_PORTRAIT_READ_OWNER_CHANGED');
+     readOwnerTracked=false;
+    }
+    signal?.throwIfAborted();
+    publishStarted=true;stage='publish_image';
+   }
    const response=image?await pds.publishPortrait(command,selected.stamp,basis,signal):
     await pds.publishRepresentative(command,selected.stamp,basis);
    if(!exact(response,['ok'])||response.ok!==true){stage='verify_publish_ack';return {...unresolved,...diagnostics()};}
@@ -312,8 +320,8 @@ async function runSelected({db,taskId,officialRequestId,pds,operation=PRESET,ren
   let failureTransition;
   if(image&&!publishStarted){
    try{
-    if(readOwnerTracked?finishPortraitRead(db,readClaim,{failed:true}):
-      markWorkflowTaskFailed(db,{...readClaim,workerType:'image'})){
+    if(await settleFailure(()=>readOwnerTracked?finishPortraitRead(db,readClaim,{failed:true}):
+      markWorkflowTaskFailed(db,{...readClaim,workerType:'image'}))){
      phase('failed');return {state:'failed',taskId,code:['WORKFLOW_IMAGE_TRANSPARENCY_REJECTED','WORKFLOW_PORTRAIT_PDS_CONNECT_TIMEOUT'].includes(error?.message)?error.message:'WORKFLOW_PORTRAIT_FAILED_BEFORE_PUBLISH',...diagnostics(error)};
     }
     failureTransition='CLAIM_NOT_UPDATED';
