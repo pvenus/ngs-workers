@@ -286,7 +286,7 @@ An app update that replaces the executable rotates the connection before the
 next image job. It does not interrupt an active job or bypass result proof.
 
 ### Independent image slots
-Slot 1 (default) and slot 2 are separate resident processes. OPS provisions
+Slot 1 (default) and slots 2–4 are separate resident processes. OPS provisions
 their selectors, release paths, logs and heartbeat identities independently.
 Each process uses a private temporary root and each task retains private
 scratch files and a separate Codex thread. Only the workflow ledger and

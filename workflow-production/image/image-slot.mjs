@@ -3,8 +3,8 @@ import {homedir} from 'node:os';
 import {join} from 'node:path';
 
 export function imageSlotIdentity(value='1'){
- if(value!=='1'&&value!=='2')throw Error('IMAGE_WORKER_SLOT_INVALID');
- return Object.freeze({slot:value,serverName:value==='1'?'image-worker':'image-worker-2'});
+ if(!/^[1-4]$/.test(value))throw Error('IMAGE_WORKER_SLOT_INVALID');
+ return Object.freeze({slot:value,serverName:value==='1'?'image-worker':'image-worker-'+value});
 }
 function privateDirectory(path){
  mkdirSync(path,{recursive:true,mode:0o700});
