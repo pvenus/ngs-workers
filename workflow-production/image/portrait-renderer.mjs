@@ -1,15 +1,13 @@
 import {validCinematicSourceRenderInput,sourceGeometry} from './cinematic-source-worker.mjs';
 /** Explicit runner for one original portrait, using the pinned legacy native provider. */
-import {spawn} from 'node:child_process';
+import {createCodexSessionClient} from './codex-session-client.mjs';
 import {constants} from 'node:fs';
 import {access,lstat,realpath} from 'node:fs/promises';
-import {homedir} from 'node:os';
 import {isAbsolute,normalize} from 'node:path';
-import {fileURLToPath} from 'node:url';
 import {exact} from './vendor/planner-f24d23a/planner.mjs';
 import {preparePropImageInput,propImageRequestSchema,propDesignContextSchema} from './prop-image-design.mjs';
 
-const helper=fileURLToPath(new URL('./portrait-native.py',import.meta.url));
+const helper=new URL('./portrait-native.py',import.meta.url);
 const python='/opt/homebrew/bin/python3.12';
 const maxPNG=8*1024*1024, maxPayload=192*1024;
 const signature=Buffer.from('89504e470d0a1a0a','hex');
@@ -32,44 +30,35 @@ function options({hostConfig=process.env.WORKFLOW_IMAGE_HOST_CONFIG,hostConfigSh
  return {hostConfig,hostConfigSha256,pythonPath};
 }
 
+// The production worker has one immutable host binding. Scope is replaced
+// only for locally injected alternate bindings (e.g. verification fixtures).
+let bridge, key;
+export function closeImageCodexSession(){bridge?.close();bridge=key=undefined;}
 async function call({hostConfig,hostConfigSha256,pythonPath},mode,payload,signal){
  if(signal?.aborted)throw fail('WORKFLOW_IMAGE_CANCELLED');
  const st=await lstat(hostConfig);
  if(!st.isFile()||st.uid!==process.getuid()||st.nlink!==1||(st.mode&0o077)!==0||
     await realpath(hostConfig)!==hostConfig)throw fail('WORKFLOW_IMAGE_HOST_CONFIG_UNTRUSTED');
  await access(pythonPath,constants.X_OK);
- if(signal?.aborted)throw fail('WORKFLOW_IMAGE_CANCELLED');
- return new Promise((resolve,reject)=>{
-  const child=spawn(pythonPath,['-I','-B',helper,mode,hostConfig,hostConfigSha256],{
-   env:{HOME:homedir(),PATH:'/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin'},stdio:['pipe','pipe','ignore']});
-  let length=0,code;const chunks=[];
-  const terminate=(reason)=>{
-   code??=reason;
-   // The helper handles SIGTERM and joins the managed Codex process group.
-   // Never kill the helper mid-generation and pretend the image stopped.
-   child.kill('SIGTERM');
-  };
-  const abort=()=>terminate('WORKFLOW_IMAGE_CANCELLED');
-  signal?.addEventListener('abort',abort,{once:true});
-  const clock=setTimeout(()=>{
-   if(mode==='probe')child.kill('SIGKILL');
-   else terminate('WORKFLOW_IMAGE_NATIVE_TIMEOUT');
-  },mode==='probe'?15000:920000);
-  child.stdout.on('data',bytes=>{
-   length+=bytes.length;
-   if(length>(mode==='probe'?3:maxPNG))terminate('WORKFLOW_IMAGE_OUTPUT_INVALID');
-   else chunks.push(bytes);
-  });
-  child.on('error',()=>{code??='WORKFLOW_IMAGE_NATIVE_START_FAILED';});
-  child.stdin.on('error',()=>{code??='WORKFLOW_IMAGE_NATIVE_INPUT_FAILED';});
-  child.on('close',status=>{
-   clearTimeout(clock);signal?.removeEventListener('abort',abort);
-   if(code||status!==0)reject(fail(code??nativePortraitExitCode(status)));
-   else resolve(Buffer.concat(chunks));
-  });
-  child.stdin.end(payload);
-  if(signal?.aborted)abort();
- });
+ const identity=JSON.stringify([pythonPath,hostConfig,hostConfigSha256]);
+ if(key!==identity){
+  closeImageCodexSession();
+  bridge=createCodexSessionClient({script:helper,python:pythonPath,args:[hostConfig,hostConfigSha256]});
+  key=identity;
+ }
+ let result;
+ try{
+  result=await bridge.call({mode,data:mode==='probe'?null:JSON.parse(payload)},
+    {signal,timeoutMs:mode==='probe'?15000:920000,maxReply:12*1024*1024});
+ }catch(error){
+  throw fail(error.message==='cancelled'?'WORKFLOW_IMAGE_CANCELLED':error.message==='timeout'
+   ?'WORKFLOW_IMAGE_NATIVE_TIMEOUT':'WORKFLOW_IMAGE_NATIVE_UNCONFIRMED');
+ }
+ if(result?.code!==0)throw fail(nativePortraitExitCode(result?.code));
+ if(typeof result.base64!=='string')throw fail('WORKFLOW_IMAGE_OUTPUT_INVALID');
+ const raw=Buffer.from(result.base64,'base64');
+ if(raw.length>(mode==='probe'?3:maxPNG))throw fail('WORKFLOW_IMAGE_OUTPUT_INVALID');
+ return raw;
 }
 
 export async function probePortraitRenderer(config){

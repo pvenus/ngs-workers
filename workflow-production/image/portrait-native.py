@@ -4,12 +4,13 @@ import hashlib
 import json
 import os
 import re
-import signal
 import stat
 import sys
 import tempfile
-import threading
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from codex_session import serve, diagnostic
 
 _LIMIT = 192 * 1024
 _IMAGE_LIMIT = 8 * 1024 * 1024
@@ -46,7 +47,7 @@ def pinned_file(path, expected):
         raise ValueError("IMAGE_HOST_FILE_CHANGED")
 
 
-def bind(path, expected):
+def bind(path, expected, session):
     config = read_config(path, expected)
     workers = Path(config["workersRoot"])
     ngs = Path(config["ngsRoot"])
@@ -65,7 +66,7 @@ def bind(path, expected):
     pinned_file(binary, config["binarySha256"])
     # The option is a local operator pin; never use paths from task payloads.
     # The existing binder owns the installed Codex binary and legacy source pins.
-    sys.path[:0] = [str(workers), str(ngs)]
+    sys.path[:0] = [p for p in (str(workers), str(ngs)) if p not in sys.path]
     from workers.resident.deployment import image_pair_host
     if Path(image_pair_host.__file__).resolve() != binder:
         raise ValueError("IMAGE_HOST_BINDER_PATH")
@@ -79,14 +80,49 @@ def bind(path, expected):
     from local.services.pose_requests.worker import DIRECTION_VIEWS
 
     from local.services.story_node_images import native
-    from workers.resident.backends.portrait_pair import native_pair_runner_factory
-    for module, name in ((native, "local/services/story_node_images/native.py"),):
+    from local.services.npc_workflow import portrait_stage
+    for module, name in ((native, "local/services/story_node_images/native.py"),
+                         (portrait_stage, "local/services/npc_workflow/portrait_stage.py")):
         required = ngs / name
         if Path(module.__file__).resolve() != required or str(required) not in pins:
-            raise ValueError("IMAGE_HOST_CINEMATIC_PIN_REQUIRED")
-    full_scene_factory = native_pair_runner_factory(binary=str(binary), runner_type=native.NativeNodeImageRunner,
-                                                   approved_output_roots=config["outputRoots"])
-    return bound["portrait_pair_runner_factory"], full_scene_factory, portrait_pairs, DIRECTION_VIEWS, service.digest, png_alpha.validate_stage_output
+            raise ValueError("IMAGE_HOST_RUNNER_PIN_REQUIRED")
+    roots = tuple(Path(x).resolve(strict=True) for x in config["outputRoots"])
+
+    def make_factory(runner_type):
+        def begin(root, stopped):
+            (root / "references").mkdir(exist_ok=True, mode=0o700)
+            (root / "artifacts/references").mkdir(exist_ok=True, mode=0o700)
+            client = SessionImageCall(session, binary, root, stopped)
+            return runner_type(client, root / "native-journal", roots,
+                               (root, root/"references", root/"artifacts/references")), client
+        return begin
+
+    return make_factory(portrait_stage.AggregatePortraitRunner), make_factory(native.NativeNodeImageRunner), portrait_pairs, DIRECTION_VIEWS, service.digest, png_alpha.validate_stage_output
+
+
+class SessionImageCall:
+    def __init__(self, session, binary, root, stopped):
+        self.session, self.binary, self.root, self.stop = session, binary, root, stopped
+        self.folder = root / "native-cli"
+        self.folder.mkdir(mode=0o700)
+        self.settled = False
+
+    def run(self, prompt, schema, name, timeout=900, mcp_args=None, minimal=False):
+        if (mcp_args or not minimal or not isinstance(name, str) or
+            not name.startswith("node.image.") or '/' in name or '..' in name):
+            raise ValueError("IMAGE_CLI_CALL_INVALID")
+        folder = self.folder / name
+        folder.mkdir(mode=0o700)
+        value, thread_id, receipts = self.session.run(str(self.binary), self.root, prompt, schema, min(timeout, 900), 60000)
+        events = folder / "events.jsonl"
+        # The verifier consumes a normalized start marker plus the actual
+        # thread-scoped CLI tool receipts. Report no process-exit evidence.
+        events.write_text(json.dumps({"type": "thread.started", "thread_id": thread_id}) + "\n")
+        (folder / "stderr.log").write_bytes(receipts)
+        (folder / "response.json").write_text(json.dumps(value))
+        self.settled = True
+        return value, events
+
 
 
 def pixel_sprite_guidance(data, direction_views):
@@ -296,40 +332,21 @@ def cinematic_source_prompt(data):
 
 
 
-def cli_failure_status(root):
-    # The pinned CLI runner leaves bounded control receipts in its temporary
-    # workspace. Never forward their text, raw process output or output paths.
-    def read_small(path, limit):
-        try:
-            if path.is_symlink() or not path.is_file() or path.stat().st_size > limit:
-                return None
-            with path.open("rb") as stream:
-                data = stream.read(limit + 1)
-            value = json.loads(data) if len(data) <= limit else None
-            return value if type(value) is dict else None
-        except (OSError, ValueError):
-            return None
-
-    jobs = list((root / "native-cli").glob("node.image.*"))
-    if len(jobs) != 1 or jobs[0].is_symlink():
-        return 22  # No confirmed CLI result.
-    job = jobs[0]
-    exit_receipt = read_small(job / "process-exit.json", 4096)
-    codes = exit_receipt.get("returnCodes") if exit_receipt else None
-    if (not exit_receipt or exit_receipt.get("kind") != "local-processes" or
-            exit_receipt.get("outcome") != "joined" or type(codes) is not list or
-            len(codes) != 1 or type(codes[0]) is not int):
+def cli_failure_status(root, settled):
+    # Only classify a response once its exact turn completed and was detached.
+    if not settled:
         return 22
-    if codes[0] != 0:
-        return 23  # CLI process exited with an error.
-    response = read_small(job / "response.json", 60000)
-    if response is None:
-        return 24  # CLI exited cleanly without a valid response.
-    if response.get("state") == "blocked":
-        return 25  # CLI reported no confirmed generated result.
-    if response.get("state") == "generated":
-        return 26  # Reported generated; provider proof or artifact check failed.
-    return 24
+    jobs = list((root / "native-cli").glob("node.image.*"))
+    try:
+        if len(jobs) != 1 or jobs[0].is_symlink():
+            return 24
+        path = jobs[0] / "response.json"
+        if path.is_symlink() or not path.is_file() or path.stat().st_size > 360000:
+            return 24
+        value = json.loads(path.read_bytes())
+        return {"blocked": 25, "generated": 26}.get(value.get("state"), 24) if type(value) is dict else 24
+    except (ValueError, OSError, TypeError):
+        return 24
 
 
 def prepare_reference(data, pairs, root, *, green_prop=False):
@@ -359,21 +376,16 @@ def provider_descriptor(instruction, manifest, pairs, *, opaque=False):
     return desc
 
 
-def main():
-    mode, path, expected = sys.argv[1:]
-    stopped = threading.Event()
-    for sig in (signal.SIGTERM, signal.SIGINT):
-        signal.signal(sig, lambda *_: stopped.set())
-    factory, full_scene_factory, pairs, direction_views, digest, validate_transparency = bind(path, expected)
+def run(session, call, path, expected):
+    if type(call) is not dict or set(call) != {"mode", "data"}:
+        raise ValueError("IMAGE_NATIVE_INPUT_INVALID")
+    mode, data = call["mode"], call["data"]
+    stopped = session.stopped
+    factory, full_scene_factory, pairs, direction_views, digest, validate_transparency = bind(path, expected, session)
     if mode == "probe":
-        sys.stdout.buffer.write(b"ok\n")
-        return
+        return {"code": 0, "base64": "b2sK"}
     if mode not in ("render", "render-neutral", "render-prop", "render-cinematic-source"):
         raise ValueError("IMAGE_NATIVE_MODE_DENIED")
-    payload = sys.stdin.buffer.read(12 * 1024 * 1024 + 1)
-    if len(payload) > 12 * 1024 * 1024:
-        raise ValueError("IMAGE_NATIVE_INPUT_TOO_LARGE")
-    data = json.loads(payload)
     neutral = mode == "render-neutral"
     if stopped.is_set():
         raise ValueError("IMAGE_NATIVE_INPUT_INVALID")
@@ -421,30 +433,29 @@ def main():
                  "providerRequest": descriptor, "providerRequestHash": digest(descriptor), "requestHash": request_hash}
         if manifest is not None:
             claim["referenceManifest"] = manifest
-        runner = factory(root, stopped)
+        runner, client = factory(root, stopped)
         try:
             raw, proof = runner.generate(claim)
         except Exception:
-            sys.exit(cli_failure_status(root))
-        execution = runner.execution_evidence()
+            code = cli_failure_status(root, client.settled)
+            diagnostic(worker="image", stage="verification", outcome={22: "unconfirmed", 24: "invalid",
+                       25: "blocked", 26: "proof_rejected"}[code])
+            return {"code": code}
         if not isinstance(raw, bytes) or len(raw) > _IMAGE_LIMIT or type(proof) is not dict:
-            sys.exit(26)
+            return {"code": 26}
         actual = hashlib.sha256(raw).hexdigest()
-        if (stopped.is_set() or type(execution) is not dict or execution.get("outcome") != "joined" or
-                proof.get("actualToolOutput") is not True or
+        if (stopped.is_set() or not client.settled or proof.get("actualToolOutput") is not True or
                 proof.get("sha256") != actual or any(proof.get(k) != claim[k] for k in
                     ("index", "providerClaim", "requestHash", "providerRequestHash"))):
-            sys.exit(26)  # A returned result failed the own output-proof check.
+            return {"code": 26}
         if manifest is None and not (cinematic or green_prop):
             try:
                 validate_transparency(raw, descriptor["outputContract"], "portrait")
             except ValueError:
-                sys.exit(21)  # Fixed local rejection; no provider or image data on stderr.
-        sys.stdout.buffer.write(raw)
+                return {"code": 21}
+        return {"code": 0, "base64": base64.b64encode(raw).decode("ascii")}
 
 
 if __name__ == "__main__":
-    try:
-        main()
-    except Exception:
-        sys.exit(1)
+    path, expected = sys.argv[1:]
+    serve("image", lambda session, call: run(session, call, path, expected))

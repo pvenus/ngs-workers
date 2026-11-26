@@ -5,6 +5,8 @@ import {exactProp as exact,propGenerateType,propGenerateSchema,propRegenerateTyp
  validatePropGenerate,validatePropRegenerate} from './vendor/prop-composite-v1/prop-generate-envelope.mjs';
 import {buildPropGeneratePlan,exactPropTask,propKeys,propRef,propTaskId,isPropRef} from './vendor/prop-composite-v1/prop-generate-plan.mjs';
 import {assertDatabasePath,protectSchema,workflowTaskEligibleSql,workflowTaskRetrySetSql,markWorkflowTaskFailed} from './workflow-ready.mjs';
+import {settleFailure} from './failure-state.mjs';
+import {finishPortraitRead,hasPortraitReadOwner} from './portrait-read-owner.mjs';
 import {validatePropDesign} from './prop-image-design.mjs';
 
 export const propBaseOperations=Object.freeze({
@@ -63,12 +65,13 @@ function claimTask(db,request){
    Number.isSafeInteger(row.design_stamp)&&row.design_stamp>=0&&isPropRef(propKeys.design,row.design_ref));
   const claimStamp=Math.max(Date.now(),row.updated_at+1);
   need(row.registered_at<=claimStamp&&row.design_stamp<=claimStamp);
-  need(db.prepare(`UPDATE workflow_tasks SET status='running',updated_at=?,${workflowTaskRetrySetSql}
+  const ownerTracked=hasPortraitReadOwner(db);
+  need(db.prepare(`UPDATE workflow_tasks SET status='running',updated_at=?,${ownerTracked?'portrait_read_owner_pid=?,':''}${workflowTaskRetrySetSql}
    WHERE task_id=? AND official_request_id=? AND worker_type=? AND task_type=? AND task_key=?
     AND updated_at=? AND status=? AND result_ref IS NULL AND ${workflowTaskEligibleSql()}`)
-   .run(claimStamp,taskId,officialRequestId,worker,operation,propKeys.base,row.updated_at,row.status).changes===1);
+   .run(claimStamp,...(ownerTracked?[process.pid]:[]),taskId,officialRequestId,worker,operation,propKeys.base,row.updated_at,row.status).changes===1);
   db.exec('COMMIT');
-  return {row,design,reference:base.input.reference,request,claim:{officialRequestId,taskId,projectId,payloadSha256:row.payload_sha256,claimStamp}};
+  return {row,design,ownerTracked,reference:base.input.reference,request,claim:{officialRequestId,taskId,projectId,payloadSha256:row.payload_sha256,claimStamp}};
  }catch(error){db.exec('ROLLBACK');throw error;}
 }
 function assertCurrent(db,selected){
@@ -177,7 +180,7 @@ export async function runPropBaseFromPath({dbPath,taskId,officialRequestId,opera
   db.exec('PRAGMA foreign_keys=ON; PRAGMA busy_timeout=5000;');protectSchema(db);
   const selected=claimTask(db,{officialRequestId,taskId,operation});
   if(!selected)return {state:'not_claimable',taskId};
-  let sent=false,stage='input-read';
+  let sent=false,ownerTracked=selected.ownerTracked,stage='input-read';
   try{
    let packet;
    try{packet=await pds.readPropBase(selected.claim,signal,!!selected.reference);}
@@ -196,6 +199,11 @@ export async function runPropBaseFromPath({dbPath,taskId,officialRequestId,opera
    stage='claim-validation';
    signal?.throwIfAborted();assertCurrent(db,selected);
    const resultRef=propRef(propKeys.base,artifact.media.sha256);
+   if(ownerTracked){
+    need(await settleFailure(()=>finishPortraitRead(db,selected.claim)),'WORKFLOW_PROP_BASE_CLAIM_CHANGED');
+    ownerTracked=false;
+   }
+   signal?.throwIfAborted();
    stage='stage-write';sent=true;
    const receipt=await pds.publishPropBase(selected.claim,artifact);
    need(exact(receipt,['ok','resultRef'])&&receipt.ok===true&&receipt.resultRef===resultRef,'WORKFLOW_PROP_BASE_PUBLICATION_UNCONFIRMED');
@@ -205,11 +213,23 @@ export async function runPropBaseFromPath({dbPath,taskId,officialRequestId,opera
    const diagnostic=diagnosis(stage,error);
    if(!sent){
     try{
-     assertCurrent(db,selected);
-     if(markWorkflowTaskFailed(db,{...selected.claim,workerType:worker}))return {state:'failed',taskId,code:safe(error),...diagnostic};
-    }catch{/* Revoked/uncertain state never becomes a forced failure. */}
+     // A write that never started cannot have published. Current running
+     // attempt identity, not the upstream design snapshot, fences this failure.
+     const changed=await settleFailure(()=>{
+      db.exec('BEGIN IMMEDIATE');
+      try{
+       const live=db.prepare("SELECT 1 FROM workflow_runs WHERE official_request_id=? AND state='planned' AND reason IS NULL AND payload_sha256=?")
+        .get(officialRequestId,selected.claim.payloadSha256);
+       const changed=!!live&&(ownerTracked?finishPortraitRead(db,selected.claim,{failed:true}):
+        markWorkflowTaskFailed(db,{...selected.claim,workerType:worker}));
+       db.exec('COMMIT');return changed;
+      }catch(e){db.exec('ROLLBACK');throw e;}
+     });
+     if(changed)return {state:'failed',taskId,code:safe(error),...diagnostic};
+     diagnostic.failureTransition='CLAIM_NOT_UPDATED';
+    }catch{diagnostic.failureTransition='STATE_WRITE_UNCONFIRMED';}
    }
-   return {state:'requires_reconciliation',taskId,code:sent?'WORKFLOW_PROP_BASE_PUBLICATION_UNCONFIRMED':'WORKFLOW_PROP_BASE_CLAIM_CHANGED',...diagnostic};
+   return {state:'requires_reconciliation',taskId,code:sent?'WORKFLOW_PROP_BASE_PUBLICATION_UNCONFIRMED':diagnostic.failureTransition==='STATE_WRITE_UNCONFIRMED'?'WORKFLOW_PROP_BASE_FAILURE_WRITE_UNCONFIRMED':'WORKFLOW_PROP_BASE_CLAIM_CHANGED',...diagnostic};
   }
  }finally{db.close();}
 }

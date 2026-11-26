@@ -100,7 +100,7 @@ test('native helper routes neutral reference through one pinned-provider call wi
  const native=fileURLToPath(new URL('./portrait-native.py',import.meta.url));
  const proc=spawnSync('python3',['-B','-c',`
 import base64,hashlib,json,runpy,sys
-m=runpy.run_path(sys.argv[1]); main=m['main']
+m=runpy.run_path(sys.argv[1]); run=m['run']
 raw=base64.b64decode(sys.argv[2]); calls=[]
 def digest(x): return hashlib.sha256(json.dumps(x,sort_keys=True).encode()).hexdigest()
 class Pairs:
@@ -119,9 +119,12 @@ class Runner:
  def execution_evidence(self): return {'outcome':'joined'}
 def check_alpha(output,descriptor,use):
  assert output==raw and descriptor=={'alpha':True} and use=='portrait'
-main.__globals__['bind']=lambda *_: (lambda *_:Runner(),None,Pairs(),{},digest,check_alpha)
-sys.argv=['portrait-native.py','render-neutral','placeholder','fixture']
-main()
+from types import SimpleNamespace
+run.__globals__['bind']=lambda *_: (lambda *_:(Runner(),SimpleNamespace(settled=True)),None,Pairs(),{},digest,check_alpha)
+result=run(SimpleNamespace(stopped=SimpleNamespace(is_set=lambda:False)),
+           {"mode":"render-neutral","data":json.load(sys.stdin)},"config","pin")
+assert result["code"]==0
+sys.stdout.buffer.write(base64.b64decode(result["base64"]))
 assert len(calls)==1
 `,native,png.toString('base64')],{input:JSON.stringify({referenceKind:neutralReferenceKind})});
  assert.equal(proc.status,0,String(proc.stderr));

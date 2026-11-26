@@ -1,11 +1,11 @@
 import {readNpcPlanningGuide,requireCombatWeapon} from './planning-guides.mjs';
 import {buildAuthoringPrompt} from './authoring-prompt.mjs';
 import {npcPlanningAddSchema,validateNPCPlanningAdd} from './npc-planning-add-envelope.mjs';
-/** One bounded Codex invocation for a representative planning document. */
-import {spawn} from 'node:child_process';
+/** One isolated Codex thread for a planning document. */
+import {createCodexSessionClient} from './codex-session-client.mjs';
 import {accessSync,constants} from 'node:fs';
 import {lstat,mkdir,mkdtemp,realpath,rm,writeFile} from 'node:fs/promises';
-import {homedir,tmpdir} from 'node:os';
+import {tmpdir} from 'node:os';
 import {dirname,isAbsolute,join,normalize} from 'node:path';
 import {planningHeadings,validatePlanningMarkdown} from './planning-markdown.mjs';
 import {preparePlanningSources} from './planning-input.mjs';
@@ -115,69 +115,26 @@ async function planningUpdatePrompt(operation){
   await readNpcPlanningGuide(operation),
  ].join('\n');
 }
-function readFinalJson(bytes){
-  let finalMessage=null,completed=false;
-  const raw=new TextDecoder('utf-8',{fatal:true}).decode(bytes);
-  for(const line of raw.split('\n')){
-   if(!line.trim())continue;
-   const event=JSON.parse(line);
-   if(completed||['error','turn.failed'].includes(event.type))throw Error();
-   if(event.type==='turn.completed'){completed=true;continue;}
-   if(event.type.startsWith('item.')){
-    if(!['agent_message','reasoning'].includes(event.item?.type))throw Error();
-    if(event.type==='item.completed'&&event.item.type==='agent_message')finalMessage=event.item.text;
-   }
-  }
-  if(!completed||typeof finalMessage!=='string')throw Error();
-  return JSON.parse(finalMessage);
-}
-
-function parseOutput(bytes,{update=false,sectionCount=0}={}){
+const session=createCodexSessionClient({script:new URL('./document-session.py',import.meta.url)});
+export const closeDocumentCodexSession=()=>session.close();
+async function execute(binary,cwd,prompt,schema,timeoutMs,signal,outputLimit=maxOutput){
  try{
-  const data=readFinalJson(bytes);
+  return await session.call({binary,cwd,prompt,schema,timeoutMs,outputLimit},
+   {signal,timeoutMs:timeoutMs+10_000,maxReply:2*outputLimit+4096});
+ }catch(error){
+  throw Error(({cancelled:'REPRESENTATIVE_CODEX_CANCELLED',timeout:'REPRESENTATIVE_CODEX_TIMEOUT',
+   output_limit:'REPRESENTATIVE_CODEX_OUTPUT_TOO_LARGE',invalid_output:'REPRESENTATIVE_CODEX_OUTPUT_INVALID',
+   invalid_event:'REPRESENTATIVE_CODEX_OUTPUT_INVALID',start_failed:'REPRESENTATIVE_CODEX_START_FAILED'})[error.message]
+   ??'REPRESENTATIVE_CODEX_FAILED');
+ }
+}
+function parseOutput(data,{update=false,sectionCount=0}={}){
+ try{
   if(sectionCount){validateSectionBodies(data,sectionCount);return data;}
   if(!data||Object.keys(data).join(',')!=='content'||
    (update?(typeof data.content!=='string'||!data.content.isWellFormed()||!data.content.trim()||Buffer.byteLength(data.content)>1024*1024):!typed(data.content,16_000)))throw Error();
   return update?data.content:data.content.trim();
  }catch{throw Error('REPRESENTATIVE_CODEX_OUTPUT_INVALID');}
-}
-
-function execute(binary,args,root,input,timeoutMs,signal,outputLimit=maxOutput){
- return new Promise((resolve,reject)=>{
-  if(signal?.aborted){reject(Error('REPRESENTATIVE_CODEX_CANCELLED'));return;}
-  let child;
-  try{child=spawn(binary,args,{cwd:root,env:{HOME:homedir(),PATH:'/usr/bin:/bin:/usr/sbin:/sbin',TMPDIR:root},
-   stdio:['pipe','pipe','ignore'],detached:true});}
-  catch{reject(Error('REPRESENTATIVE_CODEX_START_FAILED'));return;}
-  let reason,killTimer,bytes=0;
-  const out=[];
-  function kill(signal){if(child.pid){try{process.kill(-child.pid,signal);}catch{/* already exited */}}}
-  function fail(code){
-   if(reason)return;
-   reason=code;
-   kill('SIGTERM');
-   killTimer=setTimeout(()=>kill('SIGKILL'),1000);
-  }
-  const cancelled=()=>fail('REPRESENTATIVE_CODEX_CANCELLED');
-  signal?.addEventListener('abort',cancelled,{once:true});
-  const timeout=setTimeout(()=>fail('REPRESENTATIVE_CODEX_TIMEOUT'),timeoutMs);
-  child.stdout.on('data',chunk=>{
-   if(reason)return;
-   bytes+=chunk.length;
-   if(bytes>outputLimit){fail('REPRESENTATIVE_CODEX_OUTPUT_TOO_LARGE');return;}
-   out.push(chunk);
-  });
-  child.on('error',()=>fail('REPRESENTATIVE_CODEX_START_FAILED'));
-  child.stdin.on('error',()=>fail('REPRESENTATIVE_CODEX_STDIN_FAILED'));
-  child.on('close',code=>{
-   clearTimeout(timeout);clearTimeout(killTimer);
-   signal?.removeEventListener('abort',cancelled);
-   if(reason)reject(Error(reason));
-   else if(code!==0)reject(Error('REPRESENTATIVE_CODEX_FAILED'));
-   else resolve(Buffer.concat(out,bytes));
-  });
-  child.stdin.end(input);
- });
 }
 
 const absolute=path=>typeof path==='string'&&isAbsolute(path)&&normalize(path)===path;
@@ -209,15 +166,7 @@ export async function executeTypedCodexDocument({
  try{accessSync(codexPath,constants.X_OK);}catch{throw Error('REPRESENTATIVE_CODEX_UNAVAILABLE');}
  const root=await mkdtemp(join(tmpdir(),'ngs-prop-design-'));
  try{
-  const schema=join(root,'schema.json');
-  await writeFile(schema,JSON.stringify(outputSchema),{flag:'wx',mode:0o600});
-  const stdout=await execute(codexPath,[
-   '-a','never','exec','--ephemeral','--ignore-user-config','--ignore-rules','--sandbox','read-only',
-   '--disable','shell_tool','--disable','unified_exec','--disable','apps','--disable','plugins',
-   '--disable','skill_search','-c','web_search="disabled"',
-   '--cd',root,'--skip-git-repo-check','--output-schema',schema,'--color','never','--json','-',
-  ],root,prompt,timeoutMs,signal);
-  try{return readFinalJson(stdout);}catch{throw Error('REPRESENTATIVE_CODEX_OUTPUT_INVALID');}
+  return await execute(codexPath,root,prompt,outputSchema,timeoutMs,signal);
  }finally{await rm(root,{recursive:true,force:true});}
 }
 
@@ -254,16 +203,10 @@ export function createRepresentativeRenderer({codexPath=REPRESENTATIVE_CODEX_PAT
   try{accessSync(codexPath,constants.X_OK);}catch{throw Error('REPRESENTATIVE_CODEX_UNAVAILABLE');}
   const root=await mkdtemp(join(tmpdir(),'ngs-representative-'));
   try{
-   const outputSchema=join(root,'schema.json');
-   await writeFile(outputSchema,JSON.stringify(sections?sectionBodySchema(data.requiredSections.length):schema),{flag:'wx',mode:0o600});
+   const outputSchema=sections?sectionBodySchema(data.requiredSections.length):schema;
    if(auditDirectory!==undefined)await prepareAudit(auditDirectory,{...data,sourceSelection},prompt);
-   const stdout=await execute(codexPath,[
-    '-a','never','exec','--ephemeral','--ignore-user-config','--ignore-rules','--sandbox','read-only',
-    '--disable','shell_tool','--disable','unified_exec','--disable','apps','--disable','plugins',
-    '--disable','skill_search','-c','web_search="disabled"',
-    '--cd',root,'--skip-git-repo-check','--output-schema',outputSchema,'--color','never','--json','-',
-   ],root,prompt,timeoutMs,signal,update?12*1024*1024:maxOutput);
-   const content=parseOutput(stdout,{update,sectionCount:sections?data.requiredSections.length:0});
+   const response=await execute(codexPath,root,prompt,outputSchema,timeoutMs,signal,update?12*1024*1024:maxOutput);
+   const content=parseOutput(response,{update,sectionCount:sections?data.requiredSections.length:0});
    if(planningUpdate)validatePlanningMarkdown(content,updatedOperation);
    else if(!concept&&!planningAdd&&fourDoc){
     const sections=validatePlanningMarkdown(content,operation);

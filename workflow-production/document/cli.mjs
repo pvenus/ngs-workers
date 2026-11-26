@@ -4,7 +4,7 @@ import {setTimeout as delay} from 'node:timers/promises';
 import {parseArgs,watchOnce,executeOnce,documentTick} from './runner.mjs';
 import {localPorts} from './local-ports.mjs';
 import {withPlanningSnapshot} from './planning-folders.mjs';
-import {createRepresentativeRenderer} from './representative-renderer.mjs';
+import {closeDocumentCodexSession,createRepresentativeRenderer} from './representative-renderer.mjs';
 
 try{
  const settings=parseArgs(process.argv.slice(2)),pds=localPorts(),stop=new AbortController();
@@ -51,3 +51,5 @@ try{
  console.error('DOCUMENT_WORKER_OPERATION_FAILED');
  process.exitCode=1;
 }
+
+finally{closeDocumentCodexSession();}

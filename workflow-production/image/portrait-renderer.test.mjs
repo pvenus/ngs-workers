@@ -4,7 +4,7 @@ import {access,mkdir,mkdtemp,readFile,readdir,realpath,rm,writeFile} from 'node:
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import test from 'node:test';
-import {createPortraitRenderer,createPropImageRenderer,probePortraitRenderer} from './portrait-renderer.mjs';
+import {closeImageCodexSession,createPortraitRenderer,createPropImageRenderer,probePortraitRenderer} from './portrait-renderer.mjs';
 import {canonical} from './vendor/prop-composite-v1/envelope.mjs';
 
 const from=process.env.WORKFLOW_IMAGE_LEGACY_TEST_HOST_CONFIG;
@@ -22,66 +22,80 @@ test('portrait native binding is explicit and fail-closed',async()=>{
 
 async function fixture(t,kind){
  const root=await realpath(await mkdtemp(join(tmpdir(),'workflow-portrait-test-')));
- t.after(()=>rm(root,{recursive:true,force:true}));
+ t.after(async()=>{closeImageCodexSession();await rm(root,{recursive:true,force:true});});
  const output=join(root,'fixture-output');await mkdir(output,{mode:0o700});
  const binary=join(root,'fixture-codex');
  const commandLog=join(root,'observed-input.json');
  const code=`#!/opt/homebrew/bin/python3.12
-import struct,zlib,pathlib,json,sys
-args=sys.argv
-assert '--ephemeral' in args and args[args.index('--sandbox')+1]=='read-only'
-instruction=sys.stdin.read()
-journal=pathlib.Path(args[args.index('--cd')+1])/'native-journal'
-request=json.loads(next(journal.glob('*.arguments.json')).read_text())
-kind=${JSON.stringify(kind)}
-assert request['transparent_background'] is (kind not in ('prop-green','prop-green-wrong-canvas'))
-if kind in ('prop-green','prop-green-wrong-canvas'):
- assert '#00FF00' in request['prompt'] and '1536×1024' in request['prompt']
- assert 'empty headroom' in request['prompt'] and 'approved bronze fixture' in request['prompt']
- assert 'on a transparent background' not in request['prompt']
-elif kind=='prop-legacy':
- assert 'on a transparent background' in request['prompt'] and '#00FF00' not in request['prompt']
-elif kind in ('modern','opaque','pixel-center','pixel-direction','original-combat'):
- assert 'common-art-block' in request['prompt']
- assert 'pose-only-block' in request['prompt']
- assert 'Current character and expression context' not in request['prompt']
-else:
- assert 'Current character and expression context' in request['prompt']
- assert 'The original guide in a blue coat.' in request['prompt']
-assert 'never-fetch-this-marker' not in request['prompt']
-assert 'image_gen__imagegen' in instruction
-if ${JSON.stringify(kind)} in ('idle','direction','pixel-center','pixel-direction','original-combat'):
- import hashlib
- refs=request['referenced_image_paths']
- assert len(refs)==1
- local=pathlib.Path(refs[0]); assert local.is_file() and local.parent.name=='references'
- ref_raw=local.read_bytes()
- assert local.name==hashlib.sha256(ref_raw).hexdigest()+'.png'
- assert 'tools.view_image' in instruction
- if ${JSON.stringify(kind)}=='idle': assert 'noncombat idle reference' in request['prompt']
- elif ${JSON.stringify(kind)}=='direction': assert 'do not mirror or rotate the flat image' in request['prompt']
- elif ${JSON.stringify(kind)}=='original-combat': assert 'original full-body combat portrait' in request['prompt']
- elif ${JSON.stringify(kind)}=='pixel-center': assert 'central idle pixel sprite' in request['prompt'] and 'original representative portrait' in request['prompt']
- else: assert 'already downscaled and pixel-corrected canonical center idle sprite' in request['prompt'] and 'direction NW' in request['prompt']
-pathlib.Path(${JSON.stringify(commandLog)}).write_text(json.dumps(request))
-raw=b"\\x89PNG\\r\\n\\x1a\\n"
-def pack(k,d):return struct.pack('>I',len(d))+k+d+struct.pack('>I',zlib.crc32(k+d))
-if kind in ('prop-green','prop-green-wrong-canvas'):
- w,h=(1536,1024) if kind=='prop-green' else (40,32)
- raw+=pack(b'IHDR',struct.pack('>IIBBBBB',w,h,8,2,0,0,0))
- matte=bytes([0,255,0]);row=bytes([0])+w*matte
- body=bytes([0])+(w//4)*matte+(w//2)*bytes([120,70,17])+(w//4)*matte
- rows=(h//2)*row+(h//4)*body+(h//4)*row
-else:
- raw+=pack(b'IHDR',struct.pack('>IIBBBBB',5,5,8,6,0,0,0))
- rows=b''.join(bytes([0])+b''.join(bytes([1,2,3,255 if kind=='opaque' or (x,y)==(2,2) else 0]) for x in range(5)) for y in range(5))
-raw+=pack(b'IDAT',zlib.compress(rows))+pack(b'IEND',b'')
-out=pathlib.Path(${JSON.stringify(output)})/'call-fixture.png'
-out.write_bytes(raw)
-print(json.dumps({'type':'image_generation_call','id':'call-fixture','status':'completed'}))
-if ${JSON.stringify(kind)}=='wrong':request['transparent_background']=False
-print('codex_otel.log_only event.name="codex.tool_result" tool_name=imagegen tool_namespace=image_gen success=true arguments='+json.dumps(request)+' output={}',file=sys.stderr)
-pathlib.Path(args[args.index('--output-last-message')+1]).write_text(json.dumps({'state':'generated','outputPath':str(out),'error':''}))
+import struct,zlib,pathlib,json,sys,uuid
+assert sys.argv[1:4]==['app-server','--listen','stdio://']
+def send(obj):print(json.dumps(obj),flush=True)
+for line in sys.stdin:
+ x=json.loads(line);method=x['method'];p=x.get('params',{})
+ if method=='initialized':continue
+ result={}
+ if method=='thread/start':
+  assert p['sandbox']=='read-only' and p['approvalPolicy']=='never' and p['ephemeral'] is True
+  thread=str(uuid.uuid4()); cwd=p['cwd']; result={'thread':{'id':thread}}
+ if method=='thread/unsubscribe':result={'status':'unsubscribed'}
+ if method=='turn/start':result={'turn':{'id':'work'}}
+ send({'id':x['id'],'result':result})
+ if method!='turn/start':continue
+ instruction=p['input'][0]['text']
+ journal=pathlib.Path(cwd)/'native-journal'
+ request=json.loads(next(journal.glob('*.arguments.json')).read_text())
+ kind=${JSON.stringify(kind)}
+ assert request['transparent_background'] is (kind not in ('prop-green','prop-green-wrong-canvas'))
+ if kind in ('prop-green','prop-green-wrong-canvas'):
+  assert '#00FF00' in request['prompt'] and '1536×1024' in request['prompt']
+  assert 'empty headroom' in request['prompt'] and 'approved bronze fixture' in request['prompt']
+  assert 'on a transparent background' not in request['prompt']
+ elif kind=='prop-legacy':
+  assert 'on a transparent background' in request['prompt'] and '#00FF00' not in request['prompt']
+ elif kind in ('modern','opaque','pixel-center','pixel-direction','original-combat'):
+  assert 'common-art-block' in request['prompt']
+  assert 'pose-only-block' in request['prompt']
+  assert 'Current character and expression context' not in request['prompt']
+ else:
+  assert 'Current character and expression context' in request['prompt']
+  assert 'The original guide in a blue coat.' in request['prompt']
+ assert 'never-fetch-this-marker' not in request['prompt']
+ assert 'image_gen__imagegen' in instruction
+ if ${JSON.stringify(kind)} in ('idle','direction','pixel-center','pixel-direction','original-combat'):
+  import hashlib
+  refs=request['referenced_image_paths']
+  assert len(refs)==1
+  local=pathlib.Path(refs[0]); assert local.is_file() and local.parent.name=='references'
+  ref_raw=local.read_bytes()
+  assert local.name==hashlib.sha256(ref_raw).hexdigest()+'.png'
+  assert 'tools.view_image' in instruction
+  if ${JSON.stringify(kind)}=='idle': assert 'noncombat idle reference' in request['prompt']
+  elif ${JSON.stringify(kind)}=='direction': assert 'do not mirror or rotate the flat image' in request['prompt']
+  elif ${JSON.stringify(kind)}=='original-combat': assert 'original full-body combat portrait' in request['prompt']
+  elif ${JSON.stringify(kind)}=='pixel-center': assert 'central idle pixel sprite' in request['prompt'] and 'original representative portrait' in request['prompt']
+  else: assert 'already downscaled and pixel-corrected canonical center idle sprite' in request['prompt'] and 'direction NW' in request['prompt']
+ pathlib.Path(${JSON.stringify(commandLog)}).write_text(json.dumps(request))
+ raw=b"\\x89PNG\\r\\n\\x1a\\n"
+ def pack(k,d):return struct.pack('>I',len(d))+k+d+struct.pack('>I',zlib.crc32(k+d))
+ if kind in ('prop-green','prop-green-wrong-canvas'):
+  w,h=(1536,1024) if kind=='prop-green' else (40,32)
+  raw+=pack(b'IHDR',struct.pack('>IIBBBBB',w,h,8,2,0,0,0))
+  matte=bytes([0,255,0]);row=bytes([0])+w*matte
+  body=bytes([0])+(w//4)*matte+(w//2)*bytes([120,70,17])+(w//4)*matte
+  rows=(h//2)*row+(h//4)*body+(h//4)*row
+ else:
+  raw+=pack(b'IHDR',struct.pack('>IIBBBBB',5,5,8,6,0,0,0))
+  rows=b''.join(bytes([0])+b''.join(bytes([1,2,3,255 if kind=='opaque' or (x,y)==(2,2) else 0]) for x in range(5)) for y in range(5))
+ raw+=pack(b'IDAT',zlib.compress(rows))+pack(b'IEND',b'')
+ out=pathlib.Path(${JSON.stringify(output)})/'exec-12345678-1234-1234-1234-123456789abc.png'
+ out.write_bytes(raw)
+ if ${JSON.stringify(kind)}=='wrong':request['transparent_background']=False
+ for logger in ['codex_otel.log_only','codex_otel.trace_safe']:
+  fields={'event.name':'codex.tool_result','tool_name':'imagegen','tool_namespace':'image_gen','success':'true',
+    'conversation.id':thread,'call_id':out.stem,'tool_origin':'builtin','mcp_tool':False,'arguments':json.dumps(request)}
+  print(json.dumps({'timestamp':'2026-11-26T00:00:00Z','target':logger,'fields':fields}),file=sys.stderr,flush=True)
+ send({'method':'item/completed','params':{'threadId':thread,'turnId':'work','item':{'type':'agentMessage','text':json.dumps({'state':'generated','outputPath':str(out),'error':''})}}})
+ send({'method':'turn/completed','params':{'threadId':thread,'turn':{'id':'work','status':'completed'}}})
 `;
  await writeFile(binary,code,{mode:0o700});
  const config=JSON.parse(await readFile(from,'utf8'));
@@ -97,7 +111,7 @@ test('legacy AggregatePortraitRunner verifies actual native events and exact arg
  assert.deepEqual(await readdir(output),[]);
  assert.equal(await probePortraitRenderer({...options,hostConfigSha256:'a'.repeat(64)}),false);
  const result=await createPortraitRenderer(options)(input);
- assert.deepEqual(result,await readFile(join(output,'call-fixture.png')));
+ assert.deepEqual(result,await readFile(join(output,'exec-12345678-1234-1234-1234-123456789abc.png')));
  const sent=JSON.parse(await readFile(commandLog,'utf8'));
  assert.equal(sent.transparent_background,true);
  assert.doesNotMatch(sent.prompt,/never-fetch-this-marker/);
@@ -105,7 +119,7 @@ test('legacy AggregatePortraitRunner verifies actual native events and exact arg
 
 test('native proof mismatch cannot return bytes',{skip:!from},async t=>{
  const {options}=await fixture(t,'wrong');
- await assert.rejects(createPortraitRenderer(options)(input),/NATIVE_UNCONFIRMED/);
+ await assert.rejects(createPortraitRenderer(options)(input),/CLI_RESULT_REJECTED/);
 });
 
 
@@ -181,7 +195,7 @@ test('native provider sends opaque green only for formal base and retains legacy
  await assert.rejects(render({...candidate,state:'open',background:'green-screen.v1'}),/PROP_IMAGE_INPUT_INVALID/);
  await assert.rejects(render({...candidate,background:'blue-screen'}),/PROP_IMAGE_INPUT_INVALID/);
  const wrong=await fixture(t,'prop-green-wrong-canvas');
- await assert.rejects(createPropImageRenderer(wrong.options)({...candidate,background:'green-screen.v1'}),/WORKFLOW_IMAGE_OUTPUT_INVALID/);
+ await assert.rejects(createPropImageRenderer(wrong.options)({...candidate,background:'green-screen.v1'}),/WORKFLOW_PROP_BASE_PNG_CANVAS/);
  const legacy=await fixture(t,'prop-legacy');
  const prior=await createPropImageRenderer(legacy.options)(candidate);
  assert.equal(prior[25],6);

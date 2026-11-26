@@ -1,11 +1,12 @@
 import {detectLostPortraitReadsFromPath} from './portrait-read-owner.mjs';
 import {imageOperations} from './worker.mjs';
+import {propBaseOperations} from './prop-base-worker.mjs';
 import {sourceType} from './cinematic-source-worker.mjs';
 import {setTimeout as delay} from 'node:timers/promises';
 import {localPorts} from './local-ports.mjs';
 import {imageTick,parseImageArgs,startImageHeartbeat} from './image-runner.mjs';
 import {withPlanningSnapshot} from './planning-folders.mjs';
-import {createPortraitRenderer,createNeutralReferenceRenderer,createPropImageRenderer,createCinematicSourceRenderer,probePortraitRenderer} from './portrait-renderer.mjs';
+import {closeImageCodexSession,createPortraitRenderer,createNeutralReferenceRenderer,createPropImageRenderer,createCinematicSourceRenderer,probePortraitRenderer} from './portrait-renderer.mjs';
 
 try{
  const settings=parseImageArgs(process.argv.slice(2));
@@ -25,7 +26,7 @@ try{
  do{
   let result;
   try{
-   if(settings.mode==='run'&&!admissionSignal.aborted)for(const failure of detectLostPortraitReadsFromPath(settings.dbPath,[...imageOperations,sourceType]))
+   if(settings.mode==='run'&&!admissionSignal.aborted)for(const failure of detectLostPortraitReadsFromPath(settings.dbPath,[...imageOperations,sourceType,...Object.keys(propBaseOperations)]))
     console.log(JSON.stringify({service:'image-worker',...failure}));
    result=await imageTick({...settings,pds,providerReady,render,renderNeutral,renderProp,renderCinematicSource,withPlanningSnapshot,signal,admissionSignal,onPhase,onHealth});}
   catch{onHealth(false);result={state:'not_ready',code:'IMAGE_WORKER_OPERATION_FAILED'};}
@@ -39,3 +40,5 @@ try{
  console.error('IMAGE_WORKER_OPERATION_FAILED');
  process.exitCode=1;
 }
+
+finally{closeImageCodexSession();}

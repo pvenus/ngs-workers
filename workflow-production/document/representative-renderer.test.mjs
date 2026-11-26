@@ -39,10 +39,21 @@ async function fixture(t,body){
  const binary=join(directory,'codex-fixture');
  const record=join(directory,'record');
  await writeFile(binary,'#!'+process.execPath+'\n'+
-  "const fs=require('node:fs');const argv=process.argv.slice(2);const cwd=process.cwd();"+
-  "const schema=JSON.parse(fs.readFileSync(argv[argv.indexOf('--output-schema')+1], 'utf8'));"+
-  "const prompt=fs.readFileSync(0,'utf8');"+
-  'fs.writeFileSync('+JSON.stringify(record)+',JSON.stringify({argv,cwd,schema,prompt}));'+body,{mode:0o700});
+  "const fs=require('node:fs');const argv=process.argv.slice(2);const rl=require('node:readline').createInterface({input:process.stdin});"+
+  "let threadId,cwd;const send=x=>process.stdout.write(JSON.stringify(x)+'\\n');"+
+  "rl.on('line',line=>{const x=JSON.parse(line);const p=x.params||{};let result={};"+
+  "if(x.method==='thread/start'){cwd=p.cwd;threadId=require('node:crypto').randomUUID();result={thread:{id:threadId}};"+
+  "if(p.sandbox!=='read-only'||p.approvalPolicy!=='never'||p.ephemeral!==true)process.exit(2);}"+
+  "if(x.method==='thread/unsubscribe')result={status:'unsubscribed'};"+
+  "if(x.method==='turn/start')result={turn:{id:'turn'}};"+
+  "if(x.id)send({id:x.id,result});if(x.method!=='turn/start')return;"+
+  "const schema=p.outputSchema;const prompt=p.input[0].text;"+
+  'fs.writeFileSync('+JSON.stringify(record)+',JSON.stringify({argv,cwd,schema,prompt,threadId}));'+
+  "let ended=false;console.log=raw=>{const e=JSON.parse(raw);if(e.type==='turn.completed'){ended=true;send({method:'turn/completed',params:{threadId,turn:{id:'turn',status:'completed'}}});}"+
+  "else if(e.type==='item.completed')send({method:'item/completed',params:{threadId,turnId:'turn',item:{...e.item,type:e.item.type==='agent_message'?'agentMessage':e.item.type}}});};"+
+  body+
+  (body.includes('setInterval')?'':"if(!ended)send({method:'turn/completed',params:{threadId,turn:{id:'turn',status:'completed'}}});")+
+  '});',{mode:0o700});
  return {binary,read:async()=>JSON.parse(await readFile(record,'utf8'))};
 }
 const assertMandatory=prompt=>{
@@ -57,8 +68,8 @@ test('runs Codex once in private scratch with the approved scope and validates s
  assert.equal(await render(input),expected);
  const {argv,cwd,schema,prompt}=await read();
  assertMandatory(prompt);
- assert.deepEqual(argv.slice(0,3),['-a','never','exec']);
- for(const flag of ['--ephemeral','--ignore-user-config','--ignore-rules','read-only','shell_tool','unified_exec','apps','plugins','--json'])assert(argv.includes(flag));
+ assert.deepEqual(argv.slice(0,3),['app-server','--listen','stdio://']);
+ for(const flag of ['shell_tool','unified_exec','apps','plugins','mcp_servers={}'])assert(argv.includes(flag));
  assert.equal(argv.some(value=>value.includes(input.intent)),false);
  assert.equal(schema.additionalProperties,false);
  assert.match(prompt,/대표|representative/);

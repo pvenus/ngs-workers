@@ -15,23 +15,18 @@ class CliDiagnosticTest(unittest.TestCase):
     def test_distinguishes_cli_and_validation_without_exposing_receipts(self):
         with tempfile.TemporaryDirectory() as name:
             root = Path(name)
-            self.assertEqual(module.cli_failure_status(root), 22)
+            self.assertEqual(module.cli_failure_status(root, False), 22)
             job = root / "native-cli" / "node.image.fixture"
             job.mkdir(parents=True)
-            exit_receipt = job / "process-exit.json"
             response = job / "response.json"
-            def exited(code):
-                exit_receipt.write_text(json.dumps({"kind": "local-processes", "outcome": "joined", "returnCodes": [code]}))
-            exited(1)
-            self.assertEqual(module.cli_failure_status(root), 23)
-            exited(0)
-            self.assertEqual(module.cli_failure_status(root), 24)
+            self.assertEqual(module.cli_failure_status(root, True), 24)
             response.write_text('{"state":"blocked","error":"untrusted model text"}')
-            self.assertEqual(module.cli_failure_status(root), 25)
+            self.assertEqual(module.cli_failure_status(root, True), 25)
             response.write_text('{"state":"generated","path":"/not/exposed"}')
-            self.assertEqual(module.cli_failure_status(root), 26)
-            response.write_text("}" * 60001)
-            self.assertEqual(module.cli_failure_status(root), 24)
+            self.assertEqual(module.cli_failure_status(root, True), 26)
+            self.assertEqual(module.cli_failure_status(root, False), 22)
+            response.write_text("}" * 360001)
+            self.assertEqual(module.cli_failure_status(root, True), 24)
 
 
     def test_opaque_prop_uses_exact_staged_file_as_provider_image_reference(self):

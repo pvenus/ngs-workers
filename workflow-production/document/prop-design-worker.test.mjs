@@ -147,15 +147,24 @@ test('typed document renderer reuses the actual bounded CLI transport against an
  const root=realpathSync(mkdtempSync(join(tmpdir(),'prop-doc-codex-fixture-')));
  t.after(()=>rmSync(root,{force:true,recursive:true}));
  const binary=join(root,'codex-fixture');
- const messages=[
-  {type:'thread.started'}, {type:'item.completed',item:{type:'agent_message',text:JSON.stringify(model)}},
-  {type:'turn.completed'}
- ].map(m=>"'"+JSON.stringify(m)+"'").join(' ');
- writeFileSync(binary,`#!/bin/sh
- args=" $* "
- case "$args" in *" --sandbox read-only"*" --disable shell_tool"*" --disable unified_exec"*" --output-schema "*) ;; *) exit 8;; esac
- /bin/cat >/dev/null
- printf '%s\n' ${messages}
+ writeFileSync(binary,`#!/opt/homebrew/bin/python3.12
+import json,sys,uuid
+def send(msg):print(json.dumps(msg),flush=True)
+for line in sys.stdin:
+ x=json.loads(line); m=x['method']; p=x.get('params',{})
+ if m=='initialized':continue
+ result={}
+ if m=='thread/start':
+  assert p['sandbox']=='read-only' and p['ephemeral']
+  tid=str(uuid.uuid4()); result={'thread':{'id':tid}}
+ if m=='thread/unsubscribe':result={'status':'unsubscribed'}
+ if m=='turn/start':result={'turn':{'id':'work'}}
+ send({'id':x['id'],'result':result})
+ if m=='turn/start':
+  assert p['outputSchema']['properties']['motionPrompt']['type']=='null'
+  output=json.loads(${JSON.stringify(JSON.stringify(model))})
+  send({'method':'item/completed','params':{'threadId':tid,'turnId':'work','item':{'type':'agentMessage','text':json.dumps(output)}}})
+  send({'method':'turn/completed','params':{'threadId':tid,'turn':{'id':'work','status':'completed'}}})
  `,{mode:0o700});
  const renderer=createPropDesignRenderer({codexPath:binary,timeoutMs:5000});
  assert.equal(renderer.ready(),true);

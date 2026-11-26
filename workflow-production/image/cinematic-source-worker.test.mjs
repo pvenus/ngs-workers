@@ -96,7 +96,7 @@ test('Python trusted bridge sends one opaque native descriptor and skips alpha v
  const helper=fileURLToPath(new URL('./portrait-native.py',import.meta.url));
  const script=String.raw`
 import runpy,sys,json,hashlib
-main=runpy.run_path(sys.argv[1])["main"]
+run=runpy.run_path(sys.argv[1])["run"]
 def digest(x): return hashlib.sha256(json.dumps(x,sort_keys=True).encode()).hexdigest()
 class Runner:
  def generate(self,claim):
@@ -110,9 +110,13 @@ class Runner:
   return raw,{**claim,"sha256":hashlib.sha256(raw).hexdigest(),"actualToolOutput":True}
  def execution_evidence(self): return {"outcome":"joined"}
 def prohibited(*a): raise AssertionError("must not invoke portrait/alpha")
-main.__globals__["bind"]=lambda *_:(prohibited,lambda *_:Runner(),None,None,digest,prohibited)
-sys.argv=["helper","render-cinematic-source","config","pin"]
-main()
+from types import SimpleNamespace
+import base64
+run.__globals__["bind"]=lambda *_:(prohibited,lambda *_:(Runner(),SimpleNamespace(settled=True)),None,None,digest,prohibited)
+result=run(SimpleNamespace(stopped=SimpleNamespace(is_set=lambda:False)),
+           {"mode":"render-cinematic-source","data":json.load(sys.stdin)},"config","pin")
+assert result["code"]==0
+sys.stdout.buffer.write(base64.b64decode(result["base64"]))
 `;
  const p=spawnSync('/usr/bin/python3',['-B','-c',script,helper],{input:JSON.stringify({...input,design}),encoding:'utf8'});
  assert.equal(p.status,0,p.stderr);

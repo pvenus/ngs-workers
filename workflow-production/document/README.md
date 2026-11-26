@@ -212,3 +212,15 @@ A loopback POST with connection refused before establishing TCP did not send a
 write and is a normal failure. If the connection was accepted and later breaks,
 or the completion update is uncertain, retain reconciliation and record the
 safe stage label. Do not replay any storage RPC to infer its outcome.
+
+### Codex session lifetime
+The resident worker owns a private stdio app-server connection. Reuse lasts at most
+five minutes from process start for admitting new work. At expiry an active turn
+can finish; an idle connection closes, and the next job starts a new process.
+Each invocation uses one fresh ephemeral read-only thread and confirms its end
+before unsubscribing; requests never resume or fork threads. An uncertain turn
+is not replayed by the transport. The image worker still requires the pinned
+tool invocation, arguments, output identity and PNG checks before storage.
+Operational diagnostics record timings and fixed outcomes without prompts or
+provider outputs. The transport modules are byte-identical in the image and
+document scopes because OPS packages these targets independently.

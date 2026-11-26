@@ -115,7 +115,7 @@ for(const mode of ['blocked','wrong design','bad png','alpha','wrong canvas','im
  case 'wrong canvas':
  case 'implicit alpha':
  case 'bad png': assert.equal(r.state,'failed');assert.equal(f.state().status,'failed');break;
- case 'revoked':
+ case 'revoked': assert.equal(r.state,'failed');assert.equal(f.state().status,'failed');break;
  case 'wrong ack': assert.equal(r.state,'requires_reconciliation');assert.equal(f.state().status,'running');break;
  }
  assert.equal(published,mode==='wrong ack');
