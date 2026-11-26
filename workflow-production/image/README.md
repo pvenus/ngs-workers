@@ -284,3 +284,11 @@ The image host configuration still binds the installed Codex path and pins
 local proof source files, but does not pin a particular executable digest.
 An app update that replaces the executable rotates the connection before the
 next image job. It does not interrupt an active job or bypass result proof.
+
+### Image concurrency in operation
+The OPS/launchd image target is unchanged. Its resident entry process supervises two
+independent image worker processes, each with one reusable Codex CLI session and a
+shared formal task ledger. The supervisor marks the OPS heartbeat ready only once
+both lanes report ready. Lane exits are logged and restarted independently.
+A task that lost the atomic claim is not failed or retried; that lane refreshes
+eligibility within the same tick. SIGTERM stops admission and drains both lanes.

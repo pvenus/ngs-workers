@@ -41,7 +41,7 @@ export function selectImageTasks(dbPath){
 }
 const executeImage=options=>[sourceType,backgroundSourceType,backgroundCineOperation,backgroundDraftOperation].includes(options.operation)?runCinematicSourceFromPath(options):Object.hasOwn(propBaseOperations,options.operation)?runPropBaseFromPath(options):options.operation===propImageOperation?runPropImageFromPath(options):options.operation===motionImageOperation?runMotionImageFromPath(options):runPortraitFromPath(options);
 
-/** At most one runnable image task per tick. Never reclaims running rows. */
+/** At most one claimed image task per tick; bypasses lost claims, never reclaims running rows. */
 export async function imageTick(options,{select=selectImageTasks,execute=executeImage,check=imageHealth}={}){
  const {mode,dbPath,signal,admissionSignal,onHealth}=options;
  const stopping=()=>signal?.aborted||admissionSignal?.aborted;
@@ -53,14 +53,26 @@ export async function imageTick(options,{select=selectImageTasks,execute=execute
  if(mode==='watch')return {state:'ready'};
  if(mode==='execute')return execute(options);
  if(mode!=='run')throw Error('IMAGE_WORKER_EXPLICIT_MODE_REQUIRED');
- const choice=select(dbPath);
- const targets=Array.isArray(choice)?choice:[choice].filter(Boolean);
- for(const target of targets){
-  if(target.operation&&target.operation!==PORTRAIT&&!await options.pds.capability(signal,target.operation))continue;
-  if(stopping())return {state:'stopping'};
-  return execute({...options,...target});
+ const skipped=new Set();
+ for(let attempt=0;attempt<16;attempt++){
+  const choice=select(dbPath);
+  const targets=Array.isArray(choice)?choice:[choice].filter(Boolean);
+  let current;
+  for(const target of targets){
+   if(skipped.has(target.taskId))continue;
+   if(target.operation&&target.operation!==PORTRAIT&&!await options.pds.capability(signal,target.operation))continue;
+   if(stopping())return {state:'stopping'};
+   current=target;break;
+  }
+  if(!current)return targets.some(t=>!skipped.has(t.taskId))?
+   {state:'not_ready',code:'IMAGE_WORKER_STAGE_PDS_UNAVAILABLE'}:{state:'idle'};
+  const result=await execute({...options,...current});
+  if(result.state!=='not_claimable')return result;
+  // A lost claim is not a failure. Refresh because the winner may have
+  // removed the previous per-operation head from the eligible rows.
+  skipped.add(current.taskId);
  }
- return targets.length?{state:'not_ready',code:'IMAGE_WORKER_STAGE_PDS_UNAVAILABLE'}:{state:'idle'};
+ return {state:'idle'};
 }
 
 /** Keep OPS liveness independent of a long asynchronous renderer call. */

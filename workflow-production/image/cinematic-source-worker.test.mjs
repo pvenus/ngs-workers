@@ -114,7 +114,7 @@ class Runner:
 def prohibited(*a): raise AssertionError("must not invoke portrait/alpha")
 from types import SimpleNamespace
 import base64
-run.__globals__["bind"]=lambda *_:(prohibited,lambda *_:(Runner(),SimpleNamespace(settled=True)),None,None,digest,prohibited)
+run.__globals__["bind"]=lambda *_:(prohibited,lambda *_:(Runner(),SimpleNamespace(settled=True)),prohibited,None,None,digest,prohibited)
 result=run(SimpleNamespace(stopped=SimpleNamespace(is_set=lambda:False)),
            {"mode":"render-cinematic-source","data":json.load(sys.stdin)},"config","pin")
 assert result["code"]==0
