@@ -150,12 +150,12 @@ class CodexSession:
         self.binary_identity = identity
         flags = ["--disable", "apps"]
         env = {"HOME": str(Path.home()), "PATH": "/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin"}
+        env["TMPDIR"] = tempfile.gettempdir()
         if self.profile == "document":
             for feature in ("shell_tool", "unified_exec", "plugins", "skill_search"):
                 flags += ["--disable", feature]
             flags += ["-c", 'web_search="disabled"', "-c", "mcp_servers={}"]
         else:
-            env["TMPDIR"] = tempfile.gettempdir()
             env["NO_COLOR"] = "1"
             env["RUST_LOG"] = "error,codex_otel.trace_safe=info,codex_otel.log_only=info"
             self.trace = tempfile.TemporaryFile()

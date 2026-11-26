@@ -1,6 +1,6 @@
 import {spawn} from 'node:child_process';
 import {fileURLToPath} from 'node:url';
-import {homedir} from 'node:os';
+import {homedir,tmpdir} from 'node:os';
 
 // One outstanding request; stack and content never go to operational logs.
 export function createCodexSessionClient({python='/opt/homebrew/bin/python3.12',script,args=[]}) {
@@ -8,7 +8,7 @@ export function createCodexSessionClient({python='/opt/homebrew/bin/python3.12',
  const close=()=>{if(child){child.kill('SIGTERM');child.stdin.end();child.unref();child=null;}};
  function start(){
   const p=spawn(python,['-I','-B',fileURLToPath(script),...args],{
-   env:{HOME:homedir(),PATH:'/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin',...(process.env.TMPDIR?{TMPDIR:process.env.TMPDIR}:{})},
+   env:{HOME:homedir(),TMPDIR:tmpdir(),PATH:'/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin'},
    stdio:['pipe','pipe','inherit'],
   });
   child=p;

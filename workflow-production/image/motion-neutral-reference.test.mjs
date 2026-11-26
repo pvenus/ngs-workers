@@ -120,7 +120,7 @@ class Runner:
 def check_alpha(output,descriptor,use):
  assert output==raw and descriptor=={'alpha':True} and use=='portrait'
 from types import SimpleNamespace
-run.__globals__['bind']=lambda *_: (lambda *_:(Runner(),SimpleNamespace(settled=True)),None,Pairs(),{},digest,check_alpha)
+run.__globals__['bind']=lambda *_: (lambda *_:(Runner(),SimpleNamespace(settled=True)),None,None,Pairs(),{},digest,check_alpha)
 result=run(SimpleNamespace(stopped=SimpleNamespace(is_set=lambda:False)),
            {"mode":"render-neutral","data":json.load(sys.stdin)},"config","pin")
 assert result["code"]==0
