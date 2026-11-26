@@ -158,3 +158,46 @@ test('v2 capability and wire paths cannot invoke the legacy or prop endpoints',a
  assert.ok(calls[2][1].binary);
  assert.ok(calls[1][1].maxJsonBytes>4096);
 });
+
+test('the same background request independently renders both pinned originals and publishes distinct group results',async t=>{
+ const {db,path,root}=fixture(t);
+ const assets={cinematic:source,pixel:still(140)};
+ const references=Object.fromEntries(Object.entries(assets).map(([k,v])=>[k,sha(v)]));
+ const type='background.animation.workflow',schema='ngs.background-animation-workflow.v1';
+ const backgroundSha256=references.pixel;
+ const body=canonical({projectId:'binari',schemaVersion:schema,references,backgroundSha256,
+  motionPrompt:input.motionPrompt,playback});
+ db.prepare('UPDATE workflow_runs SET request_type=?,schema_version=?,payload=?,payload_sha256=?').run(type,schema,body,sha(body));
+ db.prepare('DELETE FROM workflow_tasks').run();
+ const byTask=new Map();
+ for(const [variant,sourceSha256] of Object.entries(references)){
+  const key='background_animation_'+variant,id='workflow.task.'+sha(canonical([officialRequestId,key]));
+  const wireInput={sourceSha256,playback,motionPrompt:input.motionPrompt};
+  db.prepare("INSERT INTO workflow_tasks VALUES(?,?,?,?,?,?,NULL,2,NULL,'pending',0)").run(id,officialRequestId,key,type,'animation',
+   canonical({...wireInput,backgroundSha256,variant}));
+  byTask.set(id,{variant,wireInput,id:'request.official.'+sha(canonical([officialRequestId,key]))});
+ }
+ const rendered=[],published=[];
+ for(let i=0;i<2;i++){
+  const pick=chooseCinematicSequence(path),job=byTask.get(pick.taskId);
+  assert.ok(job);
+  const out=await executeCinematicSequence(db,pick,new AbortController().signal,{
+   ports:{
+    read:async claim=>{assert.equal(claim.officialRequestId,officialRequestId);return job.wireInput;},
+    asset:async()=>assets[job.variant],
+    stage:async(_claim,f)=>({ok:true,index:f.index,sha256:f.sha256}),
+    publish:async(_claim,m)=>{published.push(m);return {ok:true,resultRef:'binari/cinematics/sequences/'+job.id+'/manifest.json'};},
+   },
+   runI2V:async r=>{assert.equal(r.motionPrompt,input.motionPrompt);rendered.push(sha(r.source));return raw;},
+   makeDir:async()=>root,cleanup:async()=>{},
+  });
+  assert.equal(out.state,'completed');
+ }
+ assert.deepEqual(new Set(rendered),new Set(Object.values(references)));
+ assert.equal(new Set(published.map(m=>m.officialRequestId)).size,2);
+ for(const m of published){
+  assert.equal(m.group.requestId,officialRequestId);assert.equal(m.group.backgroundSha256,backgroundSha256);
+  assert.equal(m.sourceSha256,references[m.group.variant]);assert.deepEqual(m.playback,playback);
+ }
+ assert.equal(chooseCinematicSequence(path),null);
+});
