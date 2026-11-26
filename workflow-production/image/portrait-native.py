@@ -94,7 +94,21 @@ def bind(path, expected, session):
                                (root, root/"references", root/"artifacts/references")), client
         return begin
 
-    return make_factory(portrait_stage.AggregatePortraitRunner), make_factory(native.NativeNodeImageRunner), portrait_pairs, pose.DIRECTION_VIEWS, service.digest, png_alpha.validate_stage_output
+    class BackgroundReferenceRunner(native.NativeNodeImageRunner):
+        def handoff(self, claim):
+            args = self.checked(claim)["arguments"]
+            refs = args.get("referenced_image_paths", [])
+            if len(refs) != 1:
+                raise ValueError("BACKGROUND_NATIVE_ONE_REFERENCE_REQUIRED")
+            path, code = super().handoff(claim)
+            # For a real reference, the tool requires seeing the pinned PNG
+            # before using it. Include inspection in the attested exact cell.
+            inspect = 'image((await tools.view_image({path:' + json.dumps(refs[0]) + '})).image_url);\n'
+            return path, code.replace('const generated =', inspect + 'const generated =', 1)
+
+    return (make_factory(portrait_stage.AggregatePortraitRunner), make_factory(native.NativeNodeImageRunner),
+            make_factory(BackgroundReferenceRunner), portrait_pairs, pose.DIRECTION_VIEWS,
+            service.digest, png_alpha.validate_stage_output)
 
 
 class SessionImageCall:
@@ -427,7 +441,7 @@ def run(session, call, path, expected):
         raise ValueError("IMAGE_NATIVE_INPUT_INVALID")
     mode, data = call["mode"], call["data"]
     stopped = session.stopped
-    factory, full_scene_factory, pairs, direction_views, digest, validate_transparency = bind(path, expected, session)
+    factory, full_scene_factory, background_reference_factory, pairs, direction_views, digest, validate_transparency = bind(path, expected, session)
     if mode == "probe":
         return {"code": 0, "base64": "b2sK"}
     if mode not in ("render", "render-neutral", "render-prop", "render-cinematic-source", "render-background-source"):
@@ -439,7 +453,8 @@ def run(session, call, path, expected):
     green_prop = mode == "render-prop" and type(data) is dict and "background" in data
     if cinematic:
         instruction = background_source_prompt(data) if mode=="render-background-source" else cinematic_source_prompt(data)
-        factory = full_scene_factory
+        factory = (background_reference_factory if mode == "render-background-source"
+                   and "reference" in data else full_scene_factory)
     elif neutral:
         instruction = neutral_reference_prompt(data)
     elif mode == "render-prop":
@@ -482,10 +497,14 @@ def run(session, call, path, expected):
         runner, client = factory(root, stopped)
         try:
             raw, proof = runner.generate(claim)
-        except Exception:
+        except Exception as exc:
             code = cli_failure_status(root, client.settled)
-            diagnostic(worker="image", stage="verification", outcome={22: "unconfirmed", 24: "invalid",
-                       25: "blocked", 26: "proof_rejected"}[code])
+            fields = dict(worker="image", stage="verification", outcome={22: "unconfirmed", 24: "invalid",
+                          25: "blocked", 26: "proof_rejected"}[code])
+            reason = str(exc)
+            if re.fullmatch(r'(?:NODE_IMAGE|BACKGROUND_NATIVE)_[A-Z0-9_]{1,100}', reason):
+                fields['evidenceCode']=reason
+            diagnostic(**fields)
             return {"code": code}
         if not isinstance(raw, bytes) or len(raw) > _IMAGE_LIMIT or type(proof) is not dict:
             return {"code": 26}
