@@ -90,3 +90,23 @@ svc=/absolute/staged/path/to/BackendServices
 PYTHONPATH="$svc/data-service:$svc/filex-writer" NGS_CINEMATIC_SERVICES_ROOT="$svc" \
   python3 -B cinematic-resident-chain.fixture.py -v
 ```
+
+## Looping background animation: mandatory 2× postprocess
+
+A `background.animation.workflow` variant uses the pinned native Wan PNG
+sequence solely as transient input to SeedVR2 7B FP16. The resident releases
+the owned Wan/I2V model group before launching the offline SeedVR2 Comfy group
+in the same exclusive model slot. The approved graph consumes all 45 frames
+in order and applies Lab color correction. Native PNGs retain the exact
+frame count, order, aspect ratio, and playback metadata. The upscale output
+must be exactly 2× both dimensions and only those final 45 RGB frames can go
+through PDS publication. There is no Lanczos-only or original-size fallback.
+The internal scale node prepares SeedVR2 input and is not itself a deliverable.
+
+SeedVR2 reuses the explicit Wan I2V Comfy root and Python binding. The default
+local weight directory is `~/Workspaces/Workers/runtime/seedvr2-fp16-staging/models`,
+or the host may set an absolute, privately provisioned
+`WORKFLOW_SEEDVR2_MODELS_ROOT`. Runtime SeedVR2 nodes and both model weight
+digests are pinned; MPS is required. Scratch frames disappear with the
+temporary job directory after a confirmed model exit. This postprocess is
+not applied to regular cinematic sequences, NPCs, or props.

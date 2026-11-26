@@ -105,7 +105,7 @@ export async function verifyWanI2V(binding,cache){
  }
 }
 
-function launch(py,args,opts,start){
+export function launch(py,args,opts,start){
  let child;
  try{child=start(py,args,{...opts,detached:true,stdio:['ignore','pipe','ignore']});}
  catch{throw error('I2V_COMFY_SPAWN_FAILED');}
@@ -129,7 +129,7 @@ export async function stopI2VGroup(state,send=process.kill,pause=sleep,steps=60)
  }
  return false;
 }
-async function waitReady(state,signal,pause){
+export async function waitReady(state,signal,pause){
  let tail='',port=0;
  const onData=b=>{
   const lines=(tail+b.toString('utf8')).split('\n');tail=lines.pop().slice(-200);
@@ -148,7 +148,7 @@ async function waitReady(state,signal,pause){
   throw error('I2V_COMFY_START_TIMEOUT');
  }finally{state.child.stdout.off('data',onData);state.child.stdout.resume();}
 }
-async function request(http,base,token,route,signal,body){
+export async function request(http,base,token,route,signal,body){
  const r=await http(base+route,{method:body?'POST':'GET',redirect:'error',
   headers:{authorization:'Bearer '+token,...(body?{'content-type':'application/json'}:{})},
   ...(body?{body:JSON.stringify(body)}:{}),signal:AbortSignal.any([signal,AbortSignal.timeout(30_000)])});

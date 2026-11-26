@@ -159,7 +159,8 @@ test('v2 capability and wire paths cannot invoke the legacy or prop endpoints',a
  assert.ok(calls[1][1].maxJsonBytes>4096);
 });
 
-test('the same background request independently renders both pinned originals and publishes distinct group results',async t=>{
+for(const scenario of ['success','missing_upscaler','bad_upscale','confirmed_failure','unknown_failure'])
+test('background-only postprocess: '+scenario,async t=>{
  const {db,path,root}=fixture(t);
  const assets={cinematic:source,pixel:still(140)};
  const references=Object.fromEntries(Object.entries(assets).map(([k,v])=>[k,sha(v)]));
@@ -177,7 +178,7 @@ test('the same background request independently renders both pinned originals an
    canonical({...wireInput,backgroundSha256,variant}));
   byTask.set(id,{variant,wireInput,id:'request.official.'+sha(canonical([officialRequestId,key]))});
  }
- const rendered=[],published=[];
+ const rendered=[],published=[],staged=[],upscaled=[];
  for(let i=0;i<2;i++){
   const pick=chooseCinematicSequence(path),job=byTask.get(pick.taskId);
   assert.ok(job);
@@ -185,19 +186,38 @@ test('the same background request independently renders both pinned originals an
    ports:{
     read:async claim=>{assert.equal(claim.officialRequestId,officialRequestId);return job.wireInput;},
     asset:async()=>assets[job.variant],
-    stage:async(_claim,f)=>({ok:true,index:f.index,sha256:f.sha256}),
+    stage:async(_claim,f)=>{staged.push(f);return {ok:true,index:f.index,sha256:f.sha256};},
     publish:async(_claim,m)=>{published.push(m);return {ok:true,resultRef:'binari/cinematics/sequences/'+job.id+'/manifest.json'};},
    },
    runI2V:async r=>{assert.equal(r.motionPrompt,input.motionPrompt);rendered.push(sha(r.source));return raw;},
+   ...(scenario==='missing_upscaler'?{}:{runUpscale:async ({output})=>{
+    assert.equal(output,raw);upscaled.push(job.variant);
+    if(scenario.endsWith('_failure'))throw Object.assign(Error('BACKGROUND_SEEDVR2_RENDER_FAILED'),{rendererJoined:scenario==='confirmed_failure'});
+    if(scenario==='bad_upscale')return raw;
+    return {width:256,height:256,fps:24,frames:raw.frames.map((_,i)=>still(i,{w:256,h:256}))};
+   }}),
    makeDir:async()=>root,cleanup:async()=>{},
   });
+  if(scenario!=='success'){
+   assert.equal(out.state,scenario==='unknown_failure'?'requires_reconciliation':'failed');
+   assert.equal(staged.length,0);assert.equal(published.length,0);
+   if(scenario==='missing_upscaler')assert.equal(rendered.length,0);
+   else assert.equal(rendered.length,1);
+   assert.equal(upscaled.length,scenario==='missing_upscaler'?0:1);
+   return;
+  }
   assert.equal(out.state,'completed');
  }
  assert.deepEqual(new Set(rendered),new Set(Object.values(references)));
  assert.equal(new Set(published.map(m=>m.officialRequestId)).size,2);
+ assert.deepEqual(new Set(upscaled),new Set(['cinematic','pixel']));
+ assert.equal(staged.length,90);
+ assert.ok(staged.every(f=>f.sha256!==sha(raw.frames[f.index])));
  for(const m of published){
   assert.equal(m.group.requestId,officialRequestId);assert.equal(m.group.backgroundSha256,backgroundSha256);
   assert.equal(m.sourceSha256,references[m.group.variant]);assert.deepEqual(m.playback,playback);
+  assert.deepEqual(m.upscale,{model:'seedvr2-7b-fp16',scale:2,sourceWidth:128,sourceHeight:128});
+  assert.equal(m.width,256);assert.equal(m.height,256);
  }
  assert.equal(chooseCinematicSequence(path),null);
 });

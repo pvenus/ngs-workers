@@ -1,4 +1,4 @@
-/** Official cinematic v2: one source, one Wan run, untouched RGB PNGs plus playback metadata. */
+/** Cinematic sequence lane: one Wan run; background finals additionally require a real 2x postprocess. */
 import {DatabaseSync} from 'node:sqlite';
 import {mkdtemp,rm} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
@@ -6,6 +6,7 @@ import {join} from 'node:path';
 import {canonical,sha} from './vendor/planner-f24d23a/envelope.mjs';
 import {assertDatabasePath,protectSchema,workflowTaskEligibleSql,workflowTaskRetrySetSql,markWorkflowTaskFailed} from './workflow-ready.mjs';
 import {png,maxImageBytes,maxFrameBytes,maxBundleBytes} from './i2v-worker.mjs';
+import {backgroundUpscaleModel,backgroundUpscaleScale,backgroundUpscaleMaxBytes} from './background-seedvr2.mjs';
 import {validCutscenePrompt} from './cutscene-i2v.mjs';
 import {WAN_I2V_FPS,WAN_I2V_LENGTH} from './i2v-wan-graph.mjs';
 
@@ -128,21 +129,23 @@ async function sameClaimPublication(attempt,{current,signal}){
   return await attempt();
  }
 }
-function nativeManifest(output,id,input){
- require(exact(output,['frames','width','height','fps'])&&output.fps===WAN_I2V_FPS&&grid(output.width)&&grid(output.height)&&
+function nativeManifest(output,id,input,upscale){
+ const outputGrid=upscale?n=>grid(n/backgroundUpscaleScale):grid;
+ const budget=upscale?backgroundUpscaleMaxBytes:maxBundleBytes;
+ require(exact(output,['frames','width','height','fps'])&&output.fps===WAN_I2V_FPS&&outputGrid(output.width)&&outputGrid(output.height)&&
   Array.isArray(output.frames)&&output.frames.length===WAN_I2V_LENGTH,'CINEMATIC_SEQUENCE_RENDER_SHAPE');
  let total=0;
  const frames=Array.from(output.frames,(buffer,index)=>{
   const shape=png(buffer,maxFrameBytes,{rgb:true});total+=buffer.length;
-  require(shape.width===output.width&&shape.height===output.height&&total<=maxBundleBytes,'CINEMATIC_SEQUENCE_FRAME_SHAPE');
+  require(shape.width===output.width&&shape.height===output.height&&total<=budget,'CINEMATIC_SEQUENCE_FRAME_SHAPE');
   return {index,sha256:sha(buffer),bytes:buffer.length};
  });
  return {schemaVersion:'ngs.cinematic-sequence-result.v1',projectId,officialRequestId:id,sourceSha256:input.sourceSha256,
-  width:output.width,height:output.height,masterFps:WAN_I2V_FPS,frameCount:frames.length,frames,playback:input.playback};
+  width:output.width,height:output.height,masterFps:WAN_I2V_FPS,frameCount:frames.length,frames,playback:input.playback,...(upscale?{upscale}:{})};
 }
 
-/** The resident owns runI2V; no encoder or image processing exists in this lane. */
-export async function executeCinematicSequence(db,t,signal,{ports,runI2V,
+/** The resident owns both models. Only a verified final passes to publication. */
+export async function executeCinematicSequence(db,t,signal,{ports,runI2V,runUpscale,probeUpscale,
  makeDir=()=>mkdtemp(join(tmpdir(),'workflow-cinematic-sequence-')),cleanup=dir=>rm(dir,{recursive:true,force:true})}){
  if(signal.aborted)return {state:'stale',taskId:t.taskId};
  const found=claimSequence(db,t);
@@ -160,6 +163,11 @@ export async function executeCinematicSequence(db,t,signal,{ports,runI2V,
   const source=await ports.asset(claim,signal);
   png(source,maxImageBytes);
   require(sha(source)===input.sourceSha256,'CINEMATIC_SEQUENCE_SOURCE_BYTES');
+  if(group){
+   stage='upscale_preflight';
+   require(typeof runUpscale==='function','BACKGROUND_SEEDVR2_UNAVAILABLE');
+   if(probeUpscale)await probeUpscale();
+  }
   stage='prepare';dir=await makeDir();
   signal.throwIfAborted();tx(db,current);
   stage='render';
@@ -167,9 +175,20 @@ export async function executeCinematicSequence(db,t,signal,{ports,runI2V,
   try{output=await runI2V({dir,source,motionPrompt:input.motionPrompt,signal});}
   catch(e){unknownStop=e?.rendererJoined!==true;throw e;}
   stage='validate';
-  const manifest=nativeManifest(output,resultId,input);
-  if(group)manifest.group=group;
-  const uploadSignal=AbortSignal.any([signal,AbortSignal.timeout(120_000)]);
+  let manifest=nativeManifest(output,resultId,input);
+  if(group){
+   const upscale={model:backgroundUpscaleModel,scale:backgroundUpscaleScale,sourceWidth:manifest.width,sourceHeight:manifest.height};
+   stage='upscale';
+   signal.throwIfAborted();tx(db,current);
+   try{output=await runUpscale({dir,output,signal});}
+   catch(e){unknownStop=e?.rendererJoined!==true;throw e;}
+   stage='validate_upscale';
+   require(output?.width===upscale.sourceWidth*upscale.scale&&output?.height===upscale.sourceHeight*upscale.scale,
+    'BACKGROUND_SEEDVR2_OUTPUT_SHAPE');
+   manifest=nativeManifest(output,resultId,input,upscale);
+   manifest.group=group;
+  }
+  const uploadSignal=AbortSignal.any([signal,AbortSignal.timeout(group?300_000:120_000)]);
   const upload={signal:uploadSignal,current:()=>tx(db,current)};
   for(const frame of manifest.frames){
    uploadSignal.throwIfAborted();upload.current();
@@ -200,7 +219,7 @@ export async function executeCinematicSequence(db,t,signal,{ports,runI2V,
    try{failed=tx(db,()=>{current();return markWorkflowTaskFailed(db,{...claim,workerType});});}catch{}
   }
   result={state:failed?'failed':'requires_reconciliation',taskId:t.taskId,stage,code:failureCode(e),
-   ...(stage==='render'?{rendererStop:unknownStop?'unknown':'confirmed'}:{})};
+   ...(['render','upscale'].includes(stage)?{rendererStop:unknownStop?'unknown':'confirmed'}:{})};
  }finally{
   if(dir&&!unknownStop)try{await cleanup(dir);}catch{result={...result,cleanup:'pending'};}
  }

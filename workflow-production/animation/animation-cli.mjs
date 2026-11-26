@@ -1,7 +1,7 @@
 import {DatabaseSync} from 'node:sqlite';
 import {mkdtemp,readFile,writeFile,rm,open} from 'node:fs/promises';
 import {constants as fsConstants} from 'node:fs';
-import {tmpdir} from 'node:os';
+import {homedir,tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {spawn} from 'node:child_process';
 import {createHash} from 'node:crypto';
@@ -9,6 +9,7 @@ import {setTimeout as delay} from 'node:timers/promises';
 import {fileURLToPath} from 'node:url';
 import {createWarmAnimation,spawnAnimationChannel} from './animation-warm.mjs';
 import {chooseI2V,executeI2V,i2vPorts} from './i2v-worker.mjs';
+import {createBackgroundSeedVR2} from './background-seedvr2.mjs';
 import {createAnimationModelSwitch} from './i2v-model-switch.mjs';
 import {choosePropAnimation,executePropAnimation,propAnimationPorts} from './prop-animation-worker.mjs';
 import {confirmBindingPath,defaultPropBinding,propAnimationReadiness,cinematicAnimationReadiness,cinematicSequenceReadiness} from './prop-animation-readiness.mjs';
@@ -289,7 +290,7 @@ if(process.argv[1]===fileURLToPath(import.meta.url)){
  // enables I2V only with the exact A14B high/low Q4_K_M pair and Wan 2.1 VAE.
  const override=process.env.WORKFLOW_I2V_A14B_BINDING;
  const a14bBinding=override??defaultPropBinding;
- let i2vModel,preparePropInput;
+ let i2vModel,preparePropInput,backgroundUpscaler;
  try{
   insist(a14bBinding.startsWith('/'),'I2V_BINDING_INVALID');
   if(!override)await confirmBindingPath(a14bBinding);
@@ -297,12 +298,14 @@ if(process.argv[1]===fileURLToPath(import.meta.url)){
   const binding=await readWanI2VBinding(a14bBinding);
   i2vModel=createWanI2V({binding});
   preparePropInput=createPropI2VInputFraming(binding.python);
+  const modelsRoot=process.env.WORKFLOW_SEEDVR2_MODELS_ROOT??join(homedir(),'Workspaces','Workers','runtime','seedvr2-fp16-staging','models');
+  backgroundUpscaler=createBackgroundSeedVR2({binding:{modelsRoot,comfyRoot:binding.comfyRoot,python:binding.python}});
  }catch(e){
   if(override||e?.code!=='ENOENT')console.error(JSON.stringify({state:'not_ready',code:'I2V_BINDING_INVALID'}));
  }
  const warm=createWarmAnimation({launch:root=>spawnAnimationChannel({py,helper,provider,binding,root}),
   onIdleUnload:()=>console.log(JSON.stringify({state:'idle_model_unloaded'}))});
- const modelSlot=createAnimationModelSwitch(warm,i2vModel);
+ const modelSlot=createAnimationModelSwitch(warm,i2vModel,backgroundUpscaler);
  let inFlightModelProbe;
  const probeModel=()=>{
   if(i2vModel&&!inFlightModelProbe)inFlightModelProbe=i2vModel.probe().finally(()=>{inFlightModelProbe=undefined;});
@@ -367,7 +370,8 @@ if(process.argv[1]===fileURLToPath(import.meta.url)){
     modelSlot.assertKnown();
     insist(await sequence.ready(signal),'CINEMATIC_SEQUENCE_PDS_UNAVAILABLE');
     signal.throwIfAborted();
-    const result=await executeCinematicSequence(db,t,signal,{ports:sequence,runI2V:job=>modelSlot.runI2V(job)});
+    const result=await executeCinematicSequence(db,t,signal,{ports:sequence,runI2V:job=>modelSlot.runI2V(job),
+     ...(backgroundUpscaler?{runUpscale:job=>modelSlot.runUpscale(job),probeUpscale:()=>backgroundUpscaler.probe()}:{})});
     if(result.state==='completed')console.log(JSON.stringify(result));
     else if(result.state!=='stale')console.error(JSON.stringify(result));
     if(result.rendererStop==='unknown')await invalidateReady();

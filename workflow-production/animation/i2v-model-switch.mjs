@@ -1,5 +1,5 @@
 /** Separate providers share one resident animation worker and one sequential model slot. */
-export function createAnimationModelSwitch(wan,i2v){
+export function createAnimationModelSwitch(wan,i2v,upscale){
  let unknown=false,busy=false;
  const error=(message,joined=false)=>Object.assign(Error(message),{rendererJoined:joined});
  function assertKnown(){
@@ -17,19 +17,22 @@ export function createAnimationModelSwitch(wan,i2v){
    unknown=true;busy=false;throw e;
   }
  }
+ async function runOwned(provider,job){
+  assertKnown();
+  if(!provider)throw error('ANIMATION_MODEL_UNAVAILABLE',true);
+  await enterI2V();
+  try{
+   // A successful return guarantees that the provider already joined its owned process group.
+   return await provider.render(job);
+  }catch(e){
+   if(e?.rendererJoined!==true)unknown=true;
+   throw e;
+  }finally{busy=false;}
+ }
  return {
   assertKnown,
-  async runI2V(job){
-   await enterI2V();
-   try{
-    // A successful return guarantees owned I2V process group already exited.
-    // Confirmed failures explicitly carry the same proof.
-    return await i2v.render(job);
-   }catch(e){
-    if(e?.rendererJoined!==true)unknown=true;
-    throw e;
-   }finally{busy=false;}
-  },
+  runI2V:job=>runOwned(i2v,job),
+  runUpscale:job=>runOwned(upscale,job),
   enterWan(){
    assertKnown();
    if(busy)throw error('ANIMATION_MODEL_SLOT_BUSY');
