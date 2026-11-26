@@ -45,24 +45,32 @@ export function requestLocalJson({port,path,method,body,deadline,signal,response
   const timeout=AbortSignal.timeout(deadline);
   const signals=[timeout];
   if(signal)signals.unshift(signal);
-  const fail=()=>reject(Error(npcPlanningRead&&timeout.aborted?'NPC_PLANNING_PDS_READ_TIMEOUT':'DOCUMENT_WORKER_LOCAL_TRANSPORT'));
+  let responseStatus;
+  const fail=(kind,code=npcPlanningRead&&timeout.aborted?'NPC_PLANNING_PDS_READ_TIMEOUT':'DOCUMENT_WORKER_LOCAL_TRANSPORT')=>{
+   const error=Error(code);
+   error.pdsTransportKind=timeout.aborted?'deadline_exceeded':signal?.aborted?'caller_aborted':kind;
+   if(Number.isInteger(responseStatus))error.pdsHttpStatus=responseStatus;
+   reject(error);
+  };
   const req=request({hostname:'127.0.0.1',port,path,method,agent:false,signal:AbortSignal.any(signals),
    headers:{Accept:'application/json',...(payload?{'Content-Type':'application/json','Content-Length':payload.length}:{})}},resp=>{
+   responseStatus=resp.statusCode;
    const presetConflict=presetPublication&&path===presetPath&&method==='POST'&&resp.statusCode===409;
    const mapConflict=mapPublication&&resp.statusCode===409;
-   if((resp.statusCode!==200&&!presetConflict&&!mapConflict)||!/^application\/json(?:\s*;|$)/i.test(String(resp.headers['content-type']??''))){resp.destroy();fail();return;}
+   if(resp.statusCode!==200&&!presetConflict&&!mapConflict){resp.destroy();fail('http_error');return;}
+   if(!/^application\/json(?:\s*;|$)/i.test(String(resp.headers['content-type']??''))){resp.destroy();fail('invalid_content_type');return;}
    let len=0;const chunks=[];
-   resp.on('data',part=>{len+=part.length;if(len>responseLimit){req.destroy();fail();}else chunks.push(part);});
-   resp.on('aborted',fail);resp.on('error',fail);
+   resp.on('data',part=>{len+=part.length;if(len>responseLimit){req.destroy();fail('response_too_large');}else chunks.push(part);});
+   resp.on('aborted',()=>fail('response_aborted'));resp.on('error',()=>fail('response_stream_error'));
    resp.on('end',()=>{try{
     const reply=JSON.parse(new TextDecoder('utf-8',{fatal:true}).decode(Buffer.concat(chunks)));
     if(mapConflict&&reply?.error==='MAP_REVISION_CONFLICT')reject(Error('MAP_REVISION_CONFLICT'));
-    else if(mapConflict)fail();
+    else if(mapConflict)fail('unexpected_conflict_response');
     else if(presetConflict){
      if(exact(reply,['error'])&&reply.error==='WORKFLOW_PRESET_REJECTED_BEFORE_WRITE')reject(Error(reply.error));
-     else fail();
+     else fail('unexpected_conflict_response');
     }else resolve(reply);
-   }catch{fail();}});
+   }catch{fail('invalid_json');}});
   });
   let connected=false;
   req.once('socket',socket=>{
@@ -71,8 +79,8 @@ export function requestLocalJson({port,path,method,body,deadline,signal,response
   });
   req.on('error',error=>{
    if(method==='POST'&&!connected&&error?.code==='ECONNREFUSED'&&error?.syscall==='connect')
-    reject(Error('DOCUMENT_PDS_CONNECT_REFUSED_BEFORE_SEND'));
-   else fail();
+    fail('connection_refused','DOCUMENT_PDS_CONNECT_REFUSED_BEFORE_SEND');
+   else fail(error?.code==='ECONNRESET'?'connection_reset':connected?'request_error':'connection_error');
   });
   req.end(payload);
  });

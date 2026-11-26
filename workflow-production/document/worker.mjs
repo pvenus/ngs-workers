@@ -53,8 +53,16 @@ const planningFailureCodes=new Set([
  'REPRESENTATIVE_CODEX_FAILED','REPRESENTATIVE_CODEX_OUTPUT_INVALID','REPRESENTATIVE_CODEX_STDIO_FAILED',
  'WORKFLOW_PLAN_MARKDOWN_INVALID','WORKFLOW_PLAN_CONTENT_INVALID','WORKFLOW_PLAN_COMBAT_WEAPON_REQUIRED',
 ]);
+const pdsTransportKinds=new Set(['deadline_exceeded','caller_aborted','http_error','invalid_content_type',
+ 'response_too_large','response_aborted','response_stream_error','unexpected_conflict_response',
+ 'invalid_json','connection_refused','connection_reset','request_error','connection_error']);
 const planningFailureFields=(stage,error)=>stage?{
  failureStage:stage,reasonCode:planningFailureCodes.has(error?.message)?error.message:'NPC_PLANNING_STAGE_FAILED',
+ ...(stage==='publish-request'&&pdsTransportKinds.has(error?.pdsTransportKind)?{
+  pdsTransportKind:error.pdsTransportKind,
+  ...(Number.isInteger(error.pdsHttpStatus)&&error.pdsHttpStatus>=100&&error.pdsHttpStatus<=599?
+   {pdsHttpStatus:error.pdsHttpStatus}:{}),
+ }:{}),
 }:{};
 const roleOperation=Object.freeze({overview:OVERVIEW,'portrait.art':ART,
  'portrait.representative':REPRESENTATIVE,'portrait.idle':IDLE});

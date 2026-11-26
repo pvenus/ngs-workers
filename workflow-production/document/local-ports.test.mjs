@@ -21,7 +21,7 @@ test('only a planning PDS deadline reports its fixed code; other local transport
  t.after(()=>new Promise(resolve=>server.close(resolve)));
  const params={port:server.address().port,path:'/read',method:'POST',body:{},deadline:20};
  await assert.rejects(requestLocalJson({...params,npcPlanningRead:true}),{message:'NPC_PLANNING_PDS_READ_TIMEOUT'});
- await assert.rejects(requestLocalJson(params),{message:'DOCUMENT_WORKER_LOCAL_TRANSPORT'});
+ await assert.rejects(requestLocalJson(params),{message:'DOCUMENT_WORKER_LOCAL_TRANSPORT',pdsTransportKind:'deadline_exceeded'});
 });
 
 test('only the exact preset rejection proof on the intended HTTP route permits ordinary failure',async t=>{
@@ -34,7 +34,7 @@ test('only the exact preset rejection proof on the intended HTTP route permits o
  const args={port:server.address().port,path:'/v1/npcs/ownership/workflow-preset',method:'POST',body:{},deadline:2000,presetPublication:true};
  data={error:'WORKFLOW_PRESET_REJECTED_BEFORE_WRITE'};
  await assert.rejects(requestLocalJson(args),{message:'WORKFLOW_PRESET_REJECTED_BEFORE_WRITE'});
- await assert.rejects(requestLocalJson({...args,path:'/unrelated'}),{message:'DOCUMENT_WORKER_LOCAL_TRANSPORT'});
+ await assert.rejects(requestLocalJson({...args,path:'/unrelated'}),{message:'DOCUMENT_WORKER_LOCAL_TRANSPORT',pdsTransportKind:'http_error',pdsHttpStatus:409});
  data={error:'WORKFLOW_PRESET_NOT_CONFIRMED'};
  await assert.rejects(requestLocalJson(args),{message:'DOCUMENT_WORKER_LOCAL_TRANSPORT'});
 });
@@ -44,7 +44,7 @@ test('closed port is unsent; an accepted request with a broken ACK remains ambig
  await new Promise(resolve=>peer.listen(0,'127.0.0.1',resolve));
  const port=peer.address().port;
  const args={port,path:'/v1/npcs/ownership/workflow-plan-overview',method:'POST',body:{},deadline:1500};
- await assert.rejects(requestLocalJson(args),{message:'DOCUMENT_WORKER_LOCAL_TRANSPORT'});
+ await assert.rejects(requestLocalJson(args),{message:'DOCUMENT_WORKER_LOCAL_TRANSPORT',pdsTransportKind:'connection_reset'});
  await new Promise(resolve=>peer.close(resolve));
  await assert.rejects(requestLocalJson(args),{message:'DOCUMENT_PDS_CONNECT_REFUSED_BEFORE_SEND'});
 });
