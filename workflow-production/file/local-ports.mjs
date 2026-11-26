@@ -1,5 +1,4 @@
-import {backgroundDeleteRoot} from './file-delete-envelope.mjs';
-import {fileDeleteType} from './file-delete-envelope.mjs';
+import {fileDeleteType,cinematicDeleteRoot,backgroundDeleteRoot} from './file-delete-envelope.mjs';
 import {request} from 'node:http';
 import {exactDeleteTarget,workflowDeleteFolder,singleTargetDeleteSchema,conceptDeleteRoot,npcDeleteRoot,audioDeleteRoot,propDeleteRoot,conceptDelete,npcDelete,audioDelete} from './file-delete.mjs';
 import {exact} from './vendor/planner-f24d23a/planner.mjs';
@@ -60,11 +59,12 @@ export function localPorts({transport=requestLocalJson,singleTarget=false}={}){
    if(singleTarget){
     if(operation!==undefined&&operation!==fileDeleteType&&!roots.has(operation))return false;
     try{
-     const path=operation===fileDeleteType&&targetRoot===npcDeleteRoot?storageDeletePath+'/npc-standalone':operation===fileDeleteType&&targetRoot===backgroundDeleteRoot?storageDeletePath+'/background':storageDeletePath;
+     const path=storageDeletePath+(operation===fileDeleteType?
+      targetRoot===npcDeleteRoot?'/npc-standalone':targetRoot===cinematicDeleteRoot?'/cinematic':targetRoot===backgroundDeleteRoot?'/background':'':'');
      const data=await transport({port:8030,path,method:'GET',deadline:5000,signal});
      if(!exact(data,['enabled','schemaVersion','roots'])||data.enabled!==true||data.schemaVersion!==singleTargetDeleteSchema||
         !Array.isArray(data.roots)||!data.roots.length||
-        !data.roots.every((root,i)=>[conceptDeleteRoot,npcDeleteRoot,audioDeleteRoot,propDeleteRoot,backgroundDeleteRoot].includes(root)&&(i===0||data.roots[i-1]<root)))return false;
+        !data.roots.every((root,i)=>[conceptDeleteRoot,npcDeleteRoot,audioDeleteRoot,propDeleteRoot,cinematicDeleteRoot,backgroundDeleteRoot].includes(root)&&(i===0||data.roots[i-1]<root)))return false;
      return operation===undefined||operation===fileDeleteType&&data.roots.includes(targetRoot??propDeleteRoot)||data.roots.includes(roots.get(operation));
     }catch{return false;}
    }
