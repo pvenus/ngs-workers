@@ -108,9 +108,11 @@ export function createPropImageRenderer(config){
   if(Buffer.byteLength(JSON.stringify({...input,reference:undefined}))>maxPayload||wire.length>12*1024*1024)
    throw fail('WORKFLOW_IMAGE_INPUT_TOO_LARGE');
   const raw=await call(pinned,'render-prop',wire,signal);
-  if(!raw.subarray(0,8).equals(signature)||
-     (green&&(raw.length<57||raw.readUInt32BE(16)!==1536||raw.readUInt32BE(20)!==1024||raw[24]!==8||raw[25]!==2)))
-   throw fail('WORKFLOW_IMAGE_OUTPUT_INVALID');
+  if(!raw.subarray(0,8).equals(signature)||(green&&raw.length<57))
+   throw fail('WORKFLOW_PROP_BASE_PNG_SIGNATURE');
+  if(green&&(raw.readUInt32BE(16)!==1536||raw.readUInt32BE(20)!==1024))
+   throw fail('WORKFLOW_PROP_BASE_PNG_CANVAS');
+  if(green&&(raw[24]!==8||raw[25]!==2))throw fail('WORKFLOW_PROP_BASE_PNG_COLOR');
   return raw;
  };
 }

@@ -60,6 +60,9 @@ function fixture(t,operation='prop.generate',mode='valid'){
   renderProp:async input=>{
    calls.push(['render',input]);
    if(mode==='revoked') db.prepare("UPDATE workflow_tasks SET result_ref=? WHERE task_id=?").run('newer',design.id);
+   if(mode==='cli blocked')throw Error('WORKFLOW_IMAGE_CLI_REPORTED_BLOCKED');
+   if(mode==='native wrong canvas')throw Error('WORKFLOW_PROP_BASE_PNG_CANVAS');
+   if(mode==='private message')throw Error('WORKFLOW_PROP_BASE_PRIVATE_TEXT');
    if(mode==='bad png')return Buffer.alloc(2);
    if(mode==='alpha')return basePng({alpha:true});
    if(mode==='wrong canvas')return basePng({width:8,height:352});
@@ -73,6 +76,7 @@ function fixture(t,operation='prop.generate',mode='valid'){
    if(r.path===propBasePath+'/read'){
     assert.deepEqual(Object.keys(r.body),['claim']);
     assert.equal(r.propBaseReference,!!reference);
+    if(mode==='failed read')throw Error('DOCUMENT_WORKER_LOCAL_TRANSPORT');
     if(mode==='reference stale')throw Error('WORKFLOW_PROP_REFERENCE_CHANGED');
     const asset=basePng({width:48,height:32,alpha:true}),hash=sha(asset);
     const actualRef=reference&&mode!=='reference missing'?{pin:reference,assetId:hash+'.png',
@@ -116,6 +120,21 @@ for(const mode of ['blocked','wrong design','bad png','alpha','wrong canvas','im
  }
  assert.equal(published,mode==='wrong ack');
  if(mode==='wrong design'||mode==='blocked')assert.equal(f.calls.some(c=>c[0]==='render'),false);
+});
+for(const [mode,failureStage,reasonCode] of [
+ ['failed read','input-read','DOCUMENT_WORKER_LOCAL_TRANSPORT'],
+ ['wrong design','input-validation','WORKFLOW_PROP_BASE_DESIGN_INVALID'],
+ ['cli blocked','model-render','WORKFLOW_IMAGE_CLI_REPORTED_BLOCKED'],
+ ['native wrong canvas','png-validation','WORKFLOW_PROP_BASE_PNG_CANVAS'],
+ ['bad png','png-validation','WORKFLOW_PROP_BASE_PNG_INVALID'],
+ ['private message','model-render','WORKFLOW_PROP_BASE_UNCLASSIFIED'],
+ ['wrong ack','stage-write','WORKFLOW_PROP_BASE_PUBLICATION_UNCONFIRMED'],
+])test('prop failure logs only bounded stage and reason: '+mode,async t=>{
+ const f=fixture(t,'prop.generate',mode);
+ const r=await imageTick(f.options);
+ assert.equal(r.failureStage,failureStage);assert.equal(r.reasonCode,reasonCode);
+ assert.equal(r.state,mode==='wrong ack'?'requires_reconciliation':'failed');
+ assert.ok(!JSON.stringify(r).includes('PRIVATE_TEXT'));
 });
 test('only successful exact aged claim increments retry, cap blocks re-entry',async t=>{
  const f=fixture(t);

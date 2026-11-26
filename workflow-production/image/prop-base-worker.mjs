@@ -145,8 +145,26 @@ function mediaArtifact(buffer){
  need(data&&end,'WORKFLOW_PROP_BASE_PNG_INVALID');
  return {media:{sha256:sha(buffer),bytes:buffer.length,width,height,mediaType:'image/png'},base64:buffer.toString('base64')};
 }
-const safe=e=>typeof e?.message==='string'&&/^(?:WORKFLOW_PROP_BASE_|PROP_IMAGE_DESIGN_)[A-Z_]{1,64}$/u.test(e.message)?
+// Only fixed diagnostic tokens are logged; never forward provider/transport messages.
+const reasons=new Set([
+ 'DOCUMENT_WORKER_LOCAL_TRANSPORT','WORKFLOW_PROP_REFERENCE_CHANGED',
+ 'PROP_IMAGE_INPUT_INVALID','PROP_IMAGE_REQUEST_INVALID','PROP_IMAGE_DESIGN_CHANGED','PROP_IMAGE_DESIGN_INVALID',
+ 'WORKFLOW_PROP_BASE_BINDING_INVALID','WORKFLOW_PROP_BASE_DESIGN_INVALID','WORKFLOW_PROP_BASE_REFERENCE_INVALID','WORKFLOW_PROP_BASE_REFERENCE_CHANGED',
+ 'WORKFLOW_IMAGE_HOST_BINDING_REQUIRED','WORKFLOW_IMAGE_HOST_CONFIG_UNTRUSTED','WORKFLOW_IMAGE_INPUT_TOO_LARGE',
+ 'WORKFLOW_IMAGE_NATIVE_START_FAILED','WORKFLOW_IMAGE_NATIVE_INPUT_FAILED','WORKFLOW_IMAGE_NATIVE_TIMEOUT',
+ 'WORKFLOW_IMAGE_NATIVE_UNCONFIRMED','WORKFLOW_IMAGE_CANCELLED',
+ 'WORKFLOW_IMAGE_TRANSPARENCY_REJECTED','WORKFLOW_IMAGE_CLI_OUTCOME_UNCONFIRMED','WORKFLOW_IMAGE_CLI_PROCESS_FAILED',
+ 'WORKFLOW_IMAGE_CLI_RESPONSE_INVALID','WORKFLOW_IMAGE_CLI_REPORTED_BLOCKED','WORKFLOW_IMAGE_CLI_RESULT_REJECTED',
+ 'WORKFLOW_IMAGE_OUTPUT_INVALID','WORKFLOW_PROP_BASE_PNG_INVALID','WORKFLOW_PROP_BASE_PNG_SIGNATURE',
+ 'WORKFLOW_PROP_BASE_PNG_CANVAS','WORKFLOW_PROP_BASE_PNG_COLOR','WORKFLOW_PROP_BASE_PUBLICATION_UNCONFIRMED',
+]);
+const safe=e=>reasons.has(e?.message)&&/^(?:WORKFLOW_PROP_BASE_|PROP_IMAGE_DESIGN_)/u.test(e.message)?
  e.message:'WORKFLOW_PROP_BASE_FAILED_BEFORE_PUBLISH';
+const pngReasons=new Set(['WORKFLOW_IMAGE_OUTPUT_INVALID','WORKFLOW_PROP_BASE_PNG_SIGNATURE',
+ 'WORKFLOW_PROP_BASE_PNG_CANVAS','WORKFLOW_PROP_BASE_PNG_COLOR']);
+const diagnosis=(stage,e)=>({failureStage:stage==='model-render'&&pngReasons.has(e?.message)?'png-validation':stage,
+ reasonCode:reasons.has(e?.message)?e.message:'WORKFLOW_PROP_BASE_UNCLASSIFIED'});
+
 
 export async function runPropBaseFromPath({dbPath,taskId,officialRequestId,operation,pds,renderProp,signal}){
  need(typeof officialRequestId==='string'&&officialRequestId.length===81&&official.test(officialRequestId)&&
@@ -159,7 +177,7 @@ export async function runPropBaseFromPath({dbPath,taskId,officialRequestId,opera
   db.exec('PRAGMA foreign_keys=ON; PRAGMA busy_timeout=5000;');protectSchema(db);
   const selected=claimTask(db,{officialRequestId,taskId,operation});
   if(!selected)return {state:'not_claimable',taskId};
-  let sent=false;
+  let sent=false,stage='input-read';
   try{
    let packet;
    try{packet=await pds.readPropBase(selected.claim,signal,!!selected.reference);}
@@ -167,24 +185,31 @@ export async function runPropBaseFromPath({dbPath,taskId,officialRequestId,opera
     if(selected.reference&&error?.message==='WORKFLOW_PROP_REFERENCE_CHANGED')throw Error('WORKFLOW_PROP_BASE_REFERENCE_CHANGED');
     throw error;
    }
+   stage='input-validation';
    const input=propBaseRenderInput(packet,selected);
+   stage='claim-validation';
    signal?.throwIfAborted();assertCurrent(db,selected);
-   const artifact=mediaArtifact(await renderProp(input,{signal}));
+   stage='model-render';
+   const rendered=await renderProp(input,{signal});
+   stage='png-validation';
+   const artifact=mediaArtifact(rendered);
+   stage='claim-validation';
    signal?.throwIfAborted();assertCurrent(db,selected);
    const resultRef=propRef(propKeys.base,artifact.media.sha256);
-   sent=true;
+   stage='stage-write';sent=true;
    const receipt=await pds.publishPropBase(selected.claim,artifact);
    need(exact(receipt,['ok','resultRef'])&&receipt.ok===true&&receipt.resultRef===resultRef,'WORKFLOW_PROP_BASE_PUBLICATION_UNCONFIRMED');
    commit(db,selected,resultRef);
    return {state:'completed',taskId,resultRef};
   }catch(error){
+   const diagnostic=diagnosis(stage,error);
    if(!sent){
     try{
      assertCurrent(db,selected);
-     if(markWorkflowTaskFailed(db,{...selected.claim,workerType:worker}))return {state:'failed',taskId,code:safe(error)};
+     if(markWorkflowTaskFailed(db,{...selected.claim,workerType:worker}))return {state:'failed',taskId,code:safe(error),...diagnostic};
     }catch{/* Revoked/uncertain state never becomes a forced failure. */}
    }
-   return {state:'requires_reconciliation',taskId,code:sent?'WORKFLOW_PROP_BASE_PUBLICATION_UNCONFIRMED':'WORKFLOW_PROP_BASE_CLAIM_CHANGED'};
+   return {state:'requires_reconciliation',taskId,code:sent?'WORKFLOW_PROP_BASE_PUBLICATION_UNCONFIRMED':'WORKFLOW_PROP_BASE_CLAIM_CHANGED',...diagnostic};
   }
  }finally{db.close();}
 }
