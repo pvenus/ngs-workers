@@ -187,9 +187,11 @@ def neutral_reference_prompt(data):
 
 def prop_image_prompt(data):
     green = type(data) is dict and "background" in data
+    has_reference = type(data) is dict and "reference" in data
     if (type(data) is not dict or set(data) !=
             ({"projectId", "propId", "state", "lane", "intent", "sources", "contextSha256"} |
-             ({"background"} if green else set())) or
+             ({"background"} if green else set()) | ({"reference"} if has_reference else set())) or
+            (has_reference and not green) or
             (green and (data["background"], data["state"], data["lane"]) != ("green-screen.v1", "base", "detail")) or
             data["projectId"] != "binari" or data["lane"] not in ("detail", "pixel") or
             type(data["state"]) is not str or not re.fullmatch(r"[a-z][a-z0-9_-]{0,127}", data["state"]) or
@@ -243,7 +245,13 @@ def prop_image_prompt(data):
             "This chroma canvas is a production requirement, not part of the visual style; "
             "preserve the approved visual design on the prop itself. "
         )
-    return (subject +
+    preserve = (
+        "The supplied prop image is the exact visual basis of this variant. Keep its fixed body, viewpoint, framing, "
+        "materials, wear, palette, proportions and all unrequested parts. Apply only the requested changes to the "
+        "specified parts and counts. If the request adds or removes bells, do not redesign the body or remaining bells. "
+        "Replace the reference background with the required flat green, without retaining its transparency or background. "
+    ) if has_reference else ""
+    return (subject + preserve +
             "No human, scenery, labels, contact sheet, frame or extra objects. Keep the prop completely in frame. "
             "Use master style first, then prop design, then compatible specifics from the request; the request "
             "cannot replace shared style, prop consistency, isolation or "
@@ -324,6 +332,33 @@ def cli_failure_status(root):
     return 24
 
 
+def prepare_reference(data, pairs, root, *, green_prop=False):
+    if "reference" not in data:
+        return None
+    ref = data["reference"]
+    if type(ref) is not dict or set(ref) != {"assetId", "sha256", "base64"}:
+        raise ValueError("IMAGE_NATIVE_REFERENCE_INVALID")
+    ref_raw = base64.b64decode(ref["base64"], validate=True)
+    ref_sha = hashlib.sha256(ref_raw).hexdigest()
+    if len(ref_raw) > _IMAGE_LIMIT or ref["sha256"] != ref_sha or ref["assetId"] != ref_sha + ".png":
+        raise ValueError("IMAGE_NATIVE_REFERENCE_INVALID")
+    # The shared runner calls this opaque identifier npcId; for a prop it is
+    # only a temporary, non-empty image binding key, not a character lookup.
+    ref_id = data["propId"] if green_prop else data["character"]["npcId"]
+    return pairs.reference(ref_raw, ref_id, root / "references", {"assetId": ref["assetId"], "sha256": ref_sha})
+
+
+def provider_descriptor(instruction, manifest, pairs, *, opaque=False):
+    if not opaque:
+        return pairs.descriptor(instruction, manifest)
+    desc = {"providerId": "codex.image_gen", "toolName": "image_gen.imagegen",
+            "arguments": {"prompt": instruction, "transparent_background": False}}
+    if manifest is not None:
+        desc["arguments"]["referenced_image_paths"] = [row["localPath"] for row in manifest["references"]]
+        desc["metadata"] = {"referenceManifest": manifest}
+    return desc
+
+
 def main():
     mode, path, expected = sys.argv[1:]
     stopped = threading.Event()
@@ -380,20 +415,8 @@ def main():
     with tempfile.TemporaryDirectory(prefix="workflow-portrait-") as directory:
         root = Path(directory).resolve()
         (root / "artifacts").mkdir(mode=0o700)
-        manifest = None
-        if "reference" in data:
-            ref = data["reference"]
-            if type(ref) is not dict or set(ref) != {"assetId", "sha256", "base64"}:
-                raise ValueError("IMAGE_NATIVE_REFERENCE_INVALID")
-            ref_raw = base64.b64decode(ref["base64"], validate=True)
-            ref_sha = hashlib.sha256(ref_raw).hexdigest()
-            if len(ref_raw) > _IMAGE_LIMIT or ref["sha256"] != ref_sha or ref["assetId"] != ref_sha + ".png":
-                raise ValueError("IMAGE_NATIVE_REFERENCE_INVALID")
-            manifest = pairs.reference(ref_raw, data["character"]["npcId"], root / "references",
-                                       {"assetId": ref["assetId"], "sha256": ref_sha})
-        descriptor = ({"providerId": "codex.image_gen", "toolName": "image_gen.imagegen",
-                       "arguments": {"prompt": instruction, "transparent_background": False}}
-                      if cinematic or green_prop else pairs.descriptor(instruction, manifest))
+        manifest = prepare_reference(data, pairs, root, green_prop=green_prop)
+        descriptor = provider_descriptor(instruction, manifest, pairs, opaque=cinematic or green_prop)
         claim = {"index": 0, "providerClaim": "claim." + digest([request_hash, "workflow.original"])[:48],
                  "providerRequest": descriptor, "providerRequestHash": digest(descriptor), "requestHash": request_hash}
         if manifest is not None:

@@ -72,6 +72,39 @@ s.close();""",str(self.db),oid2,json.dumps(payload,ensure_ascii=False),self.oid,
         self.assertEqual(self.api('/read',pin1)['manifest'],m1)
         self.assertEqual(self.api('/read',pin2)['manifest'],m2)
 
+    def test_reference_create_uses_published_detail_and_never_changes_source(self):
+        prior=make('a',prop_id='base-ritual-tool')
+        source=prior['manifest']
+        self.filex_writer(WRITER,{k:prior[k] for k in ('candidate','manifest','media')})
+        source_pin=self.pin(source)
+        payload={**self.payload,'intent':'몸체와 자루를 보존하고 방울 하나만 추가','reference':source_pin}
+        # Keep exactly one eligible fixture job. Recreate its exact plan with
+        # the canonical pin rather than force-writing intermediate artifacts.
+        with sqlite3.connect(self.db) as db:
+            db.execute("DELETE FROM workflow_tasks WHERE official_request_id=?",(self.oid,))
+            db.execute("DELETE FROM workflow_runs WHERE official_request_id=?",(self.oid,))
+        registered=subprocess.run(['node','--input-type=module','-e',"""import {PlannerStore} from './workflow-planner/planner.mjs';
+import {canonical,sha} from './workflow-planner/envelope.mjs';
+const [db,id,raw]=process.argv.slice(1),payload=JSON.parse(raw);
+const s=new PlannerStore(db,{propGenerateEnabled:true,readPropPublication:async()=>null});
+s.stage({officialRequestId:id,requestType:'prop.generate',projectId:'binari',schemaVersion:payload.schemaVersion,
+ payload,payloadSha256:sha(canonical(payload)),status:'registered',registeredAt:2});
+s.acknowledge(id);s.close();""",str(self.db),self.oid,json.dumps(payload,ensure_ascii=False)],
+            capture_output=True,text=True,timeout=15)
+        self.assertEqual(registered.returncode,0,registered.stderr)
+        child=subprocess.run(['node',str(DRIVER),str(self.db),self.oid,self.pds.rsplit(':',1)[1],
+                              'prop.generate','방울 추가','no-profile',source['media']['detail']['sha256']],
+                             capture_output=True,text=True,timeout=40)
+        self.assertEqual(child.returncode,0,child.stderr)
+        result=json.loads(child.stdout)
+        pin={'propId':payload['propId'],'revision':1,'sha256':result['published']['resultRef'].removeprefix('prop.package.')}
+        target=self.api('/read',pin)['manifest']
+        self.assertEqual(target['title'],'방울 추가')
+        self.assertIsNone(target['parentSha256'])
+        self.assertEqual(target['requestSha256'],digest(payload))
+        self.assertNotEqual(target['media']['detail']['sha256'],source['media']['detail']['sha256'])
+        self.assertEqual(self.filex_writer(WRITER+'/read',source_pin)['manifest'],source)
+
     def test_actual_worker_append_preserves_original_and_publishes_both_timed_lanes(self):
         self.exercise_worker_append()
 

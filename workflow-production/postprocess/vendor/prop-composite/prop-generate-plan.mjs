@@ -39,7 +39,8 @@ export function buildPropGeneratePlan(run){
   tasks.push({id:id(key),key,type:regenerate?type.replace(propGenerateType,propRegenerateType):type,workerType,dependsOn:parent===null?null:id(parent),input:{...scope,...input}});
  };
  task(propKeys.design,null,{intent:payload.intent,motion:mode});
- task(propKeys.base,propKeys.design,{designTaskId:id(propKeys.design)});
+ task(propKeys.base,propKeys.design,{designTaskId:id(propKeys.design),
+  ...(run.requestType===propGenerateType&&payload.reference?{reference:payload.reference}:{})});
  task(propKeys.detail,propKeys.base,{designTaskId:id(propKeys.design),baseTaskId:id(propKeys.base),sourceTaskId:id(propKeys.base)});
  task(propKeys.pixel,propKeys.detail,{designTaskId:id(propKeys.design),detailTaskId:id(propKeys.detail)});
  if(motion){

@@ -93,14 +93,20 @@ export function createPropImageRenderer(config){
  const pinned=options(config);
  return async (input,{signal}={})=>{
   const green=input!=null&&Object.hasOwn(input,'background');
-  if(!exact(input,['projectId','propId','state','lane','intent','sources','contextSha256',...(green?['background']:[])])||
+  const hasReference=input!=null&&Object.hasOwn(input,'reference');
+  const ref=input?.reference;
+  if(!exact(input,['projectId','propId','state','lane','intent','sources','contextSha256',...(green?['background']:[]),...(hasReference?['reference']:[])])||
+     (hasReference&&(!green||!exact(ref,['assetId','sha256','base64'])||
+      typeof ref.sha256!=='string'||!/^[a-f0-9]{64}$/u.test(ref.sha256)||ref.assetId!==ref.sha256+'.png'||
+      typeof ref.base64!=='string'||!ref.base64.length||ref.base64.length>Math.ceil(8*1024*1024/3)*4))||
      (green&&(input.background!=='green-screen.v1'||input.state!=='base'||input.lane!=='detail')))throw fail('PROP_IMAGE_INPUT_INVALID');
-  const {sources,contextSha256,background,...request}=input;
+  const {sources,contextSha256,background,reference,...request}=input;
   preparePropImageInput({...request,schemaVersion:propImageRequestSchema,designContextSha256:contextSha256},
    {schemaVersion:propDesignContextSchema,projectId:input.projectId,sources,contextSha256},
    {formalBase:input.state==='base'&&input.lane==='detail'});
   const wire=Buffer.from(JSON.stringify(input));
-  if(wire.length>maxPayload)throw fail('WORKFLOW_IMAGE_INPUT_TOO_LARGE');
+  if(Buffer.byteLength(JSON.stringify({...input,reference:undefined}))>maxPayload||wire.length>12*1024*1024)
+   throw fail('WORKFLOW_IMAGE_INPUT_TOO_LARGE');
   const raw=await call(pinned,'render-prop',wire,signal);
   if(!raw.subarray(0,8).equals(signature)||
      (green&&(raw.length<57||raw.readUInt32BE(16)!==1536||raw.readUInt32BE(20)!==1024||raw[24]!==8||raw[25]!==2)))

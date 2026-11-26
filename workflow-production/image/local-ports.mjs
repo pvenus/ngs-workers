@@ -34,7 +34,7 @@ function claimOf(command,claimStamp){
  return {officialRequestId,taskId,projectId,npcId,payloadSha256,claimStamp};
 }
 
-export function requestLocalJson({port,path,method,body,deadline,signal,responseLimit=65536,portraitRead=false}){
+export function requestLocalJson({port,path,method,body,deadline,signal,responseLimit=65536,portraitRead=false,propBaseReference=false}){
  return new Promise((resolve,reject)=>{
   const payload=body?Buffer.from(JSON.stringify(body)):null;
   const timeout=portraitRead?undefined:AbortSignal.timeout(deadline);
@@ -43,11 +43,19 @@ export function requestLocalJson({port,path,method,body,deadline,signal,response
   const fail=error=>reject(error===connectError?error:Error('DOCUMENT_WORKER_LOCAL_TRANSPORT'));
   const req=request({hostname:'127.0.0.1',port,path,method,agent:false,signal:requestSignal,
    headers:{Accept:'application/json',...(payload?{'Content-Type':'application/json','Content-Length':payload.length}:{})}},resp=>{
-   if(resp.statusCode!==200||!/^application\/json(?:\s*;|$)/i.test(String(resp.headers['content-type']??''))){resp.destroy();fail();return;}
+   const propConflict=propBaseReference&&resp.statusCode===409;
+   if((resp.statusCode!==200&&!propConflict)||!/^application\/json(?:\s*;|$)/i.test(String(resp.headers['content-type']??''))){resp.destroy();fail();return;}
    let len=0;const chunks=[];
-   resp.on('data',part=>{len+=part.length;if(len>responseLimit){req.destroy();fail();}else chunks.push(part);});
+   resp.on('data',part=>{len+=part.length;if(len>(propConflict?1024:responseLimit)){req.destroy();fail();}else chunks.push(part);});
    resp.on('aborted',fail);resp.on('error',fail);
-   resp.on('end',()=>{try{resolve(JSON.parse(new TextDecoder('utf-8',{fatal:true}).decode(Buffer.concat(chunks))));}catch{fail();}});
+   resp.on('end',()=>{try{
+    const body=JSON.parse(new TextDecoder('utf-8',{fatal:true}).decode(Buffer.concat(chunks)));
+    if(propConflict){
+     if(exact(body,['error'])&&body.error==='WORKFLOW_PROP_REFERENCE_CHANGED')
+      reject(Error('WORKFLOW_PROP_REFERENCE_CHANGED'));
+     else fail();
+    }else resolve(body);
+   }catch{fail();}});
   });
   if(portraitRead)armConnectionDeadline(req,deadline,connectError);
   req.on('error',fail);req.end(payload);
@@ -100,8 +108,8 @@ export function localPorts({transport=requestLocalJson}={}){
   async reconcileCinematicSource(claim,signal){
    return await transport({port:8030,path:cinematicSourcePath+'/reconcile',method:'POST',body:{claim},deadline:10000,signal});
   },
-  async readPropBase(claim,signal){
-   return transport({port:8030,path:propBasePath+'/read',method:'POST',body:{claim},deadline:5000,signal,responseLimit:128*1024});
+  async readPropBase(claim,signal,withReference=false){
+   return transport({port:8030,path:propBasePath+'/read',method:'POST',body:{claim},deadline:withReference?20000:5000,signal,responseLimit:withReference?12*1024*1024:128*1024,propBaseReference:withReference});
   },
   async publishPropBase(claim,artifact){
    return transport({port:8030,path:propBasePath,method:'POST',body:{claim,artifact},deadline:120000});

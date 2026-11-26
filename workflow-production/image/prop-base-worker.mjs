@@ -68,7 +68,7 @@ function claimTask(db,request){
     AND updated_at=? AND status=? AND result_ref IS NULL AND ${workflowTaskEligibleSql()}`)
    .run(claimStamp,taskId,officialRequestId,worker,operation,propKeys.base,row.updated_at,row.status).changes===1);
   db.exec('COMMIT');
-  return {row,design,request,claim:{officialRequestId,taskId,projectId,payloadSha256:row.payload_sha256,claimStamp}};
+  return {row,design,reference:base.input.reference,request,claim:{officialRequestId,taskId,projectId,payloadSha256:row.payload_sha256,claimStamp}};
  }catch(error){db.exec('ROLLBACK');throw error;}
 }
 function assertCurrent(db,selected){
@@ -95,8 +95,21 @@ const perms=['xPermille','yPermille','widthPermille','heightPermille'];
 const box=b=>b===null||(exact(b,perms)&&perms.every(k=>Number.isSafeInteger(b[k])&&b[k]>=0&&b[k]<=1000)&&
  b.widthPermille>=1&&b.heightPermille>=1&&b.xPermille+b.widthPermille<=1000&&b.yPermille+b.heightPermille<=1000);
 export function propBaseRenderInput(packet,selected){
- const {claim,design,row}=selected,i=design.input;
- need(exact(packet,['design','context']),'WORKFLOW_PROP_BASE_DESIGN_INVALID');
+ const {claim,design,row,reference}=selected,i=design.input;
+ need(exact(packet,['design','context',...(reference?['reference']:[])]),
+  reference?'WORKFLOW_PROP_BASE_REFERENCE_INVALID':'WORKFLOW_PROP_BASE_DESIGN_INVALID');
+ let referenceImage;
+ if(reference){
+  const r=packet.reference;
+  need(exact(r,['pin','assetId','sha256','base64'])&&canonical(r.pin)===canonical(reference)&&
+   typeof r.sha256==='string'&&/^[a-f0-9]{64}$/u.test(r.sha256)&&r.assetId===r.sha256+'.png'&&
+   typeof r.base64==='string'&&r.base64.length>0&&r.base64.length<=Math.ceil(8*1024*1024/3)*4,
+   'WORKFLOW_PROP_BASE_REFERENCE_INVALID');
+  const png=Buffer.from(r.base64,'base64');
+  need(png.length<=8*1024*1024&&png.subarray(0,8).equals(signature)&&
+   png.toString('base64')===r.base64&&sha(png)===r.sha256,'WORKFLOW_PROP_BASE_REFERENCE_INVALID');
+  referenceImage={assetId:r.assetId,sha256:r.sha256,base64:r.base64};
+ }
  const r=packet.design;
  need(exact(r,['officialRequestId','taskId','key','resultRef','artifact','lineage'])&&
   r.officialRequestId===claim.officialRequestId&&r.taskId===design.id&&r.key===propKeys.design&&
@@ -111,7 +124,8 @@ export function propBaseRenderInput(packet,selected){
   exact(a.interaction,['pixelOpen','detailTrigger'])&&Object.values(a.interaction).every(box),
   'WORKFLOW_PROP_BASE_DESIGN_INVALID');
  const ctx=validatePropDesign(packet.context,{projectId,designContextSha256:i.designContextSha256});
- return {projectId,propId:i.propId,state:'base',lane:'detail',background:'green-screen.v1',intent:a.appearancePrompt,sources:ctx.sources,contextSha256:ctx.contextSha256};
+ return {projectId,propId:i.propId,state:'base',lane:'detail',background:'green-screen.v1',intent:a.appearancePrompt,sources:ctx.sources,contextSha256:ctx.contextSha256,
+  ...(referenceImage?{reference:referenceImage}:{})};
 }
 function mediaArtifact(buffer){
  need(Buffer.isBuffer(buffer)&&buffer.length>=57&&buffer.length<=16*1024*1024&&buffer.subarray(0,8).equals(signature)&&
@@ -147,7 +161,13 @@ export async function runPropBaseFromPath({dbPath,taskId,officialRequestId,opera
   if(!selected)return {state:'not_claimable',taskId};
   let sent=false;
   try{
-   const input=propBaseRenderInput(await pds.readPropBase(selected.claim,signal),selected);
+   let packet;
+   try{packet=await pds.readPropBase(selected.claim,signal,!!selected.reference);}
+   catch(error){
+    if(selected.reference&&error?.message==='WORKFLOW_PROP_REFERENCE_CHANGED')throw Error('WORKFLOW_PROP_BASE_REFERENCE_CHANGED');
+    throw error;
+   }
+   const input=propBaseRenderInput(packet,selected);
    signal?.throwIfAborted();assertCurrent(db,selected);
    const artifact=mediaArtifact(await renderProp(input,{signal}));
    signal?.throwIfAborted();assertCurrent(db,selected);

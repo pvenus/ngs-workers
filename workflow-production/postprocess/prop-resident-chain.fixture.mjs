@@ -20,7 +20,7 @@ import {nextPropPackageFromPath,runPropPackageFromPath} from './prop-package-wor
 import {renderPropInScratch} from './prop-derivation-provider.mjs';
 import {propTaskId,propKeys} from './vendor/prop-composite/prop-generate-plan.mjs';
 
-const [dbPath,officialRequestId,rawPort,operation,label,profile]=process.argv.slice(2);
+const [dbPath,officialRequestId,rawPort,operation,label,profile,referenceDigest]=process.argv.slice(2);
 assert.ok(dbPath&&officialRequestId&&/^[1-9]\d{3,4}$/.test(rawPort)&&['prop.generate','prop.regenerate','prop.animation.generate'].includes(operation)&&label);
 const port=Number(rawPort);
 const python=process.env.WORKFLOW_PROP_TEST_PYTHON??'python3';
@@ -45,7 +45,7 @@ const transport=(path,{body,signal,type,limit,timeout})=>new Promise((resolve,re
 const pds=propStagePorts({transport});
 assert.equal(await pds.ready(),true);
 const isAppend=operation==='prop.animation.generate';
-const isChroma=profile!==undefined;
+const isChroma=profile!==undefined&&profile!=='no-profile';
 assert.ok(!isChroma||isAppend&&profile==='candle-chroma-headroom-v1');
 if(!isAppend){
  const result=await runPropDesignFromPath({dbPath,officialRequestId,taskId:taskId(propKeys.design),operation:operation+'.design',
@@ -70,6 +70,11 @@ im.save(sys.stdout.buffer,format='PNG')
  const baseResult=await runPropBaseFromPath({dbPath,taskId:taskId(propKeys.base),officialRequestId,operation:operation+'.base',
   pds:imagePds,renderProp:async input=>{
    assert.equal(input.state,'base');assert.equal(input.lane,'detail');
+   if(referenceDigest){
+    const {createHash}=await import('node:crypto'),ref=input.reference;
+    assert.equal(ref.assetId,referenceDigest+'.png');assert.equal(ref.sha256,referenceDigest);
+    assert.equal(createHash('sha256').update(Buffer.from(ref.base64,'base64')).digest('hex'),referenceDigest);
+   }else assert.equal(input.reference,undefined);
    return base;
   }});
  assert.equal(baseResult.state,'completed',JSON.stringify(baseResult));

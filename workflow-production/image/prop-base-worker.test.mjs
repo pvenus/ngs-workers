@@ -38,8 +38,9 @@ function fixture(t,operation='prop.generate',mode='valid'){
  db.exec('ALTER TABLE workflow_tasks ADD COLUMN retry_count INTEGER NOT NULL DEFAULT 0 CHECK(retry_count BETWEEN 0 AND 3)');
  t.after(()=>{store.close();rmSync(root,{recursive:true,force:true});});
  const officialRequestId='request.official.'+sha(operation),schemaVersion='ngs.'+operation.replace('.','-')+'.v1';
+ const reference=mode.startsWith('reference')?{propId:'original-prop',revision:1,sha256:'c'.repeat(64)}:null;
  const payload={schemaVersion,projectId:'binari',propId:'12.candle',designContextSha256:contextSha256,
-  intent:'raw request should not be model input',...(operation==='prop.regenerate'?{source:{revision:3,sha256:'a'.repeat(64)}}:{})};
+  intent:'raw request should not be model input',...(reference?{reference}:{}),...(operation==='prop.regenerate'?{source:{revision:3,sha256:'a'.repeat(64)}}:{})};
  const payloadSha256=sha(canonical(payload));
  const artifact={schemaVersion:'ngs.prop-design-spec.v1',propId:payload.propId,designContextSha256:contextSha256,
   title:'촛불',appearancePrompt:'exact approved game prop, clear design',motion:'still',motionPrompt:null,
@@ -71,8 +72,13 @@ function fixture(t,operation='prop.generate',mode='valid'){
    assert.deepEqual(r.body.claim,{officialRequestId,taskId:base.id,projectId:'binari',payloadSha256,claimStamp:state().updated_at});
    if(r.path===propBasePath+'/read'){
     assert.deepEqual(Object.keys(r.body),['claim']);
+    assert.equal(r.propBaseReference,!!reference);
+    if(mode==='reference stale')throw Error('WORKFLOW_PROP_REFERENCE_CHANGED');
+    const asset=basePng({width:48,height:32,alpha:true}),hash=sha(asset);
+    const actualRef=reference&&mode!=='reference missing'?{pin:reference,assetId:hash+'.png',
+     sha256:hash,base64:(mode==='reference corrupt'?Buffer.from('bad'):asset).toString('base64')}:null;
     return {design:{officialRequestId,taskId:design.id,key:design.key,resultRef:designRef,
-     artifact:mode==='wrong design'?{...artifact,appearancePrompt:'tampered'}:artifact,lineage:null},context};
+     artifact:mode==='wrong design'?{...artifact,appearancePrompt:'tampered'}:artifact,lineage:null},context,...(actualRef?{reference:actualRef}:{})};
    }
    assert.equal(r.path,propBasePath);
    assert.deepEqual(r.body.artifact,{media:{sha256:sha(png),bytes:png.length,width:1536,height:1024,mediaType:'image/png'},base64:png.toString('base64')});
@@ -120,3 +126,21 @@ test('only successful exact aged claim increments retry, cap blocks re-entry',as
  assert.equal((await runPropBaseFromPath(f.options)).state,'completed');
  assert.equal(f.state().retry_count,3);
 });
+
+for(const mode of ['reference valid','reference missing','reference corrupt','reference stale'])
+ test(mode+' never substitutes a text-only render for the requested published PNG',async t=>{
+  const f=fixture(t,'prop.generate',mode);
+  const result=await runPropBaseFromPath(f.options);
+  const rendered=f.calls.filter(x=>x[0]==='render');
+  if(mode==='reference valid'){
+   assert.equal(result.state,'completed');
+   assert.equal(rendered.length,1);
+   const {assetId,sha256,base64}=rendered[0][1].reference;
+   assert.equal(assetId,sha256+'.png');
+   assert.deepEqual(Buffer.from(base64,'base64'),basePng({width:48,height:32,alpha:true}));
+  }else{
+   assert.equal(result.state,'failed');
+   assert.equal(result.code,mode==='reference stale'?'WORKFLOW_PROP_BASE_REFERENCE_CHANGED':'WORKFLOW_PROP_BASE_REFERENCE_INVALID');
+   assert.equal(rendered.length,0);
+  }
+ });
