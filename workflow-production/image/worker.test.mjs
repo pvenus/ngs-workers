@@ -99,3 +99,30 @@ test('new exact NPC has no predecessor and awaiting RS cannot start',async t=>{
  const out=await runSelectedPreset({...f.entry,pds:{publishExactPreset(c){assert.equal(c.predecessorReceiptRef,null);return verified(c);}}});
  assert.equal(out.state,'completed');
 });
+
+test('exact image claim waits for every extra dependency and rejects a completed task from another request',async t=>{
+ const f=setup(t,{disk:true});
+ f.s.acknowledge(f.id);f.completeDelete();
+ for(let i=2;i<=5;i++)f.db.exec('ALTER TABLE workflow_tasks ADD COLUMN depends_on_task_id_'+i+' TEXT');
+ const extraKeys=['planning_representative','portrait_representative','planning_idle','portrait_idle_reference'];
+ const extraIds=extraKeys.map(key=>f.task(key).task_id);
+ f.db.prepare(`UPDATE workflow_tasks SET ${[2,3,4,5].map(i=>'depends_on_task_id_'+i+'=?').join(',')} WHERE task_id=?`)
+  .run(...extraIds,f.taskId);
+ const set=f.db.prepare('UPDATE workflow_tasks SET status=? WHERE task_id=?');
+ for(const id of extraIds.slice(0,-1))set.run('completed',id);
+ assert.equal((await runSelectedPreset({...f.entry,pds:denied})).state,'not_claimable');
+ assert.equal(f.task('preset').status,'pending');
+ const foreignId='request.official.'+sha('foreign fixture');
+ f.s.stage({officialRequestId:foreignId,projectId:'binari',requestType:'npc.workflow',schemaVersion:f.payload.schemaVersion,
+  payload:f.payload,payloadSha256:sha(canonical(f.payload)),status:'registered',registeredAt:1800000000001});
+ const foreign=f.db.prepare("SELECT task_id FROM workflow_tasks WHERE official_request_id=? AND task_key='delete'").get(foreignId).task_id;
+ set.run('completed',foreign);
+ const setLast=f.db.prepare('UPDATE workflow_tasks SET depends_on_task_id_5=? WHERE task_id=?');
+ setLast.run(foreign,f.taskId);
+ assert.equal((await runSelectedPreset({...f.entry,pds:denied})).state,'not_claimable');
+ assert.equal(f.task('preset').status,'pending');
+ setLast.run(extraIds[3],f.taskId);
+ set.run('completed',extraIds[3]);
+ const out=await runSelectedPreset({...f.entry,pds:{publishExactPreset:verified}});
+ assert.equal(out.state,'completed');
+});

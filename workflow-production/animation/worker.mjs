@@ -1,6 +1,6 @@
 /** One exact document task. Storage and rendering are supplied by trusted ports. */
 import {DatabaseSync} from 'node:sqlite';
-import {assertDatabasePath,protectSchema,nextWorkflowTaskFromPath} from './workflow-ready.mjs';
+import {workflowDependenciesCompletedSql,assertDatabasePath,protectSchema,nextWorkflowTaskFromPath} from './workflow-ready.mjs';
 export {nextWorkflowTaskFromPath} from './workflow-ready.mjs';
 import {buildPlan,exact} from './vendor/planner-f24d23a/planner.mjs';
 import {presetArtifact} from './preset.mjs';
@@ -15,13 +15,13 @@ const contracts={
  [REPRESENTATIVE]:{key:'planning_representative',worker:'document'},
  [PORTRAIT]:{key:'portrait_representative',worker:'image'},
 };
-const ready=`SELECT t.task_id,t.task_key,t.task_input,t.depends_on_task_id,
+const ready=db=>`SELECT t.task_id,t.task_key,t.task_input,t.depends_on_task_id,
   t.updated_at AS task_updated_at,
   (SELECT p.result_ref FROM workflow_tasks p
    WHERE p.task_id=t.depends_on_task_id AND p.official_request_id=t.official_request_id) AS parent_result_ref,
   r.*
  FROM workflow_tasks t JOIN workflow_runs r USING(official_request_id)
- WHERE t.task_id=? AND r.official_request_id=? AND t.status='pending' AND t.task_type=?
+ WHERE t.task_id=? AND r.official_request_id=? AND t.status='pending' AND ${workflowDependenciesCompletedSql(db,'t')} AND t.task_type=?
  AND t.worker_type=? AND t.result_ref IS NULL AND r.state='planned'
  AND (t.depends_on_task_id IS NULL OR EXISTS (
    SELECT 1 FROM workflow_tasks p
@@ -32,7 +32,7 @@ function claim(db,taskId,officialRequestId,operation){
  db.exec('BEGIN IMMEDIATE');
  try{
   const role=contracts[operation].worker;
-  const row=db.prepare(ready).get(taskId,officialRequestId,operation,role);
+  const row=db.prepare(ready(db)).get(taskId,officialRequestId,operation,role);
   if(!row){db.exec('COMMIT');return null;}
   const plan=buildPlan({officialRequestId:row.official_request_id,projectId:row.project_id,
    requestType:row.request_type,schemaVersion:row.schema_version,payload:JSON.parse(row.payload),
@@ -44,7 +44,7 @@ function claim(db,taskId,officialRequestId,operation){
   const stamp=Math.max(Date.now(),row.task_updated_at+1);
   if(!Number.isSafeInteger(stamp))throw Error('WORKFLOW_PRESET_CLAIM_CLOCK');
   const changed=db.prepare(`UPDATE workflow_tasks SET status='running',updated_at=?
-    WHERE task_id=(SELECT task_id FROM (${ready})) AND updated_at=?`).run(stamp,taskId,officialRequestId,operation,role,row.task_updated_at).changes;
+    WHERE task_id=(SELECT task_id FROM (${ready(db)})) AND updated_at=?`).run(stamp,taskId,officialRequestId,operation,role,row.task_updated_at).changes;
   if(changed!==1)throw Error('WORKFLOW_PRESET_CLAIM_CHANGED');
   const payload=JSON.parse(plan.payload);
   const command=Object.freeze({officialRequestId:row.official_request_id,taskId,projectId:row.project_id,

@@ -3,7 +3,7 @@ import {hasPortraitReadOwner,finishPortraitRead} from './portrait-read-owner.mjs
 /** One exact document task. Storage and rendering are supplied by trusted ports. */
 import {DatabaseSync} from 'node:sqlite';
 import {settleFailure} from './failure-state.mjs';
-import {assertDatabasePath,protectSchema,nextWorkflowTaskFromPath,oldestRunnable,markWorkflowTaskFailed,workflowTaskEligibleSql,workflowTaskRetrySetSql} from './workflow-ready.mjs';
+import {workflowDependenciesCompletedSql,assertDatabasePath,protectSchema,nextWorkflowTaskFromPath,oldestRunnable,markWorkflowTaskFailed,workflowTaskEligibleSql,workflowTaskRetrySetSql} from './workflow-ready.mjs';
 export {nextWorkflowTaskFromPath} from './workflow-ready.mjs';
 import {buildPlan,directions,exact} from './vendor/planner-f24d23a/planner.mjs';
 import {buildPlan as buildPixelPlan,pixelImageStyle,portraitPixelTaskType} from './vendor/planner-pixel-sprite-v1/planner.mjs';
@@ -52,7 +52,7 @@ const ready=(db,retry,idle)=>`SELECT t.task_id,t.task_key,t.task_input,t.depends
    WHERE p.task_id=t.depends_on_task_id AND p.official_request_id=t.official_request_id) AS parent_result_ref,
   r.*
  FROM workflow_tasks t JOIN workflow_runs r USING(official_request_id)
- WHERE t.task_id=? AND r.official_request_id=? AND ${retry?workflowTaskEligibleSql(db,'t'):"t.status='pending'"} AND t.task_type=?
+ WHERE t.task_id=? AND r.official_request_id=? AND ${retry?workflowTaskEligibleSql(db,'t'):`t.status='pending' AND ${workflowDependenciesCompletedSql(db,'t')}`} AND t.task_type=?
  AND t.worker_type=? AND t.result_ref IS NULL AND r.state='planned'
  AND (t.depends_on_task_id IS NULL OR EXISTS (
    SELECT 1 FROM workflow_tasks p

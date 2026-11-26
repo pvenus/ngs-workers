@@ -14,10 +14,10 @@ import {canonical,sha} from './vendor/planner-f24d23a/envelope.mjs';
 
 const validId=(v)=>typeof v==='string'&&/^workflow\.task\.[a-f0-9]{64}$/.test(v);
 const operations=Object.freeze([npcDelete,conceptDelete,audioDelete,fileDeleteType]);
-const ready=`SELECT t.task_id,t.task_key,t.task_input,t.depends_on_task_id,
+const ready=db=>`SELECT t.task_id,t.task_key,t.task_input,t.depends_on_task_id,
   t.updated_at AS task_updated_at,r.*
  FROM workflow_tasks t JOIN workflow_runs r USING(official_request_id)
- WHERE t.task_id=? AND r.official_request_id=? AND ${workflowTaskEligibleSql('t')} AND t.task_type=?
+ WHERE t.task_id=? AND r.official_request_id=? AND ${workflowTaskEligibleSql(db, 't')} AND t.task_type=?
  AND t.worker_type='file' AND t.result_ref IS NULL AND r.state='planned'
  AND (t.depends_on_task_id IS NULL OR EXISTS (
    SELECT 1 FROM workflow_tasks p
@@ -52,7 +52,7 @@ function buildFileDeletePlan(row){
 function claim(db,taskId,officialRequestId,operation){
  db.exec('BEGIN IMMEDIATE');
  try{
-  const row=db.prepare(ready).get(taskId,officialRequestId,operation);
+  const row=db.prepare(ready(db)).get(taskId,officialRequestId,operation);
   if(!row){db.exec('COMMIT');return null;}
   const concept=operation===conceptDelete;
   const plan=operation===fileDeleteType?buildFileDeletePlan(row):operation===audioDelete?buildAudioDeletePlan(row):(concept?buildConceptPlan:isSelectionSchema(row.schema_version)?buildSelectionPlan:buildPlan)({officialRequestId:row.official_request_id,projectId:row.project_id,
@@ -66,7 +66,7 @@ function claim(db,taskId,officialRequestId,operation){
   const stamp=Math.max(Date.now(),row.task_updated_at+1);
   if(!Number.isSafeInteger(stamp))throw Error('WORKFLOW_DELETE_CLAIM_CLOCK');
   const changed=db.prepare(`UPDATE workflow_tasks SET status='running',updated_at=?, ${workflowTaskRetrySetSql}
-    WHERE task_id=(SELECT task_id FROM (${ready})) AND updated_at=?`).run(stamp,taskId,officialRequestId,operation,row.task_updated_at).changes;
+    WHERE task_id=(SELECT task_id FROM (${ready(db)})) AND updated_at=?`).run(stamp,taskId,officialRequestId,operation,row.task_updated_at).changes;
   if(changed!==1)throw Error('WORKFLOW_DELETE_CLAIM_CHANGED');
   const binding=Object.freeze({
    officialRequestId:row.official_request_id,taskId,projectId:row.project_id,payloadSha256:row.payload_sha256,claimStamp:stamp,

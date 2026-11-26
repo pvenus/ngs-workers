@@ -25,7 +25,7 @@ function tx(db,fn){
 }
 function checked(db,taskId,requestId,state,stamp){
  const claiming=state==='eligible';
- const task=db.prepare(`SELECT t.* FROM workflow_tasks t WHERE task_id=? AND official_request_id=?${claiming?` AND ${workflowTaskEligibleSql('t')}`:''}`).get(taskId,requestId);
+ const task=db.prepare(`SELECT t.* FROM workflow_tasks t WHERE task_id=? AND official_request_id=?${claiming?` AND ${workflowTaskEligibleSql(db, 't')}`:''}`).get(taskId,requestId);
  const row=db.prepare("SELECT * FROM workflow_runs WHERE official_request_id=? AND state='planned'").get(requestId);
  if(!row||!task||(!claiming&&task.status!==state)||![TYPE,portraitPixelTaskType].includes(task.task_type)||task.worker_type!==WORKER||task.result_ref!==null||
     (stamp!==undefined&&task.updated_at!==stamp))return null;
@@ -70,7 +70,7 @@ function nextSelectedPostprocess(dbPath){
    WHERE r.state='planned' AND r.reason IS NULL AND r.project_id='binari'
    AND ((r.request_type='npc.workflow' AND r.schema_version IN (${selectionSchemas.map(()=>'?')}))
         OR (r.request_type=? AND r.schema_version IN (${regenerateSchemas.map(()=>'?')})))
-   AND ${workflowTaskEligibleSql('t')} AND t.result_ref IS NULL AND t.worker_type=? AND t.task_type=?
+   AND ${workflowTaskEligibleSql(db, 't')} AND t.result_ref IS NULL AND t.worker_type=? AND t.task_type=?
    AND t.task_key GLOB 'frames_motion_*' AND p.status='completed' AND p.worker_type='animation'
    ORDER BY r.registered_at,r.official_request_id,t.task_key LIMIT 1`).get(...selectionSchemas,regenerateType,...regenerateSchemas,WORKER,TYPE);
   if(!row)return null;
@@ -104,7 +104,7 @@ export async function runPostprocessFromPath({dbPath,taskId,officialRequestId,pd
    const stamp=Math.max(Date.now(),found.task.updated_at+1);
    expect(Number.isSafeInteger(stamp),'POSTPROCESS_STAMP_INVALID');
    expect(db.prepare(`UPDATE workflow_tasks AS t SET status='running',updated_at=?, ${workflowTaskRetrySetSql}
-    WHERE task_id=? AND official_request_id=? AND ${workflowTaskEligibleSql('t')} AND result_ref IS NULL AND updated_at=?`)
+    WHERE task_id=? AND official_request_id=? AND ${workflowTaskEligibleSql(db, 't')} AND result_ref IS NULL AND updated_at=?`)
     .run(stamp,taskId,officialRequestId,found.task.updated_at).changes===1,'POSTPROCESS_CLAIM_CHANGED');
    const claim=Object.freeze({officialRequestId,taskId,projectId:found.row.project_id,npcId:found.input.npcId,
     payloadSha256:found.row.payload_sha256,claimStamp:stamp});

@@ -24,7 +24,7 @@ export function nextAudioFromPath(dbPath,{generate=true,separate=false}={}){
   protectSchema(db);
   return db.prepare(`SELECT t.task_id AS taskId,t.official_request_id AS officialRequestId
    FROM workflow_tasks t JOIN workflow_runs r USING(official_request_id)
-   WHERE r.state='planned' AND ${workflowTaskEligibleSql('t')} AND t.result_ref IS NULL
+   WHERE r.state='planned' AND ${workflowTaskEligibleSql(db, 't')} AND t.result_ref IS NULL
     AND t.worker_type=? AND t.depends_on_task_id IS NULL AND (
      (? AND r.request_type=? AND t.task_type=? AND t.task_key=? AND
       (CASE WHEN json_valid(t.task_input) THEN json_extract(t.task_input,'$.kind') END)=?) OR
@@ -45,7 +45,7 @@ function tx(db,fn){
 function selected(db,taskId,requestId,state,stamp){
  const eligible=state==='eligible';
  const row=db.prepare("SELECT * FROM workflow_runs WHERE official_request_id=? AND state='planned'").get(requestId);
- const task=db.prepare(`SELECT t.* FROM workflow_tasks t WHERE task_id=? AND official_request_id=?${eligible?` AND ${workflowTaskEligibleSql('t')}`:''}`).get(taskId,requestId);
+ const task=db.prepare(`SELECT t.* FROM workflow_tasks t WHERE task_id=? AND official_request_id=?${eligible?` AND ${workflowTaskEligibleSql(db, 't')}`:''}`).get(taskId,requestId);
  if(!row||!task||(!eligible&&task.status!==state)||(stamp!==undefined&&task.updated_at!==stamp)||
   task.worker_type!==WORKER||task.result_ref!==null||task.depends_on_task_id!==null)return null;
  const separate=row.request_type===audioSeparateType;
@@ -92,7 +92,7 @@ export async function runAudioFromPath({dbPath,taskId,officialRequestId,pds,adap
    const claimStamp=Math.max(Date.now(),found.task.updated_at+1);
    check(Number.isSafeInteger(claimStamp)&&claimStamp<Number.MAX_SAFE_INTEGER,'AUDIO_CLAIM_STAMP_INVALID');
    check(db.prepare(`UPDATE workflow_tasks AS t SET status='running',updated_at=?, ${workflowTaskRetrySetSql}
-    WHERE task_id=? AND official_request_id=? AND ${workflowTaskEligibleSql('t')} AND result_ref IS NULL AND updated_at=?`)
+    WHERE task_id=? AND official_request_id=? AND ${workflowTaskEligibleSql(db, 't')} AND result_ref IS NULL AND updated_at=?`)
     .run(claimStamp,taskId,officialRequestId,found.task.updated_at).changes===1,'AUDIO_CLAIM_CHANGED');
    return {found,claim:Object.freeze({officialRequestId,taskId,projectId:found.row.project_id,payloadSha256:found.row.payload_sha256,claimStamp})};
   });

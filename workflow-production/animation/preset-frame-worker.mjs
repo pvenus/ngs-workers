@@ -40,7 +40,7 @@ export function choosePresetFrames(dbPath){
   return db.prepare(`SELECT t.task_id AS taskId,t.official_request_id AS officialRequestId,t.task_key AS key,t.task_type AS type
    FROM workflow_tasks t JOIN workflow_runs r USING(official_request_id)
    WHERE r.state='planned' AND r.reason IS NULL AND r.request_type=? AND r.schema_version=? AND r.project_id=?
-   AND ${workflowTaskEligibleSql('t')} AND t.result_ref IS NULL AND t.worker_type=?
+   AND ${workflowTaskEligibleSql(db, 't')} AND t.result_ref IS NULL AND t.worker_type=?
    AND t.task_type=? AND t.task_key IN (${directionKeysSql}) AND EXISTS(
      SELECT 1 FROM workflow_tasks i WHERE i.task_id=t.depends_on_task_id AND i.official_request_id=t.official_request_id
      AND i.task_key=? AND i.task_type=? AND i.worker_type='image' AND i.status='completed' AND i.result_ref IS NOT NULL)
@@ -69,7 +69,7 @@ export function claimPresetFrames(db,t){
    FROM workflow_tasks t JOIN workflow_runs r USING(official_request_id)
    WHERE r.state='planned' AND r.reason IS NULL AND r.request_type=? AND r.schema_version=? AND r.project_id=?
    AND t.worker_type=? AND t.task_type=? AND t.task_key=? AND t.task_id=? AND t.official_request_id=?
-   AND ${workflowTaskEligibleSql('t')} AND t.result_ref IS NULL`).get(requestType,requestSchema,project,worker,t.type,t.key,t.taskId,id);
+   AND ${workflowTaskEligibleSql(db, 't')} AND t.result_ref IS NULL`).get(requestType,requestSchema,project,worker,t.type,t.key,t.taskId,id);
   if(!r)return null;
   const input=JSON.parse(r.task_input),p=JSON.parse(r.payload);
   need(exactProject(p)&&r.payload_sha256===sha256(r.payload),'PAYLOAD_BINDING');
@@ -82,7 +82,7 @@ export function claimPresetFrames(db,t){
   need(Number.isSafeInteger(claimStamp)&&claimStamp<Number.MAX_SAFE_INTEGER,'CLAIM_STAMP');
   const applied=db.prepare(`UPDATE workflow_tasks AS t SET status='running',updated_at=?,${workflowTaskRetrySetSql}
    WHERE t.task_id=? AND t.official_request_id=? AND t.worker_type=? AND t.task_type=? AND t.task_key=?
-   AND t.status=? AND t.updated_at=? AND t.result_ref IS NULL AND ${workflowTaskEligibleSql('t')}`)
+   AND t.status=? AND t.updated_at=? AND t.result_ref IS NULL AND ${workflowTaskEligibleSql(db, 't')}`)
    .run(claimStamp,t.taskId,id,worker,t.type,t.key,r.status,r.updated_at);
   if(applied.changes!==1)return null;
   return {claim:{officialRequestId:id,taskId:t.taskId,projectId:project,payloadSha256:r.payload_sha256,claimStamp},

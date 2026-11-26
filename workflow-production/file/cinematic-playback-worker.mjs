@@ -57,7 +57,7 @@ function candidate(db,t,m,stamp){
  const running=stamp!==undefined;
  const row=db.prepare(`SELECT t.*,r.payload,r.payload_sha256,r.registered_at
   FROM workflow_tasks t JOIN workflow_runs r USING(official_request_id) WHERE ${scope}
-  AND t.task_id=? AND t.official_request_id=? AND ${running?"t.status='running' AND t.updated_at=?":workflowTaskEligibleSql('t')}`)
+  AND t.task_id=? AND t.official_request_id=? AND ${running?"t.status='running' AND t.updated_at=?":workflowTaskEligibleSql(db, 't')}`)
   .get(projectId,t.operation,m.schema,workerType,t.operation,m.key,t.taskId,t.officialRequestId,...(running?[stamp]:[]));
  if(!row)return null;
  const p=JSON.parse(row.payload);
@@ -78,7 +78,7 @@ function claimMutation(db,t,m){
   require(Number.isSafeInteger(claimStamp)&&claimStamp<Number.MAX_SAFE_INTEGER&&Number.isSafeInteger(row.registered_at)&&
    row.registered_at>=0&&row.registered_at<=claimStamp);
   require(db.prepare(`UPDATE workflow_tasks SET status='running',updated_at=?,${workflowTaskRetrySetSql}
-   WHERE task_id=? AND official_request_id=? AND updated_at=? AND result_ref IS NULL AND ${workflowTaskEligibleSql()}`)
+   WHERE task_id=? AND official_request_id=? AND updated_at=? AND result_ref IS NULL AND ${workflowTaskEligibleSql(db)}`)
    .run(claimStamp,t.taskId,t.officialRequestId,row.updated_at).changes===1);
   return {...b,claim:Object.freeze({taskId:t.taskId,officialRequestId:t.officialRequestId,projectId,payloadSha256:row.payload_sha256,claimStamp})};
  });

@@ -32,9 +32,9 @@ function tx(db,fn){
  try{const r=fn();db.exec('COMMIT');return r;}
  catch(e){db.exec('ROLLBACK');throw e;}
 }
-const scope=`r.state='planned' AND r.reason IS NULL AND r.request_type=? AND r.schema_version=? AND r.project_id=?
+const scope=db=>`r.state='planned' AND r.reason IS NULL AND r.request_type=? AND r.schema_version=? AND r.project_id=?
  AND t.worker_type=? AND t.task_type=? AND t.task_key=? AND t.depends_on_task_id IS NULL
- AND ${workflowTaskEligibleSql('t')} AND t.result_ref IS NULL`;
+ AND ${workflowTaskEligibleSql(db, 't')} AND t.result_ref IS NULL`;
 const args=[i2vType,i2vSchema,project,worker,i2vType,i2vKey];
 export function chooseI2V(dbPath){
  assertDatabasePath(dbPath);
@@ -42,7 +42,7 @@ export function chooseI2V(dbPath){
  try{
   protectSchema(db);
   return db.prepare(`SELECT t.task_id AS taskId,r.official_request_id AS officialRequestId
-   FROM workflow_tasks t JOIN workflow_runs r USING(official_request_id) WHERE ${scope}
+   FROM workflow_tasks t JOIN workflow_runs r USING(official_request_id) WHERE ${scope(db)}
    ORDER BY r.registered_at,r.official_request_id LIMIT 1`).get(...args)??null;
  }finally{db.close();}
 }
@@ -52,7 +52,7 @@ export function claimI2V(db,t){
  need(taskId===i2vTaskId(officialRequestId),'I2V_TASK_ID');
  return tx(db,()=>{
   const row=db.prepare(`SELECT t.updated_at,t.status,t.task_input,r.payload,r.payload_sha256
-   FROM workflow_tasks t JOIN workflow_runs r USING(official_request_id) WHERE ${scope}
+   FROM workflow_tasks t JOIN workflow_runs r USING(official_request_id) WHERE ${scope(db)}
    AND t.task_id=? AND t.official_request_id=?`).get(...args,taskId,officialRequestId);
   if(!row)return null;
   const payload=JSON.parse(row.payload),input=JSON.parse(row.task_input);
@@ -63,7 +63,7 @@ export function claimI2V(db,t){
   need(Number.isSafeInteger(claimStamp)&&claimStamp<Number.MAX_SAFE_INTEGER,'I2V_CLAIM_STAMP');
   const updated=db.prepare(`UPDATE workflow_tasks AS t SET status='running',updated_at=?,${workflowTaskRetrySetSql}
    WHERE t.task_id=? AND t.official_request_id=? AND t.worker_type=? AND t.task_type=? AND t.task_key=?
-   AND t.status=? AND t.updated_at=? AND t.result_ref IS NULL AND ${workflowTaskEligibleSql('t')}`)
+   AND t.status=? AND t.updated_at=? AND t.result_ref IS NULL AND ${workflowTaskEligibleSql(db, 't')}`)
    .run(claimStamp,taskId,officialRequestId,worker,i2vType,i2vKey,row.status,row.updated_at);
   return updated.changes===1?{claim:{taskId,officialRequestId,projectId:project,payloadSha256:row.payload_sha256,claimStamp},input,inputWire:row.task_input}:null;
  });

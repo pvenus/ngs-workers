@@ -74,7 +74,7 @@ export async function runBackgroundPixel({dbPath,officialRequestId,taskId,pds,re
    }));
    const row=tasks.find(t=>t.task_id===taskId),claimStamp=Math.max(Date.now(),row.updated_at+1);
    const change=db.prepare(`UPDATE workflow_tasks SET status='running',updated_at=?,${workflowTaskRetrySetSql}
-    WHERE task_id=? AND updated_at=? AND result_ref IS NULL AND ${workflowTaskEligibleSql()}`).run(claimStamp,taskId,row.updated_at);
+    WHERE task_id=? AND updated_at=? AND result_ref IS NULL AND ${workflowTaskEligibleSql(db)}`).run(claimStamp,taskId,row.updated_at);
    if(change.changes!==1)return null;
    claim={officialRequestId,taskId,claimStamp,projectId:'binari',payloadSha256:r.payload_sha256};
    return inp;

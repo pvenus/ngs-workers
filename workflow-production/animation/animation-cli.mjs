@@ -78,7 +78,7 @@ function chooseSelected(dbPath){
    FROM workflow_tasks t JOIN workflow_runs r USING(official_request_id)
    LEFT JOIN workflow_tasks p ON p.task_id=t.depends_on_task_id AND p.official_request_id=t.official_request_id
    WHERE r.state='planned' AND r.reason IS NULL AND r.project_id='binari'
-   AND ${workflowTaskEligibleSql('t')} AND t.result_ref IS NULL AND t.worker_type='animation' AND t.task_type=?
+   AND ${workflowTaskEligibleSql(db, 't')} AND t.result_ref IS NULL AND t.worker_type='animation' AND t.task_type=?
    AND t.task_key GLOB 'animation_motion_*' AND (
     (r.request_type='npc.workflow' AND r.schema_version IN (${selectionSchemas.map(()=>'?')})
       AND p.status='completed' AND p.worker_type=CASE WHEN r.schema_version IN (${poseSelectionSchemas.map(()=>'?')}) THEN 'postprocess' ELSE 'image' END)
@@ -108,7 +108,7 @@ function claim(db,t){
  const s=db.prepare(`SELECT ${fields}
   FROM workflow_tasks t JOIN workflow_runs r USING(official_request_id)
   ${selected?'LEFT ':''}JOIN workflow_tasks p ON p.task_id=t.depends_on_task_id AND p.official_request_id=t.official_request_id
-  WHERE r.state='planned' AND ${workflowTaskEligibleSql('t')} AND t.result_ref IS NULL AND t.worker_type='animation'
+  WHERE r.state='planned' AND ${workflowTaskEligibleSql(db, 't')} AND t.result_ref IS NULL AND t.worker_type='animation'
    AND t.task_type=? AND t.task_id=? AND t.official_request_id=? AND t.task_key=? AND
    ${selected?`((? IS NULL AND r.request_type=? AND r.schema_version IN (${regenerateSchemas.map(()=>'?')}) AND t.depends_on_task_id IS NULL) OR (p.task_key=? AND p.status='completed'))`:
      "(p.task_key=? AND p.status='completed')"}`);
@@ -135,7 +135,7 @@ function claim(db,t){
   const claimed=db.prepare(`UPDATE workflow_tasks AS t
    SET status='running',updated_at=?,${workflowTaskRetrySetSql}
    WHERE t.task_id=? AND t.official_request_id=? AND t.worker_type='animation' AND t.task_type=? AND t.task_key=?
-    AND t.status=? AND t.updated_at=? AND t.result_ref IS NULL AND ${workflowTaskEligibleSql('t')}`)
+    AND t.status=? AND t.updated_at=? AND t.result_ref IS NULL AND ${workflowTaskEligibleSql(db, 't')}`)
    .run(claimStamp,t.taskId,t.officialRequestId,type,t.key,r.status,r.updated_at);
   if(claimed.changes!==1)return null;
   return {dto:{taskId:t.taskId,officialRequestId:t.officialRequestId,projectId:r.project_id,npcId:params.npcId,

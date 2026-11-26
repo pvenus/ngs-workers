@@ -24,7 +24,7 @@ function tx(db,fn){
 function selected(db,taskId,officialRequestId,status,stamp){
  const claiming=status==='eligible';
  const row=db.prepare("SELECT * FROM workflow_runs WHERE official_request_id=? AND state='planned' AND reason IS NULL").get(officialRequestId);
- const task=db.prepare(`SELECT t.* FROM workflow_tasks t WHERE t.task_id=? AND t.official_request_id=? AND t.result_ref IS NULL${claiming?` AND ${workflowTaskEligibleSql('t')}`:''}`).get(taskId,officialRequestId);
+ const task=db.prepare(`SELECT t.* FROM workflow_tasks t WHERE t.task_id=? AND t.official_request_id=? AND t.result_ref IS NULL${claiming?` AND ${workflowTaskEligibleSql(db, 't')}`:''}`).get(taskId,officialRequestId);
  if(!row||!task||task.worker_type!=='postprocess'||!(Object.hasOwn(roles,task.task_key))||
     (!claiming&&(task.status!==status||task.updated_at!==stamp)))return null;
  check(Object.hasOwn(propValidator,row.request_type)&&row.project_id==='binari');
@@ -159,7 +159,7 @@ export function nextPropDerivationFromPath(dbPath,{stillOnly=false,appendEnabled
     JOIN workflow_tasks p ON p.task_id=t.depends_on_task_id AND p.official_request_id=t.official_request_id
     WHERE r.state='planned' AND r.reason IS NULL AND r.project_id='binari'
       AND r.request_type IN (${propTypes.map(()=>'?')})
-      AND ${workflowTaskEligibleSql('t')} AND t.result_ref IS NULL AND t.worker_type='postprocess'
+      AND ${workflowTaskEligibleSql(db, 't')} AND t.result_ref IS NULL AND t.worker_type='postprocess'
       ${stillOnly?`AND (r.request_type=? AND ?=1 OR r.request_type<>? AND CASE WHEN json_valid(r.payload) THEN coalesce(json_extract(r.payload,'$.motion'),'still')='still' ELSE 0 END)`:''}
       AND t.task_key IN (${Object.keys(roles).map(()=>'?')}) AND p.status='completed'
       AND (r.request_type=? OR t.task_key NOT IN (?,?) OR EXISTS (
@@ -189,7 +189,7 @@ export async function runPropDerivationFromPath({dbPath,officialRequestId,taskId
    const stamp=Math.max(Date.now(),x.task.updated_at+1);
    check(Number.isSafeInteger(stamp));
    check(db.prepare(`UPDATE workflow_tasks SET status='running',updated_at=?,${workflowTaskRetrySetSql}
-      WHERE task_id=? AND official_request_id=? AND ${workflowTaskEligibleSql()} AND result_ref IS NULL AND updated_at=?`)
+      WHERE task_id=? AND official_request_id=? AND ${workflowTaskEligibleSql(db)} AND result_ref IS NULL AND updated_at=?`)
     .run(stamp,taskId,officialRequestId,x.task.updated_at).changes===1);
    const ref=r=>Object.freeze({taskId:r.task_id,resultRef:r.result_ref});
    return {x,binding:Object.freeze({claim:Object.freeze({officialRequestId,taskId,projectId:x.row.project_id,

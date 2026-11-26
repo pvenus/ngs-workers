@@ -36,7 +36,7 @@ export function choosePresetPostprocess(dbPath){
   protectSchema(db);
   return db.prepare(`SELECT t.task_id AS taskId,t.official_request_id AS officialRequestId,t.task_key AS key,t.task_type AS type
    FROM workflow_tasks t JOIN workflow_runs r USING(official_request_id)
-   WHERE ${runWhere} AND t.worker_type=? AND ${workflowTaskEligibleSql('t')} AND t.result_ref IS NULL
+   WHERE ${runWhere} AND t.worker_type=? AND ${workflowTaskEligibleSql(db, 't')} AND t.result_ref IS NULL
     AND ((t.task_type=? AND t.task_key=? AND t.depends_on_task_id IS NULL AND
       (SELECT COUNT(*) FROM workflow_tasks p WHERE p.official_request_id=t.official_request_id
        AND p.task_type=? AND p.worker_type=? AND p.status='completed' AND p.result_ref IS NOT NULL
@@ -86,7 +86,7 @@ function claimTask(db,t){
   const row=db.prepare(`SELECT t.updated_at,t.status,t.task_input,t.depends_on_task_id,r.payload,r.payload_sha256,r.registered_at
    FROM workflow_tasks t JOIN workflow_runs r USING(official_request_id)
    WHERE ${runWhere} AND t.worker_type=? AND t.task_type=? AND t.task_key=? AND t.task_id=? AND t.official_request_id=?
-   AND ${workflowTaskEligibleSql('t')} AND t.result_ref IS NULL`)
+   AND ${workflowTaskEligibleSql(db, 't')} AND t.result_ref IS NULL`)
    .get(requestType,requestSchema,project,worker,type,key,taskId,id);
   if(!row)return null;
   const p=JSON.parse(row.payload);
@@ -100,7 +100,7 @@ function claimTask(db,t){
   need(Number.isSafeInteger(row.updated_at)&&row.updated_at>=0&&Number.isSafeInteger(stamp)&&stamp<Number.MAX_SAFE_INTEGER,'CLAIM_STAMP');
   const changed=db.prepare(`UPDATE workflow_tasks AS t SET status='running',updated_at=?,${workflowTaskRetrySetSql}
    WHERE t.task_id=? AND t.official_request_id=? AND t.status=? AND t.updated_at=? AND t.result_ref IS NULL
-   AND ${workflowTaskEligibleSql('t')}`).run(stamp,taskId,id,row.status,row.updated_at).changes;
+   AND ${workflowTaskEligibleSql(db, 't')}`).run(stamp,taskId,id,row.status,row.updated_at).changes;
   need(changed===1,'CLAIM_CHANGED');
   return {claim:{officialRequestId:id,taskId,projectId:project,payloadSha256:row.payload_sha256,claimStamp:stamp},
    row,p,d,final,proof};

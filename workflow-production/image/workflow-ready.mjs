@@ -25,13 +25,28 @@ function hasRetryPolicy(db){
  if(!retryPolicy.has(db))retryPolicy.set(db,db.prepare('PRAGMA table_info(workflow_tasks)').all().some(c=>c.name==='retry_limit'));
  return retryPolicy.get(db);
 }
+// Installations can roll out workers before the additive ledger migration.
+// A prerequisite only qualifies when its task belongs to this run and has completed.
+const dependencySchema=new WeakMap();
+export function workflowDependenciesCompletedSql(db,alias='workflow_tasks'){
+ if(!/^[a-z][a-z0-9_]*$/.test(alias))throw Error('WORKFLOW_DEPENDENCY_SQL_ALIAS');
+ if(!dependencySchema.has(db)){
+  const columns=new Set(db.prepare('PRAGMA table_info(workflow_tasks)').all().map(c=>c.name));
+  dependencySchema.set(db,['depends_on_task_id',...[2,3,4,5].map(i=>'depends_on_task_id_'+i)].filter(c=>columns.has(c)));
+ }
+ return dependencySchema.get(db).map(column=>
+  `(${alias}.${column} IS NULL OR EXISTS (SELECT 1 FROM workflow_tasks dependency_task
+   WHERE dependency_task.task_id=${alias}.${column} AND dependency_task.official_request_id=${alias}.official_request_id
+    AND dependency_task.status='completed'))`).join(' AND ')||'1';
+}
+
 /** Use the stored cap and SQLite's clock; never reopen legacy exhausted rows. */
 export function workflowTaskEligibleSql(db,alias=''){
  if(alias!==''&&!/^[a-z][a-z0-9_]*$/.test(alias))throw Error('WORKFLOW_RETRY_SQL_ALIAS');
  const p=alias?alias+'.':'';
  const pinned=hasRetryPolicy(db),cap=pinned?p+'retry_limit':workflowTaskMaxRetries;
  const wait=pinned?`(CASE ${p}retry_limit WHEN 30 THEN 60000 ELSE ${workflowTaskRetryDelayMs} END)`:workflowTaskRetryDelayMs;
- return `(${p}status='pending' OR (${p}status='failed' AND ${p}retry_count<${cap} AND ${p}updated_at<=CAST(unixepoch('subsec')*1000 AS INTEGER)-${wait}))`;
+ return `(${p}status='pending' OR (${p}status='failed' AND ${p}retry_count<${cap} AND ${p}updated_at<=CAST(unixepoch('subsec')*1000 AS INTEGER)-${wait})) AND ${workflowDependenciesCompletedSql(db,alias||'workflow_tasks')}`;
 }
 
 // SQLite SET expressions read the old state, and this assignment runs inside the exact claim UPDATE.

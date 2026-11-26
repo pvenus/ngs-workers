@@ -19,7 +19,7 @@ function tx(db,fn){
 function get(db,officialRequestId,taskId,{stamp,appendEnabled=false}={}){
  const root=db.prepare(`SELECT r.* FROM workflow_runs r WHERE r.official_request_id=?
    AND r.state='planned' AND r.reason IS NULL AND r.project_id='binari' AND ${modeSql(appendEnabled)}`).get(officialRequestId,...types);
- const predicate=stamp===undefined?workflowTaskEligibleSql('t'):"t.status='running' AND t.updated_at=?";
+ const predicate=stamp===undefined?workflowTaskEligibleSql(db, 't'):"t.status='running' AND t.updated_at=?";
  const pick=db.prepare(`SELECT t.* FROM workflow_tasks t WHERE t.official_request_id=? AND t.task_id=?
   AND t.result_ref IS NULL AND ${predicate}`).get(officialRequestId,taskId,...(stamp===undefined?[]:[stamp]));
  if(!root||!pick)return null;
@@ -44,7 +44,7 @@ export function nextPropPackageFromPath(dbPath,{appendEnabled=false}={}){
   const row=db.prepare(`SELECT t.task_id AS taskId,t.official_request_id AS officialRequestId
     FROM workflow_tasks t JOIN workflow_runs r USING(official_request_id)
     WHERE r.state='planned' AND r.reason IS NULL AND r.project_id='binari' AND ${modeSql(appendEnabled)}
-      AND ${workflowTaskEligibleSql('t')} AND t.result_ref IS NULL AND t.worker_type='postprocess' AND t.task_key=?
+      AND ${workflowTaskEligibleSql(db, 't')} AND t.result_ref IS NULL AND t.worker_type='postprocess' AND t.task_key=?
       AND CASE WHEN r.request_type='${propAnimationType}' THEN
         (SELECT count(*) FROM workflow_tasks w WHERE w.official_request_id=t.official_request_id
          AND w.task_key IN (?,?,?) AND w.status='completed' AND w.result_ref IS NOT NULL)=3 ELSE
@@ -67,7 +67,7 @@ export async function runPropPackageFromPath({dbPath,officialRequestId,taskId,pd
    const stamp=Math.max(Date.now(),found.pick.updated_at+1);
    check(Number.isSafeInteger(stamp)&&stamp<Number.MAX_SAFE_INTEGER);
    check(db.prepare(`UPDATE workflow_tasks SET status='running',updated_at=?,${workflowTaskRetrySetSql}
-     WHERE task_id=? AND official_request_id=? AND updated_at=? AND result_ref IS NULL AND ${workflowTaskEligibleSql()}`)
+     WHERE task_id=? AND official_request_id=? AND updated_at=? AND result_ref IS NULL AND ${workflowTaskEligibleSql(db)}`)
     .run(stamp,taskId,officialRequestId,found.pick.updated_at).changes===1);
    return {found,claim:{officialRequestId,taskId,projectId:found.root.project_id,payloadSha256:found.root.payload_sha256,claimStamp:stamp}};
   });

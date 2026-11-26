@@ -18,11 +18,26 @@ export function assertDatabasePath(dbPath){
 export const workflowTaskRetryDelayMs=600_000;
 export const workflowTaskMaxRetries=3;
 
+// Installations can roll out workers before the additive ledger migration.
+// A prerequisite only qualifies when its task belongs to this run and has completed.
+const dependencySchema=new WeakMap();
+export function workflowDependenciesCompletedSql(db,alias='workflow_tasks'){
+ if(!/^[a-z][a-z0-9_]*$/.test(alias))throw Error('WORKFLOW_DEPENDENCY_SQL_ALIAS');
+ if(!dependencySchema.has(db)){
+  const columns=new Set(db.prepare('PRAGMA table_info(workflow_tasks)').all().map(c=>c.name));
+  dependencySchema.set(db,['depends_on_task_id',...[2,3,4,5].map(i=>'depends_on_task_id_'+i)].filter(c=>columns.has(c)));
+ }
+ return dependencySchema.get(db).map(column=>
+  `(${alias}.${column} IS NULL OR EXISTS (SELECT 1 FROM workflow_tasks dependency_task
+   WHERE dependency_task.task_id=${alias}.${column} AND dependency_task.official_request_id=${alias}.official_request_id
+    AND dependency_task.status='completed'))`).join(' AND ')||'1';
+}
+
 /** A failed attempt is eligible only at or after its 10-minute database-clock boundary. */
-export function workflowTaskEligibleSql(alias=''){
+export function workflowTaskEligibleSql(db,alias=''){
  if(alias!==''&&!/^[a-z][a-z0-9_]*$/.test(alias))throw Error('WORKFLOW_RETRY_SQL_ALIAS');
  const p=alias?alias+'.':'';
- return `(${p}status='pending' OR (${p}status='failed' AND ${p}retry_count<${workflowTaskMaxRetries} AND ${p}updated_at<=CAST(unixepoch('subsec')*1000 AS INTEGER)-${workflowTaskRetryDelayMs}))`;
+ return `(${p}status='pending' OR (${p}status='failed' AND ${p}retry_count<${workflowTaskMaxRetries} AND ${p}updated_at<=CAST(unixepoch('subsec')*1000 AS INTEGER)-${workflowTaskRetryDelayMs})) AND ${workflowDependenciesCompletedSql(db,alias||'workflow_tasks')}`;
 }
 
 // SQLite SET expressions read the old state, and this assignment runs inside the exact claim UPDATE.
@@ -56,7 +71,7 @@ export function nextWorkflowTaskFromPath(dbPath,{workerType,taskType,taskKey,pre
     )`:'';
   return db.prepare(`SELECT t.task_id AS taskId, t.official_request_id AS officialRequestId
    FROM workflow_tasks t JOIN workflow_runs r USING(official_request_id)
-   WHERE r.state='planned' AND ${workflowTaskEligibleSql('t')} AND t.result_ref IS NULL
+   WHERE r.state='planned' AND ${workflowTaskEligibleSql(db,'t')} AND t.result_ref IS NULL
     AND t.worker_type=? AND t.task_type=? AND t.task_key=?
     AND (? IS NULL OR json_extract(CASE WHEN json_valid(t.task_input) THEN t.task_input ELSE '{}' END,'$.target.root')=?)
     AND ((? IS NULL AND t.depends_on_task_id IS NULL) OR
