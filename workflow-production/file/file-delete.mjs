@@ -43,7 +43,7 @@ export function deleteCommandFromPlannedTask(task){
  else if(task.type===fileDeleteType&&task.key===fileDeleteTaskKey&&exact(task.input,['target','expected'])){
   const physical=task.input.target;
   validateFileDelete({schemaVersion:fileDeleteSchema,projectId:'binari',target:physical,expected:task.input.expected},'binari');
-  target={kind:'prop-directory',id:physical.path};
+  target={kind:physical.root===npcDeleteRoot?'npc-directory':'prop-directory',id:physical.path};
  }
  else if(task.type===audioDelete&&task.key===audioDeleteKey&&exact(task.input,['officialRequestId','target'])&&
          typeof task.input.officialRequestId==='string'&&audioResultId.test(task.input.officialRequestId)&&

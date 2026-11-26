@@ -29,9 +29,9 @@ export function workflowTaskEligibleSql(alias=''){
 export const workflowTaskRetrySetSql="retry_count=retry_count+CASE WHEN status='failed' THEN 1 ELSE 0 END";
 
 /** Candidate discovery is read only; the exact claim transaction is authoritative. */
-export function nextWorkflowTaskFromPath(dbPath,{workerType,taskType,taskKey,predecessorKey}){
+export function nextWorkflowTaskFromPath(dbPath,{workerType,taskType,taskKey,predecessorKey,targetRoot=null}){
  const name=value=>typeof value==='string'&&/^[a-z][a-z0-9._-]*$/.test(value);
- if(!name(workerType)||!name(taskType)||!name(taskKey)||(predecessorKey!==null&&!name(predecessorKey)))
+ if(targetRoot!==null&&(!['canonical-files/binari/props','canonical-files/binari/npcs'].includes(targetRoot)||taskType!=='file.delete')||!name(workerType)||!name(taskType)||!name(taskKey)||(predecessorKey!==null&&!name(predecessorKey)))
   throw Error('WORKFLOW_POLL_SCOPE_REQUIRED');
  assertDatabasePath(dbPath);
  const db=new DatabaseSync(dbPath,{readOnly:true});
@@ -41,10 +41,11 @@ export function nextWorkflowTaskFromPath(dbPath,{workerType,taskType,taskKey,pre
    FROM workflow_tasks t JOIN workflow_runs r USING(official_request_id)
    WHERE r.state='planned' AND ${workflowTaskEligibleSql('t')} AND t.result_ref IS NULL
     AND t.worker_type=? AND t.task_type=? AND t.task_key=?
+    AND (? IS NULL OR json_extract(CASE WHEN json_valid(t.task_input) THEN t.task_input ELSE '{}' END,'$.target.root')=?)
     AND ((? IS NULL AND t.depends_on_task_id IS NULL) OR
      EXISTS (SELECT 1 FROM workflow_tasks p WHERE p.task_id=t.depends_on_task_id
       AND p.official_request_id=t.official_request_id AND p.task_key=? AND p.status='completed'))
-   ORDER BY r.registered_at,t.official_request_id,t.task_id LIMIT 1`).get(workerType,taskType,taskKey,predecessorKey,predecessorKey)??null;
+   ORDER BY r.registered_at,t.official_request_id,t.task_id LIMIT 1`).get(workerType,taskType,taskKey,targetRoot,targetRoot,predecessorKey,predecessorKey)??null;
  }finally{db.close();}
 }
 
@@ -57,4 +58,18 @@ export function markWorkflowTaskFailed(db,{taskId,officialRequestId,claimStamp,w
   WHERE task_id=? AND official_request_id=? AND worker_type=? AND status='running'
    AND updated_at=? AND result_ref IS NULL`)
   .run(Math.max(Date.now(),claimStamp+1),taskId,officialRequestId,workerType,claimStamp).changes===1;
+}
+
+/** Non-authoritative preflight; execution revalidates the body and claim. */
+export function fileDeleteTargetRootFromPath(dbPath,officialRequestId,taskId){
+ assertDatabasePath(dbPath);
+ const db=new DatabaseSync(dbPath,{readOnly:true});
+ try{
+  protectSchema(db);
+  const row=db.prepare("SELECT task_input FROM workflow_tasks WHERE task_id=? AND official_request_id=? AND task_type='file.delete' AND task_key='file_delete' AND worker_type='file'")
+   .get(taskId,officialRequestId);
+  if(!row)return null;
+  const root=JSON.parse(row.task_input)?.target?.root;
+  return ['canonical-files/binari/props','canonical-files/binari/npcs'].includes(root)?root:null;
+ }finally{db.close();}
 }

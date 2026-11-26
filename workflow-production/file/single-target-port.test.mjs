@@ -193,3 +193,32 @@ test('pinned standalone prop deletes one directory; stale conflict is a definite
  assert.equal(task().status,stale?'failed':'completed');
  assert.deepEqual(wire,[['GET',storageDeletePath],['POST',storageDeletePath]]);
 });
+
+test('NPC standalone claim waits for its own capability without probing props or legacy delete',async t=>{
+ const f=audioSetup(t),target={root:npcDeleteRoot,path:'npc.lantern',kind:'directory'};
+ const expected={creationTaskId:'workflow.task.'+'d'.repeat(64)},schemaVersion='ngs.file-delete.v1',type='file.delete',key='file_delete';
+ const payload=canonical({target,expected,projectId:'binari',schemaVersion}),payloadSha256=sha(payload);
+ const taskId='workflow.task.'+sha(canonical([f.officialRequestId,key]));
+ f.db.prepare("DELETE FROM workflow_tasks").run();
+ f.db.prepare("UPDATE workflow_runs SET request_type=?,schema_version=?,payload=?,payload_sha256=? WHERE official_request_id=?")
+  .run(type,schemaVersion,payload,payloadSha256,f.officialRequestId);
+ f.db.prepare("INSERT INTO workflow_tasks (task_id,official_request_id,task_key,task_type,worker_type,task_input,updated_at,status) VALUES (?,?,?,?, 'file',?,2,'pending')")
+  .run(taskId,f.officialRequestId,key,type,canonical({target,expected}));
+ const task=()=>f.db.prepare('SELECT * FROM workflow_tasks WHERE task_id=?').get(taskId);
+ let enabled=false,posts=0;
+ const pds=localPorts({singleTarget:true,transport:async({method,path,body})=>{
+  if(method==='GET'){
+   assert.equal(path,storageDeletePath+'/npc-standalone');
+   return {enabled,schemaVersion:singleTargetDeleteSchema,roots:enabled?[npcDeleteRoot]:[]};
+  }
+  assert.equal(path,storageDeletePath);
+  assert.deepEqual(body,{target,claim:{officialRequestId:f.officialRequestId,projectId:'binari',payloadSha256,claimStamp:task().updated_at,taskId}});
+  posts++;
+  return {ok:true,operationId:taskId,targetAbsent:true,recoveryId:'a'.repeat(64)};
+ }});
+ assert.equal((await pollOnce({...f,pds})).state,'unavailable');
+ assert.equal(task().status,'pending');assert.equal(posts,0);
+ enabled=true;
+ assert.equal((await pollOnce({...f,pds})).state,'completed');
+ assert.equal(task().status,'completed');assert.equal(posts,1);
+});

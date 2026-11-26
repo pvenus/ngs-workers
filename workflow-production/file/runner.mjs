@@ -1,5 +1,5 @@
-import {fileDeleteTaskKey,fileDeleteType} from './file-delete-envelope.mjs';
-import {nextWorkflowTaskFromPath} from './workflow-ready.mjs';
+import {fileDeleteTaskKey,fileDeleteType,propDeleteRoot,npcDeleteRoot} from './file-delete-envelope.mjs';
+import {nextWorkflowTaskFromPath,fileDeleteTargetRootFromPath} from './workflow-ready.mjs';
 import {conceptDelete,probeDeleteDatabase,runDeleteFromPath} from './worker.mjs';
 import {npcDelete,audioDelete,audioDeleteKey,singleTargetDeleteSchema} from './file-delete.mjs';
 import {playbackType,manifestMutationScopes,runPlaybackFromPath} from './cinematic-playback-worker.mjs';
@@ -38,7 +38,12 @@ export async function executeOnce({dbPath,officialRequestId,taskId,pds,operation
   if(!await mutationReady(pds,operation))return {state:'not_claimable',code:'FILE_WORKER_PDS_UNAVAILABLE'};
   return await runPlayback({dbPath,officialRequestId,taskId,pds,operation});
  }
- if(!await pds.capability(undefined,pds.deleteContract===singleTargetDeleteSchema?(operation??npcDelete):operation))return {state:'not_claimable',code:'FILE_WORKER_PDS_UNAVAILABLE'};
+ let targetRoot;
+ if(operation===fileDeleteType){
+  try{targetRoot=fileDeleteTargetRootFromPath(dbPath,officialRequestId,taskId);}catch{return {state:'not_claimable',code:'FILE_WORKER_DATABASE_UNAVAILABLE'};}
+  if(targetRoot===null)return {state:'not_claimable',code:'FILE_WORKER_EXACT_CLAIM_REJECTED'};
+ }
+ if(!await pds.capability(undefined,pds.deleteContract===singleTargetDeleteSchema?(operation??npcDelete):operation,targetRoot))return {state:'not_claimable',code:'FILE_WORKER_PDS_UNAVAILABLE'};
  return await run({dbPath,officialRequestId,taskId,pds,...(operation?{operation}:{})});
 }
 
@@ -46,7 +51,7 @@ const scopes=Object.freeze([
  {workerType:'file',taskType:'npc.delete-folder',taskKey:'delete',predecessorKey:null},
  {workerType:'file',taskType:conceptDelete,taskKey:'category_delete',predecessorKey:null},
  {workerType:'file',taskType:audioDelete,taskKey:audioDeleteKey,predecessorKey:null},
- {workerType:'file',taskType:fileDeleteType,taskKey:fileDeleteTaskKey,predecessorKey:null},
+ ...[propDeleteRoot,npcDeleteRoot].map(targetRoot=>({workerType:'file',taskType:fileDeleteType,taskKey:fileDeleteTaskKey,predecessorKey:null,targetRoot})),
  ...manifestMutationScopes,
 ]);
 
@@ -66,7 +71,7 @@ export async function pollOnce({dbPath,pds,signal,select=nextWorkflowTaskFromPat
   }
   if([audioDelete,fileDeleteType].includes(scope.taskType)&&pds.deleteContract!==singleTargetDeleteSchema)continue;
   const operation=scope.taskType===npcDelete?undefined:scope.taskType;
-  if(!await pds.capability(signal,pds.deleteContract===singleTargetDeleteSchema?scope.taskType:operation))continue;
+  if(!await pds.capability(signal,pds.deleteContract===singleTargetDeleteSchema?scope.taskType:operation,scope.targetRoot))continue;
   if(signal?.aborted)return {state:'stopping'};
   try{return await run({dbPath,...target,pds,...(operation?{operation}:{})});}
   catch{return {state:'blocked',code:'FILE_WORKER_EXACT_CLAIM_REJECTED'};}

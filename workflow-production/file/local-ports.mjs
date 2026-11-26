@@ -55,15 +55,16 @@ export function requestLocalJson({port,path,method,body,deadline,signal}){
 export function localPorts({transport=requestLocalJson,singleTarget=false}={}){
  return {
   ...(singleTarget?{deleteContract:singleTargetDeleteSchema}:{}),
-  async capability(signal,operation){
+  async capability(signal,operation,targetRoot){
    if(singleTarget){
     if(operation!==undefined&&operation!==fileDeleteType&&!roots.has(operation))return false;
     try{
-     const data=await transport({port:8030,path:storageDeletePath,method:'GET',deadline:5000,signal});
+     const path=operation===fileDeleteType&&targetRoot===npcDeleteRoot?storageDeletePath+'/npc-standalone':storageDeletePath;
+     const data=await transport({port:8030,path,method:'GET',deadline:5000,signal});
      if(!exact(data,['enabled','schemaVersion','roots'])||data.enabled!==true||data.schemaVersion!==singleTargetDeleteSchema||
         !Array.isArray(data.roots)||!data.roots.length||
         !data.roots.every((root,i)=>[conceptDeleteRoot,npcDeleteRoot,audioDeleteRoot,propDeleteRoot].includes(root)&&(i===0||data.roots[i-1]<root)))return false;
-     return operation===undefined||operation===fileDeleteType&&data.roots.includes(propDeleteRoot)||data.roots.includes(roots.get(operation));
+     return operation===undefined||operation===fileDeleteType&&data.roots.includes(targetRoot??propDeleteRoot)||data.roots.includes(roots.get(operation));
     }catch{return false;}
    }
    operation??='npc.delete-folder';
