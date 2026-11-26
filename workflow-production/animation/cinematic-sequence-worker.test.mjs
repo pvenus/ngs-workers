@@ -159,7 +159,7 @@ test('v2 capability and wire paths cannot invoke the legacy or prop endpoints',a
  assert.ok(calls[1][1].maxJsonBytes>4096);
 });
 
-for(const scenario of ['success','missing_upscaler','bad_upscale','confirmed_failure','unknown_failure'])
+for(const scenario of ['success','missing_upscaler','bad_upscale','confirmed_failure','unknown_failure','pixel_failure','bad_pixel_geometry','missing_pixel_correction'])
 test('background-only postprocess: '+scenario,async t=>{
  const {db,path,root}=fixture(t);
  const assets={cinematic:source,pixel:still(140)};
@@ -178,9 +178,13 @@ test('background-only postprocess: '+scenario,async t=>{
    canonical({...wireInput,backgroundSha256,variant}));
   byTask.set(id,{variant,wireInput,id:'request.official.'+sha(canonical([officialRequestId,key]))});
  }
- const rendered=[],published=[],staged=[],upscaled=[];
+ const rendered=[],published=[],staged=[],upscaled=[],corrected=[];
+ const pickedPixel=[...byTask].find(([,v])=>v.variant==='pixel')[0];
+ const forcePixel=['pixel_failure','bad_pixel_geometry','missing_pixel_correction'].includes(scenario);
+ const upscaleFrames=raw.frames.map((_,i)=>still(i,{w:256,h:256}));
+ const correctedFrames=raw.frames.map((_,i)=>still(i+45,{w:256,h:256}));
  for(let i=0;i<2;i++){
-  const pick=chooseCinematicSequence(path),job=byTask.get(pick.taskId);
+  const pick=forcePixel?{taskId:pickedPixel,officialRequestId}:chooseCinematicSequence(path),job=byTask.get(pick.taskId);
   assert.ok(job);
   const out=await executeCinematicSequence(db,pick,new AbortController().signal,{
    ports:{
@@ -192,18 +196,26 @@ test('background-only postprocess: '+scenario,async t=>{
    runI2V:async r=>{assert.equal(r.motionPrompt,input.motionPrompt);rendered.push(sha(r.source));return raw;},
    ...(scenario==='missing_upscaler'?{}:{runUpscale:async ({output})=>{
     assert.equal(output,raw);upscaled.push(job.variant);
-    if(scenario.endsWith('_failure'))throw Object.assign(Error('BACKGROUND_SEEDVR2_RENDER_FAILED'),{rendererJoined:scenario==='confirmed_failure'});
+    if(['confirmed_failure','unknown_failure'].includes(scenario))throw Object.assign(Error('BACKGROUND_SEEDVR2_RENDER_FAILED'),{rendererJoined:scenario==='confirmed_failure'});
     if(scenario==='bad_upscale')return raw;
-    return {width:256,height:256,fps:24,frames:raw.frames.map((_,i)=>still(i,{w:256,h:256}))};
+    return {width:256,height:256,fps:24,frames:upscaleFrames};
+   }}),
+   ...(scenario==='missing_pixel_correction'?{}:{runPixelCorrection:async ({reference,output})=>{
+    assert.equal(job.variant,'pixel');assert.equal(reference,assets.pixel);assert.equal(output.frames,upscaleFrames);
+    assert.ok(upscaled.includes('pixel'));corrected.push(job.variant);
+    if(scenario==='pixel_failure')throw Error('BACKGROUND_ANIMATION_PIXEL_FAILED');
+    if(scenario==='bad_pixel_geometry')return raw;
+    return {...output,frames:correctedFrames};
    }}),
    makeDir:async()=>root,cleanup:async()=>{},
   });
   if(scenario!=='success'){
    assert.equal(out.state,scenario==='unknown_failure'?'requires_reconciliation':'failed');
    assert.equal(staged.length,0);assert.equal(published.length,0);
-   if(scenario==='missing_upscaler')assert.equal(rendered.length,0);
-   else assert.equal(rendered.length,1);
-   assert.equal(upscaled.length,scenario==='missing_upscaler'?0:1);
+   const noRender=['missing_upscaler','missing_pixel_correction'].includes(scenario);
+   assert.equal(rendered.length,noRender?0:1);
+   assert.equal(upscaled.length,noRender?0:1);
+   assert.equal(corrected.length,['pixel_failure','bad_pixel_geometry'].includes(scenario)?1:0);
    return;
   }
   assert.equal(out.state,'completed');
@@ -211,12 +223,15 @@ test('background-only postprocess: '+scenario,async t=>{
  assert.deepEqual(new Set(rendered),new Set(Object.values(references)));
  assert.equal(new Set(published.map(m=>m.officialRequestId)).size,2);
  assert.deepEqual(new Set(upscaled),new Set(['cinematic','pixel']));
- assert.equal(staged.length,90);
+ assert.equal(staged.length,90);assert.deepEqual(corrected,['pixel']);
  assert.ok(staged.every(f=>f.sha256!==sha(raw.frames[f.index])));
  for(const m of published){
   assert.equal(m.group.requestId,officialRequestId);assert.equal(m.group.backgroundSha256,backgroundSha256);
   assert.equal(m.sourceSha256,references[m.group.variant]);assert.deepEqual(m.playback,playback);
-  assert.deepEqual(m.upscale,{model:'seedvr2-7b-fp16',scale:2,sourceWidth:128,sourceHeight:128});
+  const pixel=m.group.variant==='pixel',frames=pixel?correctedFrames:upscaleFrames;
+  assert.deepEqual(m.frames.map(f=>f.sha256),frames.map(sha));
+  assert.deepEqual(m.upscale,{model:'seedvr2-7b-fp16',scale:2,sourceWidth:128,sourceHeight:128,
+   ...(pixel?{pixelCorrection:{method:'reference-palette-v1',upscaledFramesSha256:sha(canonical(upscaleFrames.map(sha)))}}:{})});
   assert.equal(m.width,256);assert.equal(m.height,256);
  }
  assert.equal(chooseCinematicSequence(path),null);

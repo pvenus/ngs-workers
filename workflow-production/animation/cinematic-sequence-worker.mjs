@@ -7,6 +7,7 @@ import {canonical,sha} from './vendor/planner-f24d23a/envelope.mjs';
 import {assertDatabasePath,protectSchema,workflowTaskEligibleSql,workflowTaskRetrySetSql,markWorkflowTaskFailed} from './workflow-ready.mjs';
 import {png,maxImageBytes,maxFrameBytes,maxBundleBytes} from './i2v-worker.mjs';
 import {backgroundUpscaleModel,backgroundUpscaleScale,backgroundUpscaleMaxBytes} from './background-seedvr2.mjs';
+import {backgroundAnimationPixelMethod} from './background-animation-pixel.mjs';
 import {validCutscenePrompt} from './cutscene-i2v.mjs';
 import {WAN_I2V_FPS,WAN_I2V_LENGTH} from './i2v-wan-graph.mjs';
 
@@ -145,7 +146,7 @@ function nativeManifest(output,id,input,upscale){
 }
 
 /** The resident owns both models. Only a verified final passes to publication. */
-export async function executeCinematicSequence(db,t,signal,{ports,runI2V,runUpscale,probeUpscale,
+export async function executeCinematicSequence(db,t,signal,{ports,runI2V,runUpscale,probeUpscale,runPixelCorrection,
  makeDir=()=>mkdtemp(join(tmpdir(),'workflow-cinematic-sequence-')),cleanup=dir=>rm(dir,{recursive:true,force:true})}){
  if(signal.aborted)return {state:'stale',taskId:t.taskId};
  const found=claimSequence(db,t);
@@ -167,6 +168,7 @@ export async function executeCinematicSequence(db,t,signal,{ports,runI2V,runUpsc
    stage='upscale_preflight';
    require(typeof runUpscale==='function','BACKGROUND_SEEDVR2_UNAVAILABLE');
    if(probeUpscale)await probeUpscale();
+   if(group.variant==='pixel')require(typeof runPixelCorrection==='function','BACKGROUND_ANIMATION_PIXEL_UNAVAILABLE');
   }
   stage='prepare';dir=await makeDir();
   signal.throwIfAborted();tx(db,current);
@@ -186,6 +188,16 @@ export async function executeCinematicSequence(db,t,signal,{ports,runI2V,runUpsc
    require(output?.width===upscale.sourceWidth*upscale.scale&&output?.height===upscale.sourceHeight*upscale.scale,
     'BACKGROUND_SEEDVR2_OUTPUT_SHAPE');
    manifest=nativeManifest(output,resultId,input,upscale);
+   if(group.variant==='pixel'){
+    stage='pixel_correction';
+    signal.throwIfAborted();tx(db,current);
+    const upscaledFramesSha256=sha(canonical(manifest.frames.map(frame=>frame.sha256)));
+    output=await runPixelCorrection({dir,reference:source,output,signal});
+    stage='validate_pixel_correction';
+    signal.throwIfAborted();tx(db,current);
+    require(output?.width===manifest.width&&output?.height===manifest.height,'BACKGROUND_ANIMATION_PIXEL_FRAME_SHAPE');
+    manifest=nativeManifest(output,resultId,input,{...upscale,pixelCorrection:{method:backgroundAnimationPixelMethod,upscaledFramesSha256}});
+   }
    manifest.group=group;
   }
   const uploadSignal=AbortSignal.any([signal,AbortSignal.timeout(group?300_000:120_000)]);

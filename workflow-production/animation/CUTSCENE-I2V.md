@@ -110,3 +110,5 @@ or the host may set an absolute, privately provisioned
 digests are pinned; MPS is required. Scratch frames disappear with the
 temporary job directory after a confirmed model exit. This postprocess is
 not applied to regular cinematic sequences, NPCs, or props.
+
+Pixel background variant: validate Wan → validate SeedVR2 2× → correct all frames to the pinned still's shared palette without resizing → validate and publish. A correction error stages no frames. Cinematic backgrounds publish the verified SeedVR2 output without palette correction.
