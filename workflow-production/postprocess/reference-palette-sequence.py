@@ -12,7 +12,9 @@ def open_rgb(p):
         return image.copy()
 
 
-def correct(root, width, height):
+def correct(root, width, height, count=45, downscale=1):
+    if count not in (8, 45) or downscale not in (1, 2):
+        raise ValueError('SEQUENCE_PIXEL_PROFILE')
     if not all(256 <= n <= 1024 and n % 64 == 0 for n in (width, height)):
         raise ValueError('BACKGROUND_ANIMATION_PIXEL_GEOMETRY')
     reference = open_rgb(root / 'reference.png')
@@ -26,13 +28,15 @@ def correct(root, width, height):
     # ramps per frame, dither, change coordinates, or shrink the canvas.
     palette = Image.new('P', (1, 1))
     palette.putpalette([channel for color in colors + [colors[0]] * (256-len(colors)) for channel in color])
-    for i in range(45):
+    for i in range(count):
         name = f'{i:04}.png'
         image = open_rgb(root / 'input' / name)
         if image.size != (width, height):
             raise ValueError('BACKGROUND_ANIMATION_PIXEL_FRAME_GEOMETRY')
+        if downscale==2:
+            image=image.resize((width//2,height//2), Image.Resampling.NEAREST)
         image.quantize(palette=palette, dither=Image.Dither.NONE).convert('RGB').save(root / 'output' / name, format='PNG')
 
 
 if __name__ == '__main__':
-    correct(Path(sys.argv[1]), int(sys.argv[2]), int(sys.argv[3]))
+    correct(Path(sys.argv[1]), int(sys.argv[2]), int(sys.argv[3]), *(int(x) for x in sys.argv[4:]))

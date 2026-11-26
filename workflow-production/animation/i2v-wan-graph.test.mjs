@@ -33,12 +33,12 @@ test('A14B-only graph uses exact high/low expert pair and the official non-turbo
  assert.equal((WAN_I2V_LENGTH-1)%4,0);assert.equal(WAN_I2V_FPS,24);
 });
 test('invalid batch/prompt inputs cannot escape the pinned graph',()=>{
- for(const bad of [{width:127},{height:513},{height:249},{width:'320'},{seed:-1},{seed:2**54},{motionPrompt:' \n '},
+ for(const bad of [{length:500},{length:16},{width:127},{height:513},{height:249},{width:'320'},{seed:-1},{seed:2**54},{motionPrompt:' \n '},
   {motionPrompt:'embedding:relative'},{motionPrompt:'(EMBEDDING:path:0.5)'},{motionPrompt:'bad\0text'},
   {motionPrompt:'\udfff'},{motionPrompt:'é'.repeat(2050)}])
   assert.throws(()=>buildWanI2VGraph({...valid,...bad}),{code:'I2V_WAN_GRAPH_INPUT_INVALID'});
  const g=buildWanI2VGraph({...valid,image:'anything.png',model:'other.bin',lowModel:'invalid',vae:'other',
-  length:500,batch_size:100,steps:0});
+  batch_size:100,steps:0});
  assert.equal(g['4'].inputs.image,WAN_I2V_INPUT_IMAGE);
  assert.equal(g['1'].inputs.unet_name,WAN_I2V_HIGH);
  assert.equal(g['12'].inputs.unet_name,WAN_I2V_LOW);
@@ -46,4 +46,9 @@ test('invalid batch/prompt inputs cannot escape the pinned graph',()=>{
  assert.equal(g['8'].inputs.length,WAN_I2V_LENGTH);
  assert.equal(g['8'].inputs.batch_size,1);
  assert.equal(g['9'].inputs.steps,20);
+});
+
+test('Wan supports the compact 17-frame model-aligned graph without changing the regular profile',()=>{
+ assert.equal(buildWanI2VGraph({...valid,length:17})['8'].inputs.length,17);
+ assert.equal(buildWanI2VGraph(valid)['8'].inputs.length,45);
 });

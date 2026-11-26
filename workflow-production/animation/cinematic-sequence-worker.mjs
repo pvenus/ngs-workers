@@ -10,7 +10,7 @@ import {backgroundUpscaleModel,backgroundUpscaleScale,backgroundUpscaleMaxBytes}
 import {sequenceCheckpoints} from './sequence-checkpoint.mjs';
 import {backgroundAnimationPixelMethod} from './reference-palette-correction.mjs';
 import {validCutscenePrompt} from './cutscene-i2v.mjs';
-import {WAN_I2V_FPS,WAN_I2V_LENGTH} from './i2v-wan-graph.mjs';
+import {WAN_I2V_FPS,WAN_I2V_LENGTH,WAN_I2V_SHORT_LENGTH} from './i2v-wan-graph.mjs';
 
 export const sequenceType='cinematic.sequence.generate',sequenceSchema='ngs.cinematic-sequence-generate.v1';
 export const sequenceKey='cinematic_sequence_render',sequenceTaskType='cinematic.sequence.generate.render';
@@ -149,11 +149,16 @@ async function sameClaimPublication(attempt,{current,signal}){
   return await attempt();
  }
 }
-function nativeManifest(output,id,input,upscale){
- const outputGrid=upscale?n=>grid(n/backgroundUpscaleScale):grid;
+const compactPlayback=p=>p.durationFrames===84&&p.speedCurve.length===1&&p.speedCurve[0].rate===1/6;
+export function sampleCompactAnimation(output){
+ require(output?.frames.length===WAN_I2V_SHORT_LENGTH,'CINEMATIC_SEQUENCE_COMPACT_INPUT');
+ return {...output,frames:output.frames.slice(0,16).filter((_,i)=>i%2===0)};
+}
+function nativeManifest(output,id,input,upscale,frameCount=WAN_I2V_LENGTH){
+ const outputGrid=upscale?n=>grid(n*(upscale.pixelCorrection?.downscale??1)/backgroundUpscaleScale):grid;
  const budget=upscale?backgroundUpscaleMaxBytes:maxBundleBytes;
  require(exact(output,['frames','width','height','fps'])&&output.fps===WAN_I2V_FPS&&outputGrid(output.width)&&outputGrid(output.height)&&
-  Array.isArray(output.frames)&&output.frames.length===WAN_I2V_LENGTH,'CINEMATIC_SEQUENCE_RENDER_SHAPE');
+  Array.isArray(output.frames)&&output.frames.length===frameCount,'CINEMATIC_SEQUENCE_RENDER_SHAPE');
  let total=0;
  const frames=Array.from(output.frames,(buffer,index)=>{
   const shape=png(buffer,maxFrameBytes,{rgb:true});total+=buffer.length;
@@ -181,6 +186,7 @@ export async function executeCinematicSequence(db,t,signal,{ports,runI2V,runUpsc
    WHERE task_id=? AND official_request_id=? AND status='running' AND result_ref IS NULL AND updated_at=?`)
    .run(expected,Math.max(Date.now(),claim.claimStamp+1),t.taskId,t.officialRequestId,claim.claimStamp).changes===1,'CINEMATIC_SEQUENCE_COMPLETION_CHANGED');
  });
+ const short=!!phase&&compactPlayback(input.playback),frameCount=short?8:WAN_I2V_LENGTH;
  const store=phase&&checkpointRoot?sequenceCheckpoints(checkpointRoot):null;
  const bind=phase?{requestId:t.officialRequestId,variant:group.variant,payloadSha256:claim.payloadSha256}:null;
  const releasePrevious=async()=>{if(store&&prior)try{await store.release({...bind,stage:prior.stage});}catch{return false;}return true;};
@@ -198,21 +204,25 @@ export async function executeCinematicSequence(db,t,signal,{ports,runI2V,runUpsc
    const own={...bind,taskId:t.taskId,stage:phase};
    const recorded=phase==='publish'?null:await store.read({...own,optional:true});
    if(recorded){
-    manifest=nativeManifest(recorded.output,resultId,input,recorded.manifest.upscale);
+    manifest=nativeManifest(recorded.output,resultId,input,recorded.manifest.upscale,frameCount);
     require(canonical(manifest)===canonical(recorded.manifest),'SEQUENCE_CHECKPOINT_BINDING');
     commit(recorded.reference);const released=await releasePrevious();
     return {state:'completed',taskId:t.taskId,resultRef:recorded.reference,frameCount:manifest.frameCount,...(released?{}:{cleanup:'pending'})};
    }
    const prev=prior?await store.read({...bind,...prior}):null;
-   if(prev)require(canonical(nativeManifest(prev.output,resultId,input,prev.manifest.upscale))===canonical(prev.manifest),'SEQUENCE_CHECKPOINT_BINDING');
+   if(prev)require(canonical(nativeManifest(prev.output,resultId,input,prev.manifest.upscale,frameCount))===canonical(prev.manifest),'SEQUENCE_CHECKPOINT_BINDING');
    signal.throwIfAborted();tx(db,current);
    if(phase==='wan'||phase==='upscale'||phase==='pixel_correct')dir=await makeDir();
    if(phase==='wan'){
     stage='render';
     const source=await pinned();
-    try{output=await runI2V({dir,source,motionPrompt:input.motionPrompt,signal});}
+    try{output=await runI2V({dir,source,motionPrompt:input.motionPrompt,signal,...(short?{length:WAN_I2V_SHORT_LENGTH}:{})});}
     catch(e){unknownStop=e?.rendererJoined!==true;throw e;}
-    manifest=nativeManifest(output,resultId,input);
+    if(short){
+     nativeManifest(output,resultId,input,undefined,WAN_I2V_SHORT_LENGTH);
+     output=sampleCompactAnimation(output);
+    }
+    manifest=nativeManifest(output,resultId,input,undefined,frameCount);
    }else if(phase==='upscale'){
     stage='upscale';
     require(typeof runUpscale==='function','BACKGROUND_SEEDVR2_UNAVAILABLE');
@@ -222,14 +232,16 @@ export async function executeCinematicSequence(db,t,signal,{ports,runI2V,runUpsc
     catch(e){unknownStop=e?.rendererJoined!==true;throw e;}
     stage='validate_upscale';
     require(output?.width===upscale.sourceWidth*2&&output?.height===upscale.sourceHeight*2,'BACKGROUND_SEEDVR2_OUTPUT_SHAPE');
-    manifest=nativeManifest(output,resultId,input,upscale);
+    manifest=nativeManifest(output,resultId,input,upscale,frameCount);
    }else if(phase==='pixel_correct'){
     stage='pixel_correction';
     require(typeof runPixelCorrection==='function'&&prev.manifest.upscale,'BACKGROUND_ANIMATION_PIXEL_UNAVAILABLE');
     const reference=await pinned(),upscaledFramesSha256=sha(canonical(prev.manifest.frames.map(f=>f.sha256)));
-    output=await runPixelCorrection({dir,reference,output:prev.output,signal});
-    require(output?.width===prev.output.width&&output?.height===prev.output.height,'BACKGROUND_ANIMATION_PIXEL_FRAME_SHAPE');
-    manifest=nativeManifest(output,resultId,input,{...prev.manifest.upscale,pixelCorrection:{method:backgroundAnimationPixelMethod,upscaledFramesSha256}});
+    const downscale=short?2:1;
+    output=await runPixelCorrection({dir,reference,output:prev.output,signal,downscale});
+    require(output?.width===prev.output.width/downscale&&output?.height===prev.output.height/downscale,'BACKGROUND_ANIMATION_PIXEL_FRAME_SHAPE');
+    manifest=nativeManifest(output,resultId,input,{...prev.manifest.upscale,pixelCorrection:{method:backgroundAnimationPixelMethod,upscaledFramesSha256,
+     ...(short?{downscale}:{})}},frameCount);
    }else{
     stage='verify_publish_input';output=prev.output;manifest={...prev.manifest,group};
     require(manifest.upscale&&(group.variant!=='pixel'||manifest.upscale.pixelCorrection),'CINEMATIC_SEQUENCE_PUBLICATION_INPUT');

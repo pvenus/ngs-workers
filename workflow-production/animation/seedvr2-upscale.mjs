@@ -25,12 +25,13 @@ const failure=(code,rendererJoined=true)=>Object.assign(Error(code),{rendererJoi
 const need=(ok,code)=>{if(!ok)throw failure(code);};
 const grid=n=>Number.isSafeInteger(n)&&128<=n&&n<=512&&n%32===0;
 
-export function buildBackgroundSeedVR2Graph(){
+export function buildBackgroundSeedVR2Graph(frameCount=WAN_I2V_LENGTH){
+ need([8,WAN_I2V_LENGTH].includes(frameCount),'BACKGROUND_SEEDVR2_INPUT_SHAPE');
  const prompt={};
  const node=(class_type,inputs)=>{
   const id=String(Object.keys(prompt).length+1);prompt[id]={class_type,inputs};return [id,0];
  };
- let frames=Array.from({length:WAN_I2V_LENGTH},(_,i)=>node('LoadImage',{image:inputFile(i)}));
+ let frames=Array.from({length:frameCount},(_,i)=>node('LoadImage',{image:inputFile(i)}));
  while(frames.length>1){
   const batches=[];
   for(let i=0;i<frames.length;i+=2)batches.push(i+1<frames.length?node('ImageBatch',{image1:frames[i],image2:frames[i+1]}):frames[i]);
@@ -80,7 +81,7 @@ export function createSeedVR2Upscaler({binding,ports={}}){
     const timeout=AbortSignal.any([signal,AbortSignal.timeout(30*60_000)]);
     timeout.throwIfAborted();
     need(output?.fps===WAN_I2V_FPS&&grid(output.width)&&grid(output.height)&&Array.isArray(output.frames)&&
-      output.frames.length===WAN_I2V_LENGTH,'BACKGROUND_SEEDVR2_INPUT_SHAPE');
+      [8,WAN_I2V_LENGTH].includes(output.frames.length),'BACKGROUND_SEEDVR2_INPUT_SHAPE');
     await inspect(binding,cache);
     const engine=join(await realpath(dir),'background-seedvr2'),models=join(engine,'models');
     const input=join(engine,'input'),out=join(engine,'output');
@@ -95,7 +96,7 @@ export function createSeedVR2Upscaler({binding,ports={}}){
      await writeFile(join(input,inputFile(i)),bytes,{mode:0o600,flag:'wx'});
     }
     const token=randomBytes(32).toString('hex');
-    const {prompt,saveId}=buildBackgroundSeedVR2Graph();
+    const frameCount=output.frames.length,{prompt,saveId}=buildBackgroundSeedVR2Graph(frameCount);
     timeout.throwIfAborted();
     state=launch(binding.python,['-B','-c','import runpy,sys;p=sys.argv.pop(1);runpy.run_path(p,run_name="__main__")',boot,
      '--base-directory',engine,'--listen','127.0.0.1','--port','0','--offline','--disable-all-custom-nodes','--disable-auto-launch',
@@ -118,7 +119,7 @@ export function createSeedVR2Upscaler({binding,ports={}}){
      if(!job){await pause(1000,undefined,{signal:timeout});continue;}
      need(job.status?.status_str==='success'&&job.status.completed===true,'BACKGROUND_SEEDVR2_RENDER_FAILED');
      const frames=job.outputs?.[saveId]?.images;
-     need(Array.isArray(frames)&&frames.length===WAN_I2V_LENGTH&&frames.every((f,i)=>
+     need(Array.isArray(frames)&&frames.length===frameCount&&frames.every((f,i)=>
       f?.filename===outputFile(i)&&f.type==='output'&&f.subfolder===''),'BACKGROUND_SEEDVR2_OUTPUT_FRAME_SET');
      break;
     }
@@ -126,7 +127,7 @@ export function createSeedVR2Upscaler({binding,ports={}}){
     state=undefined;
     let bytes=0;
     const frames=[],width=output.width*backgroundUpscaleScale,height=output.height*backgroundUpscaleScale;
-    for(let i=0;i<WAN_I2V_LENGTH;i++){
+    for(let i=0;i<frameCount;i++){
      timeout.throwIfAborted();
      const path=join(out,outputFile(i)),stat=await lstat(path);
      need(stat.isFile()&&!stat.isSymbolicLink()&&stat.size<=maxFrameBytes&&bytes+stat.size<=backgroundUpscaleMaxBytes,'BACKGROUND_SEEDVR2_OUTPUT_BYTES');

@@ -16,13 +16,14 @@ export const WAN_I2V_INPUT_IMAGE='source.png';
 export const WAN_I2V_SAVE_NODE='10';
 export const WAN_I2V_SAVE_PREFIX='i2v_rgb';
 export const WAN_I2V_FPS=24; // Existing NGS artifact playback, not a model input.
+export const WAN_I2V_SHORT_LENGTH=17;
 export const WAN_I2V_LENGTH=45; // 4k+1.
 const NEGATIVE='flicker, abrupt cuts, extra limbs, duplicate characters, text, watermark';
 const STEPS=20,SPLIT=10,CFG=3.5,SHIFT=5;
 
-export function buildWanI2VGraph({width,height,motionPrompt,seed=417}={}){
+export function buildWanI2VGraph({width,height,motionPrompt,seed=417,length=WAN_I2V_LENGTH}={}){
  const dimension=v=>Number.isInteger(v)&&v>=128&&v<=512&&v%32===0;
- if(!dimension(width)||!dimension(height)||!Number.isSafeInteger(seed)||seed<0||
+ if(![WAN_I2V_LENGTH,WAN_I2V_SHORT_LENGTH].includes(length)||!dimension(width)||!dimension(height)||!Number.isSafeInteger(seed)||seed<0||
     typeof motionPrompt!=='string'||!motionPrompt.isWellFormed()||!motionPrompt.trim()||Buffer.byteLength(motionPrompt)>4096||
     /\bembedding:|[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f]/iu.test(motionPrompt))
   throw Object.assign(Error('I2V_WAN_GRAPH_INPUT_INVALID'),{code:'I2V_WAN_GRAPH_INPUT_INVALID'});
@@ -36,7 +37,7 @@ export function buildWanI2VGraph({width,height,motionPrompt,seed=417}={}){
   '6':{class_type:'CLIPTextEncode',inputs:{clip:['2',0],text:NEGATIVE}},
   '7':{class_type:'ModelSamplingSD3',inputs:{model:['1',0],shift:SHIFT}},
   '8':{class_type:'WanImageToVideo',inputs:{positive:['5',0],negative:['6',0],vae:['3',0],start_image:['4',0],
-   width,height,length:WAN_I2V_LENGTH,batch_size:1}},
+   width,height,length,batch_size:1}},
   '9':{class_type:'KSamplerAdvanced',inputs:{...common,model:['7',0],latent_image:['8',2],noise_seed:seed,
    add_noise:'enable',start_at_step:0,end_at_step:SPLIT,return_with_leftover_noise:'enable'}},
   '11':{class_type:'VAEDecode',inputs:{samples:['14',0],vae:['3',0]}},

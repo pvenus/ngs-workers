@@ -174,7 +174,7 @@ export function createWanI2V({binding,ports={}}){
    await verify(binding,cache); // Local file/header/digest verification only, no inference.
    return {ready:true,model:WAN_I2V_MODEL_ID,quantization:WAN_I2V_QUANTIZATION,fps:i2vWanFps,frames:i2vWanFrames};
   },
-  async render({dir,source,motionPrompt,signal}){
+  async render({dir,source,motionPrompt,signal,length=i2vWanFrames}){
    if(busy||unsafe)throw error('I2V_MODEL_OWNERSHIP_UNKNOWN',false);
    busy=true;
    let state;
@@ -192,7 +192,7 @@ export function createWanI2V({binding,ports={}}){
     }
     await symlink(binding.ggufNodesRoot,join(custom,'ComfyUI-GGUF'));
     await writeFile(join(input,WAN_I2V_INPUT_IMAGE),source,{mode:0o600,flag:'wx'});
-    const token=randomBytes(32).toString('hex'), prompt=buildWanI2VGraph({...shape,motionPrompt,seed:417});
+    const token=randomBytes(32).toString('hex'), prompt=buildWanI2VGraph({...shape,motionPrompt,seed:417,length});
     timeout.throwIfAborted();
     // -c sets sys.path[0] to cwd, the pinned Comfy root; user source is file bytes only.
     state=launch(binding.python,['-B','-c','import runpy,sys;p=sys.argv.pop(1);runpy.run_path(p,run_name="__main__")',boot,
@@ -215,7 +215,7 @@ export function createWanI2V({binding,ports={}}){
      if(job){
       need(job.status?.status_str==='success'&&job.status.completed===true,'I2V_COMFY_RENDER_FAILED');
       frames=job.outputs?.[WAN_I2V_SAVE_NODE]?.images;
-      need(Array.isArray(frames)&&frames.length===i2vWanFrames&&frames.every((f,i)=>matchedFrame(i,f)),'I2V_COMFY_FRAME_SET');
+      need(Array.isArray(frames)&&frames.length===length&&frames.every((f,i)=>matchedFrame(i,f)),'I2V_COMFY_FRAME_SET');
      }else await pause(1000,undefined,{signal:timeout});
     }
     if(!await stopI2VGroup(state,send,pause)){

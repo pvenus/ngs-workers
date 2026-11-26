@@ -44,7 +44,7 @@ export function sequenceCheckpoints(root){
     receipt.payloadSha256===payloadSha256&&canonical(receipt)===raw.toString());
    const reference=encodedRef(receipt);
    need(expectedRef===undefined||reference===expectedRef);
-   const m=receipt.manifest;need(m.frameCount===45&&m.frames.length===45);
+   const m=receipt.manifest;need([8,45].includes(m.frameCount)&&m.frames.length===m.frameCount);
    const frames=[];let total=0;
    for(const [index,f] of m.frames.entries()){
     const bytes=await get(join(where,frameName(index)),maxFrameBytes);
@@ -54,7 +54,7 @@ export function sequenceCheckpoints(root){
    return {reference,manifest:m,output:{frames,fps:m.masterFps,width:m.width,height:m.height}};
   },
   async write({requestId,variant,stage,taskId,payloadSha256,manifest,frames,current,signal}){
-   need(task.test(taskId)&&digest.test(payloadSha256)&&frames.length===45);
+   need(task.test(taskId)&&digest.test(payloadSha256)&&[8,45].includes(frames.length));
    const folder=await checked(requestId,variant,true);
    const temp=await mkdtemp(join(folder,'.pending-'));
    const receipt={requestId,variant,stage,taskId,payloadSha256,manifest};
