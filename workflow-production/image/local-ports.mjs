@@ -14,7 +14,9 @@ export const propBasePath='/v1/props/ownership/workflow-stage';
 export const propImagePath='/v1/props/ownership/workflow-image';
 export const heartbeatPath='/api/service-heartbeat';
 const cinematicSourcePath='/v1/cinematics/ownership/workflow-source';
+const backgroundSourcePath='/v1/cinematics/ownership/workflow-background';
 const routes={
+ 'background.source.generate':{path:backgroundSourcePath,schema:'workflow.background-source-write.v1'},
  'cinematic.source.generate':{path:cinematicSourcePath,schema:'workflow.cinematic-source-write.v1'},
  'prop.generate.base':{path:propBasePath,schema:'workflow.prop-stage.v1'},
  'prop.regenerate.base':{path:propBasePath,schema:'workflow.prop-stage.v1'},
@@ -97,6 +99,9 @@ export function localPorts({transport=requestLocalJson}={}){
   async readCinematicSource(claim,signal){
    return await transport({port:8030,path:cinematicSourcePath+'/read',method:'POST',body:{claim},deadline:5000,signal});
   },
+  async readBackgroundSource(claim,signal){
+   return await transport({port:8030,path:backgroundSourcePath+'/read',method:'POST',body:{claim},deadline:5000,signal});
+  },
   async readCinematicConcept(signal){
    // The loopback PDS provides the canonical Filex snapshot. The worker
    // scopes the snapshot to the sole registered cinematic design section.
@@ -105,8 +110,14 @@ export function localPorts({transport=requestLocalJson}={}){
   async publishCinematicSource(claim,artifact){
    return await transport({port:8030,path:cinematicSourcePath,method:'POST',body:{claim,artifact},deadline:120000});
   },
+  async publishBackgroundSource(claim,artifact){
+   return await transport({port:8030,path:backgroundSourcePath,method:'POST',body:{claim,artifact},deadline:120000});
+  },
   async reconcileCinematicSource(claim,signal){
    return await transport({port:8030,path:cinematicSourcePath+'/reconcile',method:'POST',body:{claim},deadline:10000,signal});
+  },
+  async reconcileBackgroundSource(claim,signal){
+   return await transport({port:8030,path:backgroundSourcePath+'/reconcile',method:'POST',body:{claim},deadline:10000,signal});
   },
   async readPropBase(claim,signal,withReference=false){
    return transport({port:8030,path:propBasePath+'/read',method:'POST',body:{claim},deadline:withReference?20000:5000,signal,responseLimit:withReference?12*1024*1024:128*1024,propBaseReference:withReference});

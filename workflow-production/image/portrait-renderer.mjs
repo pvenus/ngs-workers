@@ -1,4 +1,4 @@
-import {validCinematicSourceRenderInput,sourceGeometry} from './cinematic-source-worker.mjs';
+import {validCinematicSourceRenderInput,validBackgroundRenderInput,sourceGeometry} from './cinematic-source-worker.mjs';
 /** Explicit runner for one original portrait, using the pinned legacy native provider. */
 import {createCodexSessionClient} from './codex-session-client.mjs';
 import {constants} from 'node:fs';
@@ -137,8 +137,9 @@ export function createPortraitRenderer(config){
 export function createCinematicSourceRenderer(config){
  const pinned=options(config);
  return async (input,{signal}={})=>{
-  if(!validCinematicSourceRenderInput(input))throw fail('CINEMATIC_SOURCE_INPUT_INVALID');
-  const raw=await call(pinned,'render-cinematic-source',Buffer.from(JSON.stringify(input)),signal);
+  const background=validBackgroundRenderInput(input);
+  if(!background&&!validCinematicSourceRenderInput(input))throw fail('CINEMATIC_SOURCE_INPUT_INVALID');
+  const raw=await call(pinned,background?'render-background-source':'render-cinematic-source',Buffer.from(JSON.stringify(input)),signal);
   sourceGeometry(raw);
   return raw;
  };

@@ -1,5 +1,5 @@
 import {oldestRunnable} from './workflow-ready.mjs';
-import {sourceType,nextCinematicSourceFromPath,runCinematicSourceFromPath} from './cinematic-source-worker.mjs';
+import {sourceType,backgroundSourceType,nextCinematicSourceFromPath,runCinematicSourceFromPath} from './cinematic-source-worker.mjs';
 import {propBaseOperations,nextPropBaseFromPath,runPropBaseFromPath} from './prop-base-worker.mjs';
 import {propImageOperation,nextPropImageFromPath,runPropImageFromPath} from './prop-image-worker.mjs';
 import {PORTRAIT,imageOperations,portraitCandidatesFromPath,probePresetDatabase,runPortraitFromPath} from './worker.mjs';
@@ -7,7 +7,7 @@ import {motionImageOperation,nextMotionImageFromPath,runMotionImageFromPath} fro
 
 export function parseImageArgs(args){
  let operation;
- if(args.at(-2)==='--operation'&&[...imageOperations,motionImageOperation,propImageOperation,sourceType,...Object.keys(propBaseOperations)].includes(args.at(-1))){
+ if(args.at(-2)==='--operation'&&[...imageOperations,motionImageOperation,propImageOperation,sourceType,backgroundSourceType,...Object.keys(propBaseOperations)].includes(args.at(-1))){
   operation=args.at(-1);args=args.slice(0,-2);
  }
  if(args.length>=3&&args[1]==='--db'&&args[2].startsWith('/')){
@@ -33,12 +33,12 @@ export async function imageHealth({dbPath,pds,providerReady,signal,operation=POR
 export function selectImageTasks(dbPath){
  const motion=nextMotionImageFromPath(dbPath);
  const prop=nextPropImageFromPath(dbPath);
- const source=nextCinematicSourceFromPath(dbPath);
+ const source=nextCinematicSourceFromPath(dbPath),background=nextCinematicSourceFromPath(dbPath,backgroundSourceType);
  return oldestRunnable(dbPath,[...portraitCandidatesFromPath(dbPath),
   motion&&{...motion,operation:motionImageOperation},prop&&{...prop,operation:propImageOperation},
-  nextPropBaseFromPath(dbPath),source&&{...source,operation:sourceType}]);
+  nextPropBaseFromPath(dbPath),source&&{...source,operation:sourceType},background&&{...background,operation:backgroundSourceType}]);
 }
-const executeImage=options=>options.operation===sourceType?runCinematicSourceFromPath(options):Object.hasOwn(propBaseOperations,options.operation)?runPropBaseFromPath(options):options.operation===propImageOperation?runPropImageFromPath(options):options.operation===motionImageOperation?runMotionImageFromPath(options):runPortraitFromPath(options);
+const executeImage=options=>[sourceType,backgroundSourceType].includes(options.operation)?runCinematicSourceFromPath(options):Object.hasOwn(propBaseOperations,options.operation)?runPropBaseFromPath(options):options.operation===propImageOperation?runPropImageFromPath(options):options.operation===motionImageOperation?runMotionImageFromPath(options):runPortraitFromPath(options);
 
 /** At most one runnable image task per tick. Never reclaims running rows. */
 export async function imageTick(options,{select=selectImageTasks,execute=executeImage,check=imageHealth}={}){

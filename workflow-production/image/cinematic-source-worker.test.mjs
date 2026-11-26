@@ -9,7 +9,7 @@ import {fileURLToPath} from 'node:url';
 import {crc32,deflateSync} from 'node:zlib';
 import {canonical,sha} from './vendor/planner-f24d23a/envelope.mjs';
 import {imageTick} from './image-runner.mjs';
-import {sourceType,sourceSchema,sourceKey,cinematicDesignId,selectCinematicDesign} from './cinematic-source-worker.mjs';
+import {sourceType,sourceSchema,sourceKey,cinematicDesignId,selectCinematicDesign,backgroundSourceType,backgroundDesignId,validBackgroundRenderInput} from './cinematic-source-worker.mjs';
 
 const input={title:'빈 마루',prompt:'저녁의 마당, 바람에 흔들리는 한 점의 불빛.'};
 const title='시네마틱 영상 디자인',markdown='# '+title+'\n\n## 먹선과 형태\n\n마른 붓의 굵은 먹선과 큰 여백.\n';
@@ -28,16 +28,18 @@ const png=Buffer.concat([Buffer.from('89504e470d0a1a0a','hex'),
  chunk('IDAT',deflateSync(Buffer.alloc(1024*(1536*3+1)))),
  chunk('IEND',Buffer.alloc(0))]);
 const resultRef='binari/cinematics/sources/'+sha(png)+'.json';
-function fixture(t,request=input){
+function fixture(t,request=input,background=false){
  const dir=realpathSync(mkdtempSync(join(tmpdir(),'cinematic-source-stage-')));
  const dbPath=join(dir,'db.sqlite');writeFileSync(dbPath,'',{mode:0o600});
  const db=new DatabaseSync(dbPath);
  t.after(()=>{db.close();rmSync(dir,{recursive:true,force:true});});
  db.exec(`CREATE TABLE workflow_runs(official_request_id,project_id,request_type,schema_version,payload,payload_sha256,registered_at,state,updated_at,reason);
   CREATE TABLE workflow_tasks(task_id,official_request_id,task_key,task_type,worker_type,task_input,result_ref,updated_at,depends_on_task_id,status,retry_count,portrait_read_owner_pid INTEGER);`);
- const payload=canonical({schemaVersion:sourceSchema,projectId:'binari',...request});
- db.prepare("INSERT INTO workflow_runs VALUES(?,?,?,?,?,?,1,'planned',1,NULL)").run(officialRequestId,'binari',sourceType,sourceSchema,payload,sha(payload));
- db.prepare("INSERT INTO workflow_tasks VALUES(?,?,?,?,?,?,NULL,2,NULL,'pending',0,NULL)").run(taskId,officialRequestId,sourceKey,sourceType,'image',canonical(request));
+ const type=background?backgroundSourceType:sourceType,schema=background?'ngs.background-source-generate.v1':sourceSchema,key=background?'background_source_generate':sourceKey;
+ const id='workflow.task.'+sha(canonical([officialRequestId,key]));
+ const payload=canonical({schemaVersion:schema,projectId:'binari',...request});
+ db.prepare("INSERT INTO workflow_runs VALUES(?,?,?,?,?,?,1,'planned',1,NULL)").run(officialRequestId,'binari',type,schema,payload,sha(payload));
+ db.prepare("INSERT INTO workflow_tasks VALUES(?,?,?,?,?,?,NULL,2,NULL,'pending',0,NULL)").run(id,officialRequestId,key,type,'image',canonical(request));
  const state=()=>db.prepare('SELECT status,result_ref,updated_at,retry_count,portrait_read_owner_pid FROM workflow_tasks').get();
  return {db,dbPath,state,payload};
 }
@@ -175,4 +177,26 @@ test('after publish transport loss, use fenced absence or an exact persisted res
    }
   });
  }
+});
+
+test('resident background lane combines typed scene, common design and background design before one render',async t=>{
+ const input={title:'빈 마루',timeOfDay:'저녁',season:'가을',mood:'적막',color:'먹색',location:'한옥',requirements:'기둥을 분리',additionalNotes:'낮은 시점'};
+ const f=fixture(t,input,true),order=[];
+ const snapshot=concept();
+ snapshot.document.hierarchy.groups[0].categoryIds.push(backgroundDesignId);
+ snapshot.document.sections.push({id:backgroundDesignId,title:'배경 디자인 설계',fields:[{id:'content',value:'# 배경 디자인 설계\n\n빈 동선을 확보한다.'}]},
+  {id:'expression',fields:[{id:'visualStyle',value:{schemaVersion:'ngs.character-style-contract.v1',visualStyle:'선명한 실루엣'}},
+   {id:'visualProhibitions',value:{schemaVersion:'ngs.character-style-constraints.v1',visualProhibitions:'글자 없음'}}]});
+ const resultRef='binari/cinematics/backgrounds/'+sha(png)+'.json';
+ const pds={capability:async(_signal,operation)=>operation===backgroundSourceType,
+  readBackgroundSource:async()=>{order.push('inputs');return input;},
+  readCinematicConcept:async()=>{order.push('concept');return snapshot;},
+  publishBackgroundSource:async(_,artifact)=>{order.push('publish');assert.equal(artifact.sha256,sha(png));return {ok:true,resultRef};}};
+ const renderCinematicSource=async data=>{order.push('render');assert.ok(validBackgroundRenderInput(data));
+  assert.match(data.prompt,/시간대: 저녁[\s\S]*필수 요청 사항: 기둥을 분리[\s\S]*추가 요청 사항: 낮은 시점/);
+  assert.equal(data.design.categoryId,backgroundDesignId);
+  assert.deepEqual(data.common.map(x=>x.id),['visualStyle','visualProhibitions']);return png;};
+ const out=await imageTick({...f,mode:'run',pds,renderCinematicSource},{check:safeCheck});
+ assert.equal(out.state,'completed');assert.deepEqual(order,['inputs','concept','render','publish']);
+ assert.equal(f.state().result_ref,resultRef);
 });
