@@ -41,7 +41,7 @@ for line in sys.stdin:
 class CodexSessionTest(unittest.TestCase):
     def setUp(self):
         self.directory = tempfile.TemporaryDirectory()
-        self.root = Path(self.directory.name)
+        self.root = Path(self.directory.name).resolve()
         self.addCleanup(self.directory.cleanup)
         self.binary = self.root / "fake-codex"
         self.binary.write_text("#!/opt/homebrew/bin/python3.12\n" + SERVER)
@@ -66,6 +66,17 @@ class CodexSessionTest(unittest.TestCase):
         self.session.born = time.monotonic() - 301
         self.session.expire_idle()
         self.assertIsNone(self.session.child)
+
+    def test_installed_binary_replacement_rotates_before_the_next_job(self):
+        first, _, _ = self.run_job("original")
+        replacement = self.root / "updater-output"
+        replacement.write_text(self.binary.read_text()+"\n# updated executable\n")
+        replacement.chmod(0o700)
+        os.replace(replacement,self.binary)
+        second, _, _ = self.run_job("after-update")
+        self.assertNotEqual(first["pid"], second["pid"])
+        self.assertEqual(second["prompt"], "after-update")
+        self.assertEqual(self.session.serial, 2)
 
     def test_completed_failure_is_not_replayed(self):
         with self.assertRaisesRegex(SessionError, "turn_failed"):

@@ -10,7 +10,7 @@ import tempfile
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from codex_session import serve, diagnostic
+from codex_session import serve, diagnostic, executable_identity
 
 _LIMIT = 192 * 1024
 _IMAGE_LIMIT = 8 * 1024 * 1024
@@ -51,11 +51,16 @@ def bind(path, expected, session):
     config = read_config(path, expected)
     workers = Path(config["workersRoot"])
     ngs = Path(config["ngsRoot"])
-    binder = workers / "workers/resident/deployment/image_pair_host.py"
-    support = ngs / "local/services/portrait/service.py"
-    alpha_source = ngs / "local/services/portrait/png_alpha.py"
     pins = config["filePins"]
-    if str(binder) not in pins or str(support) not in pins or str(alpha_source) not in pins:
+    required = {
+        "local/services/portrait/service.py",
+        "local/services/portrait/png_alpha.py",
+        "local/services/npc_workflow/portrait_pairs.py",
+        "local/services/npc_workflow/portrait_stage.py",
+        "local/services/pose_requests/worker.py",
+        "local/services/story_node_images/native.py",
+    }
+    if not {str(ngs / name) for name in required} <= set(pins):
         raise ValueError("IMAGE_HOST_REQUIRED_SOURCE_PINS")
     for name, digest in pins.items():
         source = Path(name)
@@ -63,30 +68,22 @@ def bind(path, expected, session):
             raise ValueError("IMAGE_HOST_SOURCE_SCOPE")
         pinned_file(source, digest)
     binary = Path(config["binary"])
-    pinned_file(binary, config["binarySha256"])
-    # The option is a local operator pin; never use paths from task payloads.
-    # The existing binder owns the installed Codex binary and legacy source pins.
+    executable_identity(binary)
+    # The immutable host selector binds the installed executable path, not its
+    # bytes. Local validation/proof sources remain hash-pinned.
     sys.path[:0] = [p for p in (str(workers), str(ngs)) if p not in sys.path]
-    from workers.resident.deployment import image_pair_host
-    if Path(image_pair_host.__file__).resolve() != binder:
-        raise ValueError("IMAGE_HOST_BINDER_PATH")
-    bound = image_pair_host.bindings_from_host(path, cleanup=lambda *_: None)
     from local.services.portrait import service, png_alpha
-    if Path(service.__file__).resolve() != support or Path(png_alpha.__file__).resolve() != alpha_source:
-        raise ValueError("IMAGE_HOST_PROVIDER_PATH")
-    if not os.access(config["binary"], os.X_OK) or read_config(path, expected) != config:
-        raise ValueError("IMAGE_HOST_RUNTIME_CHANGED")
-    from local.services.npc_workflow import portrait_pairs
-    from local.services.pose_requests.worker import DIRECTION_VIEWS
-
+    from local.services.npc_workflow import portrait_pairs, portrait_stage
+    from local.services.pose_requests import worker as pose
     from local.services.story_node_images import native
-    from local.services.npc_workflow import portrait_stage
-    for module, name in ((native, "local/services/story_node_images/native.py"),
-                         (portrait_stage, "local/services/npc_workflow/portrait_stage.py")):
-        required = ngs / name
-        if Path(module.__file__).resolve() != required or str(required) not in pins:
-            raise ValueError("IMAGE_HOST_RUNNER_PIN_REQUIRED")
+    modules = (service, png_alpha, portrait_pairs, portrait_stage, pose, native)
+    if {Path(m.__file__).resolve() for m in modules} != {ngs / name for name in required}:
+        raise ValueError("IMAGE_HOST_PROVIDER_PATH")
+    if read_config(path, expected) != config:
+        raise ValueError("IMAGE_HOST_RUNTIME_CHANGED")
     roots = tuple(Path(x).resolve(strict=True) for x in config["outputRoots"])
+    if not roots or not all(p.is_dir() for p in roots):
+        raise ValueError("IMAGE_HOST_OUTPUT_ROOTS_INVALID")
 
     def make_factory(runner_type):
         def begin(root, stopped):
@@ -97,7 +94,7 @@ def bind(path, expected, session):
                                (root, root/"references", root/"artifacts/references")), client
         return begin
 
-    return make_factory(portrait_stage.AggregatePortraitRunner), make_factory(native.NativeNodeImageRunner), portrait_pairs, DIRECTION_VIEWS, service.digest, png_alpha.validate_stage_output
+    return make_factory(portrait_stage.AggregatePortraitRunner), make_factory(native.NativeNodeImageRunner), portrait_pairs, pose.DIRECTION_VIEWS, service.digest, png_alpha.validate_stage_output
 
 
 class SessionImageCall:

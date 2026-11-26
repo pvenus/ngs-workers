@@ -224,3 +224,7 @@ tool invocation, arguments, output identity and PNG checks before storage.
 Operational diagnostics record timings and fixed outcomes without prompts or
 provider outputs. The transport modules are byte-identical in the image and
 document scopes because OPS packages these targets independently.
+
+The document worker runs the executable bundled in ChatGPT Desktop. After an
+app update replaces that binary, the next document job opens a fresh app-server
+connection. No worker restart or release is needed for subsequent app updates.

@@ -4,6 +4,7 @@ import os
 import re
 import select
 import signal
+import stat
 import subprocess
 import tempfile
 import time
@@ -22,6 +23,17 @@ class SessionError(Exception):
     pass
 
 
+def executable_identity(path):
+    path = Path(path)
+    if not path.is_absolute() or path.resolve(strict=True) != path:
+        raise SessionError("start_failed")
+    st = path.stat()
+    if not stat.S_ISREG(st.st_mode) or not os.access(path, os.X_OK):
+        raise SessionError("start_failed")
+    # Stat only detects a new installation. It doesn't select or pin a version.
+    return (st.st_dev, st.st_ino, st.st_size, st.st_mtime_ns, st.st_ctime_ns)
+
+
 def diagnostic(**values):
     # Only caller-supplied enums, measurements and counters. No prompt, paths or raw errors.
     print(json.dumps({"event": "codex_session", "utcMs": time.time_ns() // 1000000, **values}, separators=(",", ":")),
@@ -31,7 +43,7 @@ def diagnostic(**values):
 class CodexSession:
     def __init__(self, profile, stopped, *, ttl=SESSION_SECONDS):
         self.profile, self.stopped, self.ttl = profile, stopped, ttl
-        self.child = self.trace = self.binary = None
+        self.child = self.trace = self.binary = self.binary_identity = None
         self.serial = self.seq = 0
         self.buffer = bytearray()
         self.born = 0
@@ -132,9 +144,10 @@ class CodexSession:
         if on_event:
             on_event(msg)
 
-    def _start(self, binary, deadline):
+    def _start(self, binary, identity, deadline):
         self.close()
         self.binary = binary
+        self.binary_identity = identity
         flags = ["--disable", "apps"]
         env = {"HOME": str(Path.home()), "PATH": "/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin"}
         if self.profile == "document":
@@ -167,8 +180,7 @@ class CodexSession:
     def run(self, binary, cwd, prompt, schema, timeout, output_limit):
         started = time.monotonic()
         deadline = started + timeout
-        reused = (self.child is not None and self.child.poll() is None and
-                  self.binary == binary and started - self.born < self.ttl)
+        reused = False
         thread_id = turn_id = None
         final = None
         terminal = None
@@ -194,8 +206,13 @@ class CodexSession:
             if msg.get("method") == "turn/completed":
                 terminal = params.get("turn")
         try:
+            identity = executable_identity(binary)
+            reused = (self.child is not None and self.child.poll() is None and self.binary == binary
+                      and self.binary_identity == identity and started - self.born < self.ttl)
             if not reused:
-                self._start(binary, deadline)
+                self._start(binary, identity, deadline)
+            if executable_identity(binary) != identity:
+                raise SessionError("start_failed")
             if self.trace:
                 trace_start = os.fstat(self.trace.fileno()).st_size
             params = {"cwd": str(cwd), "approvalPolicy": "never", "sandbox": "read-only", "ephemeral": True}

@@ -279,3 +279,8 @@ tool invocation, arguments, output identity and PNG checks before storage.
 Operational diagnostics record timings and fixed outcomes without prompts or
 provider outputs. The transport modules are byte-identical in the image and
 document scopes because OPS packages these targets independently.
+
+The image host configuration still binds the installed Codex path and pins
+local proof source files, but does not pin a particular executable digest.
+An app update that replaces the executable rotates the connection before the
+next image job. It does not interrupt an active job or bypass result proof.

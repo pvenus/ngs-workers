@@ -34,7 +34,7 @@ const input={character:{npcId:'npc.ch1_dajeong',name:'다정',slug:'ch1_dajeong'
  sources:sourceSet([...conceptRows,plan('a','대표 포즈 기획','이번 프리셋: 같은 NPC의 대표 기획 슬롯.','portrait.representative')])};
 const expected='### 대표 포즈\n긴 치마와 단정한 실루엣.';
 async function fixture(t,body){
- const directory=await mkdtemp(join(tmpdir(),'representative-fixture-'));
+ const directory=await realpath(await mkdtemp(join(tmpdir(),'representative-fixture-')));
  t.after(()=>rm(directory,{force:true,recursive:true}));
  const binary=join(directory,'codex-fixture');
  const record=join(directory,'record');

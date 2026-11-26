@@ -99,7 +99,9 @@ for line in sys.stdin:
 `;
  await writeFile(binary,code,{mode:0o700});
  const config=JSON.parse(await readFile(from,'utf8'));
- config.binary=binary;config.binarySha256=sha(code);config.outputRoots=[output];
+ // The pre-update host selector can still carry an old digest. It must not
+ // deny the new executable bytes, but provider output proof is still required.
+ config.binary=binary;config.binarySha256='a'.repeat(64);config.outputRoots=[output];
  const contents=JSON.stringify(config),hostConfig=join(root,'host.json');
  await writeFile(hostConfig,contents,{mode:0o600});
  return {options:{hostConfig,hostConfigSha256:sha(contents)},commandLog,output};

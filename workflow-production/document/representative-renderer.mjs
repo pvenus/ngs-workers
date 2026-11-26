@@ -12,7 +12,7 @@ import {preparePlanningSources} from './planning-input.mjs';
 import {sectionBodyKeys,validateSectionBodies} from './concept-sections.mjs';
 import {validRequiredSections} from './vendor/planner-concept-v1/concept-category-envelope.mjs';
 
-export const REPRESENTATIVE_CODEX_PATH='/Applications/ChatGPT.app/Contents/Resources/codex-cli/bin/codex';
+export const REPRESENTATIVE_CODEX_PATH='/Applications/ChatGPT.app/Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS/codex';
 const maxOutput=256*1024;
 const maxPromptBytes=192*1024;
 const inputKeys=['npcId','name','slug','role','actId','chapterId'];
