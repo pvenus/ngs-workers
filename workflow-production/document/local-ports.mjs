@@ -83,9 +83,10 @@ export function localPorts({transport=requestLocalJson}={}){
     return exact(data,['enabled','schemaVersion'])&&data.enabled===true&&data.schemaVersion===schema;
    }catch{return false;}
   },
-  async heartbeat(signal){
+  async heartbeat(signal,serverName='document-worker'){
+   if(!['document-worker','document-worker-2'].includes(serverName))return false;
    try{
-    const data=await transport({port:8090,path:heartbeatPath,method:'POST',body:{serverName:'document-worker'},deadline:5000,signal});
+    const data=await transport({port:8090,path:heartbeatPath,method:'POST',body:{serverName},deadline:5000,signal});
     return exact(data,['ok'])&&data.ok===true;
    }catch{return false;}
   },

@@ -317,3 +317,52 @@ test('older request continues its representative document before a new preset',a
  s.db.prepare("UPDATE workflow_tasks SET status='failed',updated_at=? WHERE official_request_id=? AND task_key='planning_representative'").run(Date.now(),earlier);
  assert.deepEqual(await documentTick(opts),{state:'picked',operation:'npc.preset',officialRequestId:newer});
 });
+
+test('two slots that discover the same pending document take different jobs with no retry consumed',async t=>{
+ const {documentTick}=await import('./runner.mjs');
+ const f=setup(t);
+ f.completedDelete();
+ const other='request.official.'+sha('fixture-second-slot');
+ const original=JSON.parse(f.s.db.prepare("SELECT payload FROM workflow_runs").get().payload);
+ const payload={...original,character:{...original.character,npcId:'npc.ch1_other',slug:'other'}};
+ f.s.stage({officialRequestId:other,projectId:'binari',requestType:'npc.workflow',schemaVersion:payload.schemaVersion,
+  payload,payloadSha256:sha(canonical(payload)),status:'registered',registeredAt:1800000000001});
+ f.s.acknowledge(other);
+ f.completedDelete();
+ let arrived=0,release;
+ const together=new Promise(resolve=>{release=resolve;});
+ const published=[];
+ const pds={capability:async()=>{
+  if(++arrived<=2){if(arrived===2)release();await together;}
+  return true;
+ },publishExactPreset:async({artifact,predecessorReceiptRef,...claim})=>{
+  published.push(claim.officialRequestId);
+  return {...claim,schemaVersion:capability.schemaVersion,artifactSha256:sha(artifact),
+   status:'committed',verified:true,receiptId:claim.taskId};
+ }};
+ const opts={dbPath:f.dbPath,pds,operation:'npc.preset'};
+ const results=await Promise.all([documentTick(opts),documentTick(opts)]);
+ assert.deepEqual(results.map(r=>r.state),['completed','completed']);
+ assert.deepEqual(published,[f.officialRequestId,other]);
+ const tasks=f.s.db.prepare("SELECT status,retry_count FROM workflow_tasks WHERE task_key='preset'").all();
+ assert.equal(tasks.length,2);
+ assert.ok(tasks.every(r=>r.status==='completed'&&r.retry_count===0));
+});
+
+test('content failure is returned and not immediately reselected',async()=>{
+ const {documentTick}=await import('./runner.mjs');
+ let runs=0;
+ const options={operation:'npc.preset',pds:{capability:async()=>true},
+  next:()=>({taskId:'first',officialRequestId:'one'}),
+  run:async()=>{runs++;return {state:'failed'};}};
+ assert.deepEqual(await documentTick(options),{state:'failed',operation:'npc.preset'});
+ assert.equal(runs,1);
+});
+
+test('draining before claim skips the candidate instead of canceling a running job',async()=>{
+ const {documentTick}=await import('./runner.mjs');
+ const drain=new AbortController();
+ assert.deepEqual(await documentTick({operation:'npc.preset',admissionSignal:drain.signal,
+  next:()=>({taskId:'one',officialRequestId:'same'}),pds:{capability:async()=>{drain.abort();return true;}},
+  run:()=>assert.fail('no claim during drain')}),{state:'stopping'});
+});

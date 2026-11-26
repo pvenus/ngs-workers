@@ -151,6 +151,7 @@ class CodexSession:
         flags = ["--disable", "apps"]
         env = {"HOME": str(Path.home()), "PATH": "/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin"}
         if self.profile == "document":
+            env["TMPDIR"] = tempfile.gettempdir()
             for feature in ("shell_tool", "unified_exec", "plugins", "skill_search"):
                 flags += ["--disable", feature]
             flags += ["-c", 'web_search="disabled"', "-c", "mcp_servers={}"]
@@ -161,7 +162,7 @@ class CodexSession:
         # A neutral working directory for the connection; each job gets its own cwd.
         try:
             self.child = subprocess.Popen([binary, "app-server", "--listen", "stdio://", *flags],
-                                          cwd="/private/tmp", env=env, stdin=subprocess.PIPE,
+                                          cwd=env.get("TMPDIR", "/private/tmp"), env=env, stdin=subprocess.PIPE,
                                           stdout=subprocess.PIPE,
                                           stderr=self.trace if self.trace else subprocess.DEVNULL,
                                           start_new_session=True)

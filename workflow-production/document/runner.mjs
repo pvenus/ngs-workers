@@ -38,12 +38,12 @@ export function parseArgs(args){
  throw Error('DOCUMENT_WORKER_EXPLICIT_MODE_REQUIRED');
 }
 
-export async function watchOnce({dbPath,pds,operation,signal,probe=probePresetDatabase}){
+export async function watchOnce({dbPath,pds,operation,signal,serverName,probe=probePresetDatabase}){
  try{if(probe(dbPath)!==true)return {ready:false,code:'DOCUMENT_WORKER_DATABASE_UNAVAILABLE'};}
  catch{return {ready:false,code:'DOCUMENT_WORKER_DATABASE_UNAVAILABLE'};}
  if(!await pds.capability(signal,operation))return {ready:false,code:'DOCUMENT_WORKER_PDS_UNAVAILABLE'};
  if(signal?.aborted)return {ready:false,code:'DOCUMENT_WORKER_STOPPING'};
- const heartbeat=await pds.heartbeat(signal);
+ const heartbeat=await pds.heartbeat(signal,serverName);
  return {ready:true,heartbeat};
 }
 
@@ -53,25 +53,37 @@ export async function executeOnce({dbPath,officialRequestId,taskId,pds,operation
 }
 
 
-export async function documentTick({dbPath,pds,operation,rendererFor,withPlanningSnapshot,signal,
+/** At most one claimed job per tick; only a lost claim immediately reselects. */
+export async function documentTick({dbPath,pds,operation,rendererFor,withPlanningSnapshot,signal,admissionSignal,
  next=nextWorkflowTaskFromPath,run=runDocumentFromPath,runProp=runPropDesignFromPath}){
- if(signal?.aborted)return {state:'stopping'};
- const candidates=[];
- for(const spec of supported){
-  if(operation&&operation!==spec.taskType)continue;
-  let task;
-  try{task=next(dbPath,spec);}catch{return {state:'not_ready',code:'DOCUMENT_WORKER_DATABASE_UNAVAILABLE'};}
-  if(task)candidates.push({...task,operation:spec.taskType});
+ const stopping=()=>signal?.aborted||admissionSignal?.aborted;
+ const skipped=new Set();
+ for(let attempt=0;attempt<16;attempt++){
+  if(stopping())return {state:'stopping'};
+  let ready;
+  try{
+   const candidates=[];
+   for(const spec of supported){
+    if(operation&&operation!==spec.taskType)continue;
+    const task=next(dbPath,spec);
+    if(task)candidates.push({...task,operation:spec.taskType});
+   }
+   ready=oldestRunnable(dbPath,candidates);
+  }catch{return {state:'not_ready',code:'DOCUMENT_WORKER_DATABASE_UNAVAILABLE'};}
+  let lost=false,unavailable=false;
+  for(const task of ready){
+   if(skipped.has(task.taskId))continue;
+   const operation=task.operation;
+   if(!await pds.capability(signal,operation)){unavailable=true;continue;}
+   if(stopping())return {state:'stopping'};
+   const result=await (isPropDesignOperation(operation)?runProp:run)({dbPath,pds,...task,withPlanningSnapshot,signal,
+    render:operation===PRESET?undefined:rendererFor(operation)});
+   if(result.state!=='not_claimable')return {...result,operation};
+   skipped.add(task.taskId);
+   lost=true;
+   break;
+  }
+  if(!lost)return unavailable?{state:'not_ready',code:'DOCUMENT_WORKER_PDS_UNAVAILABLE'}:{state:'idle'};
  }
- let ready;
- try{ready=oldestRunnable(dbPath,candidates);}catch{return {state:'not_ready',code:'DOCUMENT_WORKER_DATABASE_UNAVAILABLE'};}
- for(const task of ready){
-  const operation=task.operation;
-  if(!await pds.capability(signal,operation))continue;
-  if(signal?.aborted)return {state:'stopping'};
-  const result=await (isPropDesignOperation(operation)?runProp:run)({dbPath,pds,...task,withPlanningSnapshot,signal,
-   render:operation===PRESET?undefined:rendererFor(operation)});
-  return {...result,operation};
- }
- return ready.length?{state:'not_ready',code:'DOCUMENT_WORKER_PDS_UNAVAILABLE'}:{state:'idle'};
+ return {state:'idle'};
 }

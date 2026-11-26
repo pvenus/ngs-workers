@@ -222,9 +222,31 @@ before unsubscribing; requests never resume or fork threads. An uncertain turn
 is not replayed by the transport. The image worker still requires the pinned
 tool invocation, arguments, output identity and PNG checks before storage.
 Operational diagnostics record timings and fixed outcomes without prompts or
-provider outputs. The transport modules are byte-identical in the image and
-document scopes because OPS packages these targets independently.
+provider outputs. OPS packages the transport with each worker target independently.
 
 The document worker runs the executable bundled in ChatGPT Desktop. After an
 app update replaces that binary, the next document job opens a fresh app-server
 connection. No worker restart or release is needed for subsequent app updates.
+
+
+### Document worker slots
+
+Launch the same document worker build with `WORKFLOW_DOCUMENT_WORKER_SLOT=1`
+(default, OPS heartbeat `document-worker`) or `=2` (heartbeat
+`document-worker-2`). Both use the same official workflow ledger. Its existing
+dependency/claim/retry rules govern both slots; there is no new task or folder
+lock. A worker that loses an exact claim does not mark it failed or charge a
+retry. It immediately refreshes the eligible queue up to 16 times per tick.
+
+Each process has a private, unique `TMPDIR` below
+`~/Workspaces/Workers/runtime/document-worker-slots/<slot>/scratch/`.
+Planning snapshots and render work stay inside that root. Codex receives that
+slot's temporary directory; each ephemeral Codex thread starts in a fresh
+per-task subdirectory. Final outputs still use the existing PDS contract.
+
+An OPS deployment only pauses the target slot: create its `pause` sentinel,
+wait for its `active` lease to disappear, then replace/restart that instance.
+The lease spans selection, claim, rendering and publication. SIGTERM/SIGINT
+stop new admissions in resident mode but let an already claimed job finish.
+Only after verifying the old process has exited should OPS clear a leftover
+lease after an abrupt crash, and only then remove the pause to admit work.
