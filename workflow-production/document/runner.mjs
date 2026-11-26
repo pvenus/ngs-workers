@@ -1,3 +1,6 @@
+import {mapTypes,mapStage} from './map-contract.mjs';
+import {runMapFromPath} from './map-worker.mjs';
+const runner=(op,ordinary,prop)=>mapTypes.includes(op)?runMapFromPath:isPropDesignOperation(op)?prop:ordinary;
 import {isPropDesignOperation,propDesignKey,propDesignOperations} from './prop-design-contract.mjs';
 import {runPropDesignFromPath} from './prop-design-worker.mjs';
 import {probePresetDatabase,runDocumentFromPath} from './worker.mjs';
@@ -19,6 +22,7 @@ const supported=Object.freeze([
  ...Object.values(motionPoseRegistry).map(({planKey,planType})=>({workerType:'document',taskType:planType,taskKey:planKey,predecessorKey:'planning_representative'})),
  {workerType:'document',taskType:UPDATE,taskKey:'planning_update',predecessorKey:null},
  {workerType:'document',taskType:ADD,taskKey:'planning_add',predecessorKey:null},
+ ...mapTypes.map(taskType=>({workerType:'document',taskType,taskKey:mapStage,predecessorKey:null})),
  ...Object.keys(propDesignOperations).map(taskType=>({workerType:'document',taskType,taskKey:propDesignKey,predecessorKey:null})),
 ]);
 export function parseArgs(args){
@@ -26,7 +30,7 @@ export function parseArgs(args){
  if(args.at(-2)==='--audit-dir'&&args.at(-1).startsWith('/')){
   auditDirectory=args.at(-1);args=args.slice(0,-2);
  }
- const explicit=args.at(-2)==='--operation'&&[OVERVIEW,ART,REP,IDLE,COMBAT,CONCEPT,UPDATE,ADD,...Object.keys(propDesignOperations)].includes(args.at(-1))?args.at(-1):null;
+ const explicit=args.at(-2)==='--operation'&&[OVERVIEW,ART,REP,IDLE,COMBAT,CONCEPT,UPDATE,ADD,...mapTypes,...Object.keys(propDesignOperations)].includes(args.at(-1))?args.at(-1):null;
  if(auditDirectory!==undefined&&(!explicit||args[0]!=='--execute'||isPropDesignOperation(explicit)))throw Error('DOCUMENT_WORKER_EXPLICIT_MODE_REQUIRED');
  if(explicit)args=args.slice(0,-2);
  const op=explicit?{operation:explicit,...(auditDirectory?{auditDirectory}:{})}:{};
@@ -49,7 +53,7 @@ export async function watchOnce({dbPath,pds,operation,signal,serverName,probe=pr
 
 export async function executeOnce({dbPath,officialRequestId,taskId,pds,operation,render,withPlanningSnapshot,signal,run=runDocumentFromPath,runProp=runPropDesignFromPath}){
  if(!await pds.capability(signal,operation))return {state:'not_claimable',code:'DOCUMENT_WORKER_PDS_UNAVAILABLE'};
- return await (isPropDesignOperation(operation)?runProp:run)({dbPath,officialRequestId,taskId,pds,operation,render,withPlanningSnapshot,signal});
+ return await runner(operation,run,runProp)({dbPath,officialRequestId,taskId,pds,operation,render,withPlanningSnapshot,signal});
 }
 
 
@@ -76,7 +80,7 @@ export async function documentTick({dbPath,pds,operation,rendererFor,withPlannin
    const operation=task.operation;
    if(!await pds.capability(signal,operation)){unavailable=true;continue;}
    if(stopping())return {state:'stopping'};
-   const result=await (isPropDesignOperation(operation)?runProp:run)({dbPath,pds,...task,withPlanningSnapshot,signal,
+   const result=await runner(operation,run,runProp)({dbPath,pds,...task,withPlanningSnapshot,signal,
     render:operation===PRESET?undefined:rendererFor(operation)});
    if(result.state!=='not_claimable')return {...result,operation};
    skipped.add(task.taskId);

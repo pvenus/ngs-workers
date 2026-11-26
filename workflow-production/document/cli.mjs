@@ -1,4 +1,6 @@
 import {createDocumentSlot,documentSlotIdentity} from './document-slot.mjs';
+import {mapTypes} from './map-contract.mjs';
+import {createMapRenderer} from './map-worker.mjs';
 import {createPropDesignRenderer} from './prop-design-renderer.mjs';
 import {isPropDesignOperation} from './prop-design-contract.mjs';
 import {setTimeout as delay} from 'node:timers/promises';
@@ -20,7 +22,7 @@ try{
  const stopOrDrain=()=>settings.mode==='run'?drain.abort():stop.abort();
  process.on('SIGINT',stopOrDrain);process.on('SIGTERM',stopOrDrain);
  const emit=x=>console.log(JSON.stringify({service:serverName,...x}));
- const rendererFor=operation=>isPropDesignOperation(operation)?createPropDesignRenderer():createRepresentativeRenderer({auditDirectory:settings.auditDirectory,operation});
+ const rendererFor=operation=>mapTypes.includes(operation)?createMapRenderer():isPropDesignOperation(operation)?createPropDesignRenderer():createRepresentativeRenderer({auditDirectory:settings.auditDirectory,operation});
  if(settings.mode==='execute'){
   const release=workspace.tryEnter();
   let result;

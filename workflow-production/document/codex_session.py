@@ -178,7 +178,7 @@ class CodexSession:
                                     "capabilities": {}}, min(deadline, self.born + 15))
         self._send({"method": "initialized"}, deadline)
 
-    def run(self, binary, cwd, prompt, schema, timeout, output_limit):
+    def run(self, binary, cwd, prompt, schema, timeout, output_limit, local_images=()):
         started = time.monotonic()
         deadline = started + timeout
         reused = False
@@ -225,7 +225,8 @@ class CodexSession:
                 raise SessionError("invalid_thread")
             attached = True
             turn = self._request("turn/start", {"threadId": thread_id, "input": [
-                {"type": "text", "text": prompt, "text_elements": []}], "outputSchema": schema}, deadline, event)
+                {"type": "text", "text": prompt, "text_elements": []},
+                *({"type":"localImage","path":str(path)} for path in local_images)], "outputSchema": schema}, deadline, event)
             turn_id = turn["turn"]["id"]
             while terminal is None:
                 self._dispatch(self._recv(deadline), deadline, event)

@@ -1,3 +1,4 @@
+import {mapTypes,mapPds,mapCapability} from './map-contract.mjs';
 import {propDesignOperations,propDesignPath,propDesignCapability} from './prop-design-contract.mjs';
 import {request} from 'node:http';
 import {exact} from './vendor/planner-89c7568/planner.mjs';
@@ -13,6 +14,7 @@ export const idlePath='/v1/npcs/ownership/workflow-plan-idle';
 export const conceptCategoryPath='/v1/concept/category-workflow';
 export const heartbeatPath='/api/service-heartbeat';
 const routes={
+ ...Object.fromEntries(mapTypes.map(v=>[v,{path:mapPds,schema:mapCapability}])),
  ...Object.fromEntries(Object.keys(propDesignOperations).map(v=>[v,{path:propDesignPath,schema:propDesignCapability}])),
  'concept.category-generate':{path:conceptCategoryPath,schema:'workflow.concept-category-write.v1'},
  'npc.preset':{path:presetPath,schema:'workflow.preset-publication-receipt.v1'},
@@ -37,7 +39,7 @@ function conceptClaim(command,claimStamp){
 }
 
 export const npcPlanningReadDeadlineMs=30_000;
-export function requestLocalJson({port,path,method,body,deadline,signal,responseLimit=131072,npcPlanningRead=false,presetPublication=false}){
+export function requestLocalJson({port,path,method,body,deadline,signal,responseLimit=131072,npcPlanningRead=false,presetPublication=false,mapPublication=false}){
  return new Promise((resolve,reject)=>{
   const payload=body?Buffer.from(JSON.stringify(body)):null;
   const timeout=AbortSignal.timeout(deadline);
@@ -47,13 +49,16 @@ export function requestLocalJson({port,path,method,body,deadline,signal,response
   const req=request({hostname:'127.0.0.1',port,path,method,agent:false,signal:AbortSignal.any(signals),
    headers:{Accept:'application/json',...(payload?{'Content-Type':'application/json','Content-Length':payload.length}:{})}},resp=>{
    const presetConflict=presetPublication&&path===presetPath&&method==='POST'&&resp.statusCode===409;
-   if((resp.statusCode!==200&&!presetConflict)||!/^application\/json(?:\s*;|$)/i.test(String(resp.headers['content-type']??''))){resp.destroy();fail();return;}
+   const mapConflict=mapPublication&&resp.statusCode===409;
+   if((resp.statusCode!==200&&!presetConflict&&!mapConflict)||!/^application\/json(?:\s*;|$)/i.test(String(resp.headers['content-type']??''))){resp.destroy();fail();return;}
    let len=0;const chunks=[];
    resp.on('data',part=>{len+=part.length;if(len>responseLimit){req.destroy();fail();}else chunks.push(part);});
    resp.on('aborted',fail);resp.on('error',fail);
    resp.on('end',()=>{try{
     const reply=JSON.parse(new TextDecoder('utf-8',{fatal:true}).decode(Buffer.concat(chunks)));
-    if(presetConflict){
+    if(mapConflict&&reply?.error==='MAP_REVISION_CONFLICT')reject(Error('MAP_REVISION_CONFLICT'));
+    else if(mapConflict)fail();
+    else if(presetConflict){
      if(exact(reply,['error'])&&reply.error==='WORKFLOW_PRESET_REJECTED_BEFORE_WRITE')reject(Error(reply.error));
      else fail();
     }else resolve(reply);
@@ -94,6 +99,15 @@ export function localPorts({transport=requestLocalJson}={}){
    const {predecessorReceiptRef,artifact}=command;
    return await transport({port:8030,path:presetPath,method:'POST',
     body:{claim:claimOf(command,claimStamp),artifact:JSON.parse(artifact),predecessorReceiptRef},deadline:120000,presetPublication:true});
+  },
+  async readMap(claim,signal){
+   return await transport({port:8030,path:mapPds+'/read',method:'POST',body:{claim},deadline:10000,signal});
+  },
+  async readMapImage(claim,imageSha256,signal){
+   return await transport({port:8030,path:mapPds+'/image',method:'POST',body:{claim,imageSha256},deadline:20000,signal,responseLimit:12*1024*1024});
+  },
+  async publishMap(claim,graph){
+   return await transport({port:8030,path:mapPds,method:'POST',body:{claim,graph},deadline:30000,mapPublication:true});
   },
   async readPropDesign(claim,signal){
    return await transport({port:8030,path:propDesignPath+'/read',method:'POST',body:{claim},deadline:5000,signal});

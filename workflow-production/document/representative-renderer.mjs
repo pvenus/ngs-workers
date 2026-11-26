@@ -117,9 +117,9 @@ async function planningUpdatePrompt(operation){
 }
 const session=createCodexSessionClient({script:new URL('./document-session.py',import.meta.url)});
 export const closeDocumentCodexSession=()=>session.close();
-async function execute(binary,cwd,prompt,schema,timeoutMs,signal,outputLimit=maxOutput){
+async function execute(binary,cwd,prompt,schema,timeoutMs,signal,outputLimit=maxOutput,images=[]){
  try{
-  return await session.call({binary,cwd,prompt,schema,timeoutMs,outputLimit},
+  return await session.call({binary,cwd,prompt,schema,timeoutMs,outputLimit,...(images.length?{images}:{})},
    {signal,timeoutMs:timeoutMs+10_000,maxReply:2*outputLimit+4096});
  }catch(error){
   throw Error(({cancelled:'REPRESENTATIVE_CODEX_CANCELLED',timeout:'REPRESENTATIVE_CODEX_TIMEOUT',
@@ -158,7 +158,7 @@ async function prepareAudit(path,data,prompt){
 
 /** Reuse the same local Codex sandbox/throttling profile for a typed, non-Markdown artifact. */
 export async function executeTypedCodexDocument({
- codexPath=REPRESENTATIVE_CODEX_PATH,timeoutMs=120_000,signal,prompt,outputSchema,
+ codexPath=REPRESENTATIVE_CODEX_PATH,timeoutMs=120_000,signal,prompt,outputSchema,imageBytes=[],
 }){
  if(!absolute(codexPath)||!Number.isSafeInteger(timeoutMs)||timeoutMs<1||timeoutMs>300_000||
     typeof prompt!=='string'||Buffer.byteLength(prompt)>maxPromptBytes)throw Error('REPRESENTATIVE_CODEX_CONFIGURATION');
@@ -166,7 +166,14 @@ export async function executeTypedCodexDocument({
  try{accessSync(codexPath,constants.X_OK);}catch{throw Error('REPRESENTATIVE_CODEX_UNAVAILABLE');}
  const root=await mkdtemp(join(tmpdir(),'ngs-prop-design-'));
  try{
-  return await execute(codexPath,root,prompt,outputSchema,timeoutMs,signal);
+  if(!Array.isArray(imageBytes)||imageBytes.length>12||!imageBytes.every(x=>Buffer.isBuffer(x)&&0<x.length&&x.length<=8*1024*1024))
+   throw Error('REPRESENTATIVE_CODEX_CONFIGURATION');
+  const names=[];
+  for(const [i,bytes] of imageBytes.entries()){
+   const name='map-image-'+String(i+1).padStart(2,'0')+'.png';
+   await writeFile(join(root,name),bytes,{flag:'wx',mode:0o600});names.push(name);
+  }
+  return await execute(codexPath,root,prompt,outputSchema,timeoutMs,signal,maxOutput,names);
  }finally{await rm(root,{recursive:true,force:true});}
 }
 
