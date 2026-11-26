@@ -1,4 +1,4 @@
-"""Correct a verified upscaled background loop using its pinned pixel still's palette."""
+"""Correct a sequence using the shared palette of its pinned RGB reference."""
 from pathlib import Path
 import sys
 from PIL import Image
@@ -16,7 +16,7 @@ def correct(root, width, height):
     if not all(256 <= n <= 1024 and n % 64 == 0 for n in (width, height)):
         raise ValueError('BACKGROUND_ANIMATION_PIXEL_GEOMETRY')
     reference = open_rgb(root / 'reference.png')
-    if reference.size != (1536, 1024):
+    if not 1 <= reference.width * reference.height <= 4_194_304:
         raise ValueError('BACKGROUND_ANIMATION_PIXEL_REFERENCE_GEOMETRY')
     histogram = reference.getcolors(33)
     if histogram is None or len(histogram) > 32:

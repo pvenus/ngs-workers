@@ -236,3 +236,48 @@ test('background-only postprocess: '+scenario,async t=>{
  }
  assert.equal(chooseCinematicSequence(path),null);
 });
+
+test('staged request exposes every dependency, persists only its predecessor, and uploads only final corrected frames',async t=>{
+ const {db,path,root}=fixture(t);
+ const variant='pixel',sourceSha256=sha(source),backgroundSha256=sourceSha256;
+ const refs={pixel:sourceSha256},type='background.animation.workflow',schema='ngs.background-animation-workflow.v2';
+ const body=canonical({schemaVersion:schema,projectId:'binari',backgroundSha256,references:refs,motionPrompt:input.motionPrompt,playback});
+ db.prepare('UPDATE workflow_runs SET request_type=?,schema_version=?,payload=?,payload_sha256=?').run(type,schema,body,sha(body));
+ db.prepare('DELETE FROM workflow_tasks').run();
+ const chain=[['wan','media.animation.render'],['upscale','media.frames.upscale'],
+  ['pixel_correct','media.frames.pixel-correct'],['publish','media.sequence.publish']];
+ const base='background_animation_pixel',id='request.official.'+sha(canonical([officialRequestId,base]));
+ let dep=null;
+ const jobs=chain.map(([stage,op])=>{
+  const key=base+'_'+stage,taskId='workflow.task.'+sha(canonical([officialRequestId,key]));
+  db.prepare("INSERT INTO workflow_tasks VALUES(?,?,?,?,?,?,NULL,2,?,'pending',0)").run(taskId,officialRequestId,key,op,'animation',
+   canonical({...input,stage,variant,backgroundSha256}),dep);dep=taskId;
+  return {officialRequestId,taskId,stage};
+ });
+ const stages=[],uploads=[],checkpointRoot=join(root,'checkpoints');
+ let final;
+ const upscale=raw.frames.map((_,i)=>still(i,{w:256,h:256}));
+ const corrected=raw.frames.map((_,i)=>still(i+45,{w:256,h:256}));
+ for(const {stage,...job} of jobs){
+  assert.deepEqual({...chooseCinematicSequence(path)},job);
+  const result=await executeCinematicSequence(db,job,new AbortController().signal,{
+   ports:{read:async()=>input,asset:async()=>source,
+    stage:async(_,f)=>{assert.equal(stage,'publish');uploads.push(f.sha256);return {ok:true,index:f.index,sha256:f.sha256};},
+    publish:async(_,manifest)=>{final=manifest;return {ok:true,resultRef:'binari/cinematics/sequences/'+id+'/manifest.json'};}},
+   runI2V:async()=>{stages.push(stage);return raw;},
+   runUpscale:async({output})=>{stages.push(stage);assert.deepEqual(output,raw);return {frames:upscale,width:256,height:256,fps:24};},
+   runPixelCorrection:async({output,reference})=>{stages.push(stage);assert.deepEqual(reference,source);
+    assert.deepEqual(output.frames,upscale);return {...output,frames:corrected};},
+   checkpointRoot,makeDir:async()=>root,cleanup:async()=>{},
+  });
+  assert.equal(result.state,'completed',JSON.stringify(result));
+  if(stage!=='publish')assert.match(result.resultRef,/^background\.transient\.[a-f0-9]{64}$/u);
+ }
+ assert.deepEqual(stages,['wan','upscale','pixel_correct']);
+ assert.deepEqual(uploads,corrected.map(sha));
+ assert.equal(final.group.variant,variant);
+ assert.equal(final.upscale.pixelCorrection.upscaledFramesSha256,sha(canonical(upscale.map(sha))));
+ assert.equal(chooseCinematicSequence(path),null);
+ const {readdir}=await import('node:fs/promises');
+ assert.deepEqual(await readdir(join(checkpointRoot,officialRequestId,'pixel')),[]);
+});

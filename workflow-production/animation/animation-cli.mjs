@@ -9,8 +9,8 @@ import {setTimeout as delay} from 'node:timers/promises';
 import {fileURLToPath} from 'node:url';
 import {createWarmAnimation,spawnAnimationChannel} from './animation-warm.mjs';
 import {chooseI2V,executeI2V,i2vPorts} from './i2v-worker.mjs';
-import {createBackgroundAnimationPixelCorrection} from './background-animation-pixel.mjs';
-import {createBackgroundSeedVR2} from './background-seedvr2.mjs';
+import {createReferencePaletteCorrection} from './reference-palette-correction.mjs';
+import {createSeedVR2Upscaler} from './seedvr2-upscale.mjs';
 import {createAnimationModelSwitch} from './i2v-model-switch.mjs';
 import {choosePropAnimation,executePropAnimation,propAnimationPorts} from './prop-animation-worker.mjs';
 import {confirmBindingPath,defaultPropBinding,propAnimationReadiness,cinematicAnimationReadiness,cinematicSequenceReadiness} from './prop-animation-readiness.mjs';
@@ -300,8 +300,8 @@ if(process.argv[1]===fileURLToPath(import.meta.url)){
   i2vModel=createWanI2V({binding});
   preparePropInput=createPropI2VInputFraming(binding.python);
   const modelsRoot=process.env.WORKFLOW_SEEDVR2_MODELS_ROOT??join(homedir(),'Workspaces','Workers','runtime','seedvr2-fp16-staging','models');
-  backgroundPixelCorrection=createBackgroundAnimationPixelCorrection(binding.python);
-  backgroundUpscaler=createBackgroundSeedVR2({binding:{modelsRoot,comfyRoot:binding.comfyRoot,python:binding.python}});
+  backgroundPixelCorrection=createReferencePaletteCorrection(binding.python);
+  backgroundUpscaler=createSeedVR2Upscaler({binding:{modelsRoot,comfyRoot:binding.comfyRoot,python:binding.python}});
  }catch(e){
   if(override||e?.code!=='ENOENT')console.error(JSON.stringify({state:'not_ready',code:'I2V_BINDING_INVALID'}));
  }
@@ -373,6 +373,7 @@ if(process.argv[1]===fileURLToPath(import.meta.url)){
     insist(await sequence.ready(signal),'CINEMATIC_SEQUENCE_PDS_UNAVAILABLE');
     signal.throwIfAborted();
     const result=await executeCinematicSequence(db,t,signal,{ports:sequence,runI2V:job=>modelSlot.runI2V(job),
+     checkpointRoot:join(homedir(),'Workspaces','Workers','runtime','sequence-checkpoints'),
      ...(backgroundUpscaler?{runUpscale:job=>modelSlot.runUpscale(job),probeUpscale:()=>backgroundUpscaler.probe(),runPixelCorrection:backgroundPixelCorrection}:{})});
     if(result.state==='completed')console.log(JSON.stringify(result));
     else if(result.state!=='stale')console.error(JSON.stringify(result));

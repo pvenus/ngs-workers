@@ -6,7 +6,7 @@ import {mkdtemp,realpath,readFile,writeFile,readlink,rm} from 'node:fs/promises'
 import {join} from 'node:path';
 import {tmpdir} from 'node:os';
 import {crc32,deflateSync} from 'node:zlib';
-import {buildBackgroundSeedVR2Graph,createBackgroundSeedVR2} from './background-seedvr2.mjs';
+import {buildBackgroundSeedVR2Graph,createSeedVR2Upscaler} from './seedvr2-upscale.mjs';
 import {createAnimationModelSwitch} from './i2v-model-switch.mjs';
 
 function validPng(w,h){
@@ -39,7 +39,7 @@ test('owned upscale on isolated fixture: '+mode,async t=>{
  const path=join(dir,'background-seedvr2'),source=validPng(128,128),hi=validPng(256,256);
  const {prompt,saveId}=buildBackgroundSeedVR2Graph();
  let child,token,joined=false,prompts=0;
- const engine=createBackgroundSeedVR2({binding,ports:{
+ const engine=createSeedVR2Upscaler({binding,ports:{
   verify:async()=>{},pause:()=>new Promise(setImmediate),
   spawn(bin,args,opts){
    assert.equal(bin,binding.python);

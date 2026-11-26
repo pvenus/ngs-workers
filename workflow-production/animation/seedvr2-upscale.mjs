@@ -62,7 +62,7 @@ async function verify({comfyRoot,python,modelsRoot},cache){
  for(const [,name,sha] of modelPins)await verifyI2VFile(join(modelsRoot,name),sha,{cache});
  await verifyI2VFile(join(comfyRoot,'comfy_extras/nodes_seedvr.py'),nativeNodeSha,{cache});
 }
-export function createBackgroundSeedVR2({binding,ports={}}){
+export function createSeedVR2Upscaler({binding,ports={}}){
  const http=ports.fetch??fetch,pause=ports.pause??sleep,start=ports.spawn??spawn,send=ports.kill??process.kill;
  const inspect=ports.verify??verify,cache=new Map();
  let busy=false,unsafe=false;

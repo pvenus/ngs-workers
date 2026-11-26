@@ -5,11 +5,11 @@ import {join} from 'node:path';
 import {promisify} from 'node:util';
 import {fileURLToPath} from 'node:url';
 import {maxFrameBytes,png} from './i2v-worker.mjs';
-import {backgroundUpscaleMaxBytes} from './background-seedvr2.mjs';
+import {backgroundUpscaleMaxBytes} from './seedvr2-upscale.mjs';
 
-const run=promisify(execFile),entry=fileURLToPath(new URL('../postprocess/background-animation-pixel.py',import.meta.url));
+const run=promisify(execFile),entry=fileURLToPath(new URL('../postprocess/reference-palette-sequence.py',import.meta.url));
 export const backgroundAnimationPixelMethod='reference-palette-v1';
-export function createBackgroundAnimationPixelCorrection(python,{execute=run}={}){
+export function createReferencePaletteCorrection(python,{execute=run}={}){
  return async ({dir,reference,output,signal})=>{
   const path=join(dir,'background-animation-pixel'),src=join(path,'input'),dst=join(path,'output');
   await mkdir(path,{mode:0o700});await mkdir(src,{mode:0o700});await mkdir(dst,{mode:0o700});

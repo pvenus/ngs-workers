@@ -112,3 +112,5 @@ temporary job directory after a confirmed model exit. This postprocess is
 not applied to regular cinematic sequences, NPCs, or props.
 
 Pixel background variant: validate Wan → validate SeedVR2 2× → correct all frames to the pinned still's shared palette without resizing → validate and publish. A correction error stages no frames. Cinematic backgrounds publish the verified SeedVR2 output without palette correction.
+
+Background v2 is planned as independent cinematic/pixel chains of reusable media operations. The same resident owns model arbitration. Intermediates are private, digest-bound checkpoints in its existing runtime storage and are never published assets. Only the final publish claim can write to PDS/Filex. The v1 path is only for compatible execution of already accepted jobs.
