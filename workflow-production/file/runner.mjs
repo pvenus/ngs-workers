@@ -1,4 +1,4 @@
-import {fileDeleteTaskKey,fileDeleteType,propDeleteRoot,npcDeleteRoot} from './file-delete-envelope.mjs';
+import {fileDeleteTaskKey,fileDeleteType,propDeleteRoot,npcDeleteRoot,backgroundDeleteRoot} from './file-delete-envelope.mjs';
 import {nextWorkflowTaskFromPath,fileDeleteTargetRootFromPath} from './workflow-ready.mjs';
 import {conceptDelete,probeDeleteDatabase,runDeleteFromPath} from './worker.mjs';
 import {npcDelete,audioDelete,audioDeleteKey,singleTargetDeleteSchema} from './file-delete.mjs';
@@ -51,7 +51,7 @@ const scopes=Object.freeze([
  {workerType:'file',taskType:'npc.delete-folder',taskKey:'delete',predecessorKey:null},
  {workerType:'file',taskType:conceptDelete,taskKey:'category_delete',predecessorKey:null},
  {workerType:'file',taskType:audioDelete,taskKey:audioDeleteKey,predecessorKey:null},
- ...[propDeleteRoot,npcDeleteRoot].map(targetRoot=>({workerType:'file',taskType:fileDeleteType,taskKey:fileDeleteTaskKey,predecessorKey:null,targetRoot})),
+ ...[propDeleteRoot,npcDeleteRoot,backgroundDeleteRoot].map(targetRoot=>({workerType:'file',taskType:fileDeleteType,taskKey:fileDeleteTaskKey,predecessorKey:null,targetRoot})),
  ...manifestMutationScopes,
 ]);
 

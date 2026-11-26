@@ -31,7 +31,7 @@ export const workflowTaskRetrySetSql="retry_count=retry_count+CASE WHEN status='
 /** Candidate discovery is read only; the exact claim transaction is authoritative. */
 export function nextWorkflowTaskFromPath(dbPath,{workerType,taskType,taskKey,predecessorKey,targetRoot=null}){
  const name=value=>typeof value==='string'&&/^[a-z][a-z0-9._-]*$/.test(value);
- if(targetRoot!==null&&(!['canonical-files/binari/props','canonical-files/binari/npcs'].includes(targetRoot)||taskType!=='file.delete')||!name(workerType)||!name(taskType)||!name(taskKey)||(predecessorKey!==null&&!name(predecessorKey)))
+ if(targetRoot!==null&&(!['canonical-files/binari/props','canonical-files/binari/npcs','canonical-files/binari/cinematics/backgrounds'].includes(targetRoot)||taskType!=='file.delete')||!name(workerType)||!name(taskType)||!name(taskKey)||(predecessorKey!==null&&!name(predecessorKey)))
   throw Error('WORKFLOW_POLL_SCOPE_REQUIRED');
  assertDatabasePath(dbPath);
  const db=new DatabaseSync(dbPath,{readOnly:true});
@@ -70,6 +70,6 @@ export function fileDeleteTargetRootFromPath(dbPath,officialRequestId,taskId){
    .get(taskId,officialRequestId);
   if(!row)return null;
   const root=JSON.parse(row.task_input)?.target?.root;
-  return ['canonical-files/binari/props','canonical-files/binari/npcs'].includes(root)?root:null;
+  return ['canonical-files/binari/props','canonical-files/binari/npcs','canonical-files/binari/cinematics/backgrounds'].includes(root)?root:null;
  }finally{db.close();}
 }
