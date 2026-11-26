@@ -14,7 +14,7 @@ function claim(db,{officialRequestId,taskId,operation}){
  try{
   const row=db.prepare(`SELECT r.payload,r.payload_sha256,r.registered_at,t.task_input,t.updated_at,t.status
    FROM workflow_tasks t JOIN workflow_runs r USING(official_request_id)
-   WHERE ${scope} AND ${documentTaskEligibleSql}`)
+   WHERE ${scope} AND ${documentTaskEligibleSql(db)}`)
    .get(projectId,spec.requestType,spec.schema,operation,propDesignKey,worker,taskId,officialRequestId);
   if(!row){db.exec('COMMIT');return null;}
   const payload=JSON.parse(row.payload),input=expectedInput(payload,operation);
@@ -25,7 +25,7 @@ function claim(db,{officialRequestId,taskId,operation}){
   requirePropDesign(row.registered_at<=claimStamp);
   const done=db.prepare(`UPDATE workflow_tasks AS t SET status='running',updated_at=?,${workflowTaskRetrySetSql}
    WHERE task_id=? AND official_request_id=? AND worker_type=? AND task_type=? AND task_key=? AND updated_at=? AND status=?
-   AND result_ref IS NULL AND depends_on_task_id IS NULL AND ${workflowTaskEligibleSql('t')}`)
+   AND result_ref IS NULL AND depends_on_task_id IS NULL AND ${workflowTaskEligibleSql(db,'t')}`)
    .run(claimStamp,taskId,officialRequestId,worker,operation,propDesignKey,row.updated_at,row.status);
   requirePropDesign(done.changes===1);
   db.exec('COMMIT');

@@ -72,13 +72,13 @@ function buildUpdatePlan(row){
  return {payload,tasks:[{id:taskKey(row.officialRequestId,contracts[UPDATE].key),key:contracts[UPDATE].key,
   dependsOn:null,input:{npcId:row.payload.npcId,role:row.payload.role}}]};
 }
-const ready=`SELECT t.task_id,t.task_key,t.task_input,t.depends_on_task_id,
+const ready=db=>`SELECT t.task_id,t.task_key,t.task_input,t.depends_on_task_id,
   t.updated_at AS task_updated_at,
   (SELECT p.result_ref FROM workflow_tasks p
    WHERE p.task_id=t.depends_on_task_id AND p.official_request_id=t.official_request_id) AS parent_result_ref,
   r.*
  FROM workflow_tasks t JOIN workflow_runs r USING(official_request_id)
- WHERE t.task_id=? AND r.official_request_id=? AND ${documentTaskEligibleSql} AND t.task_type=?
+ WHERE t.task_id=? AND r.official_request_id=? AND ${documentTaskEligibleSql(db)} AND t.task_type=?
  AND t.worker_type='document' AND t.result_ref IS NULL AND r.state='planned'
  AND (t.depends_on_task_id IS NULL OR EXISTS (
    SELECT 1 FROM workflow_tasks p
@@ -88,7 +88,8 @@ const ready=`SELECT t.task_id,t.task_key,t.task_input,t.depends_on_task_id,
 function claim(db,taskId,officialRequestId,operation){
  db.exec('BEGIN IMMEDIATE');
  try{
-  const row=db.prepare(ready).get(taskId,officialRequestId,operation);
+  const readySql=ready(db);
+  const row=db.prepare(readySql).get(taskId,officialRequestId,operation);
   if(!row){db.exec('COMMIT');return null;}
   const extra=db.prepare("SELECT task_key FROM workflow_tasks WHERE official_request_id=? AND task_key IN ('planning_overview','planning_portrait_art')").all(officialRequestId);
   if(extra.length!==0&&extra.length!==2)throw Error('WORKFLOW_DOCUMENT_GRAPH_INVALID');
@@ -105,7 +106,7 @@ function claim(db,taskId,officialRequestId,operation){
   const stamp=Math.max(Date.now(),row.task_updated_at+1);
   if(!Number.isSafeInteger(stamp))throw Error('WORKFLOW_PRESET_CLAIM_CLOCK');
   const changed=db.prepare(`UPDATE workflow_tasks SET status='running',updated_at=?,${workflowTaskRetrySetSql}
-    WHERE task_id=(SELECT task_id FROM (${ready})) AND updated_at=?`).run(stamp,taskId,officialRequestId,operation,row.task_updated_at).changes;
+    WHERE task_id=(SELECT task_id FROM (${readySql})) AND updated_at=?`).run(stamp,taskId,officialRequestId,operation,row.task_updated_at).changes;
   if(changed!==1)throw Error('WORKFLOW_PRESET_CLAIM_CHANGED');
   const payload=JSON.parse(plan.payload);
   const command=Object.freeze({officialRequestId:row.official_request_id,taskId,projectId:row.project_id,

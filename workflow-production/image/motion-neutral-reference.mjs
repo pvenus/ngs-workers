@@ -31,7 +31,7 @@ function claim(db,officialRequestId,taskId){
    FROM workflow_tasks t JOIN workflow_runs r USING(official_request_id)
    WHERE t.official_request_id=? AND t.task_id=? AND r.state='planned'
     AND t.task_key=? AND t.task_type=? AND t.worker_type='image' AND t.depends_on_task_id IS NULL
-    AND t.result_ref IS NULL AND ${workflowTaskEligibleSql('t')}`).get(officialRequestId,taskId,motionImageKey,motionImageOperation);
+    AND t.result_ref IS NULL AND ${workflowTaskEligibleSql(db,'t')}`).get(officialRequestId,taskId,motionImageKey,motionImageOperation);
   if(!row){commit(db);return null;}
   const payload=JSON.parse(row.payload);
   assert(exact(payload,['schemaVersion','projectId','sourcePresetId','variantPresetId','label'])&&
@@ -47,7 +47,7 @@ function claim(db,officialRequestId,taskId){
    Number.isSafeInteger(row.task_updated_at)&&row.task_updated_at>=0&&row.task_updated_at<Number.MAX_SAFE_INTEGER-1);
   const stamp=Math.max(Date.now(),row.task_updated_at+1);
   assert(db.prepare(`UPDATE workflow_tasks SET status='running',updated_at=?,${workflowTaskRetrySetSql}
-   WHERE official_request_id=? AND task_id=? AND updated_at=? AND result_ref IS NULL AND ${workflowTaskEligibleSql()}`)
+   WHERE official_request_id=? AND task_id=? AND updated_at=? AND result_ref IS NULL AND ${workflowTaskEligibleSql(db)}`)
    .run(stamp,officialRequestId,taskId,row.task_updated_at).changes===1);
   commit(db);
   return {row,claim:{officialRequestId,taskId,projectId:row.project_id,payloadSha256:row.payload_sha256,claimStamp:stamp}};

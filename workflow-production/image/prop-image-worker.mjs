@@ -24,7 +24,7 @@ function claim(db,officialRequestId,taskId){
    WHERE t.official_request_id=? AND t.task_id=? AND r.state='planned' AND r.reason IS NULL
     AND r.request_type=? AND r.project_id='binari' AND r.schema_version=? AND t.task_key=?
     AND t.task_type=? AND t.worker_type='image' AND t.depends_on_task_id IS NULL
-    AND t.result_ref IS NULL AND ${workflowTaskEligibleSql('t')}`)
+    AND t.result_ref IS NULL AND ${workflowTaskEligibleSql(db,'t')}`)
    .get(officialRequestId,taskId,propImageOperation,officialSchema,propImageKey,propImageOperation);
   if(!row){db.exec('COMMIT');return null;}
   const payload=JSON.parse(row.payload);
@@ -33,7 +33,7 @@ function claim(db,officialRequestId,taskId){
   const request=validatePropImageRequest(payload);
   const claimStamp=Math.max(Date.now(),row.task_stamp+1);
   assert(db.prepare(`UPDATE workflow_tasks SET status='running',updated_at=?,${workflowTaskRetrySetSql}
-    WHERE official_request_id=? AND task_id=? AND updated_at=? AND result_ref IS NULL AND ${workflowTaskEligibleSql()}`)
+    WHERE official_request_id=? AND task_id=? AND updated_at=? AND result_ref IS NULL AND ${workflowTaskEligibleSql(db)}`)
    .run(claimStamp,officialRequestId,taskId,row.task_stamp).changes===1);
   db.exec('COMMIT');
   return {row,request,claim:{officialRequestId,taskId,claimStamp,projectId:'binari',payloadSha256:row.payload_sha256}};

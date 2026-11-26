@@ -72,7 +72,7 @@ function candidate(db,t,stamp){
  const running=stamp!==undefined;
  const row=db.prepare(`SELECT t.*,r.payload,r.payload_sha256,r.registered_at
   FROM workflow_tasks t JOIN workflow_runs r USING(official_request_id) WHERE ${scope}
-  AND t.task_id=? AND t.official_request_id=? AND ${running?"t.status='running' AND t.updated_at=?":workflowTaskEligibleSql('t')}`)
+  AND t.task_id=? AND t.official_request_id=? AND ${running?"t.status='running' AND t.updated_at=?":workflowTaskEligibleSql(db,'t')}`)
   .get(...args,t.taskId,t.officialRequestId,...(running?[stamp]:[]));
  if(!row)return null;
  const p=JSON.parse(row.payload);
@@ -94,7 +94,7 @@ function claimSource(db,t){
    row.registered_at>=0&&row.registered_at<=claimStamp);
   const ownerTracked=hasPortraitReadOwner(db);
   require(db.prepare(`UPDATE workflow_tasks SET status='running',updated_at=?,${workflowTaskRetrySetSql}${ownerTracked?',portrait_read_owner_pid=?':''}
-   WHERE task_id=? AND official_request_id=? AND updated_at=? AND result_ref IS NULL AND ${workflowTaskEligibleSql()}`)
+   WHERE task_id=? AND official_request_id=? AND updated_at=? AND result_ref IS NULL AND ${workflowTaskEligibleSql(db)}`)
    .run(claimStamp,...(ownerTracked?[process.pid]:[]),t.taskId,t.officialRequestId,row.updated_at).changes===1);
   return {...b,ownerTracked,claim:Object.freeze({taskId:t.taskId,officialRequestId:t.officialRequestId,projectId,payloadSha256:row.payload_sha256,claimStamp})};
  });

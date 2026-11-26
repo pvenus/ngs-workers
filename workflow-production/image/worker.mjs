@@ -46,13 +46,13 @@ const imageArtifacts={
  [COMBAT_REFERENCE_PORTRAIT]:'workflow.npc-combat-reference-portrait-artifact.v1',
  [COMBAT_DIRECTION_PORTRAIT]:'workflow.npc-combat-direction-portrait-artifact.v1',
 };
-const ready=(retry,idle)=>`SELECT t.task_id,t.task_key,t.task_input,t.depends_on_task_id,
+const ready=(db,retry,idle)=>`SELECT t.task_id,t.task_key,t.task_input,t.depends_on_task_id,
   t.updated_at AS task_updated_at,
   (SELECT p.result_ref FROM workflow_tasks p
    WHERE p.task_id=t.depends_on_task_id AND p.official_request_id=t.official_request_id) AS parent_result_ref,
   r.*
  FROM workflow_tasks t JOIN workflow_runs r USING(official_request_id)
- WHERE t.task_id=? AND r.official_request_id=? AND ${retry?workflowTaskEligibleSql('t'):"t.status='pending'"} AND t.task_type=?
+ WHERE t.task_id=? AND r.official_request_id=? AND ${retry?workflowTaskEligibleSql(db,'t'):"t.status='pending'"} AND t.task_type=?
  AND t.worker_type=? AND t.result_ref IS NULL AND r.state='planned'
  AND (t.depends_on_task_id IS NULL OR EXISTS (
    SELECT 1 FROM workflow_tasks p
@@ -67,7 +67,7 @@ function claim(db,taskId,officialRequestId,operation){
  try{
   const role=contracts[operation].worker;
   const canRetry=role==='image';
-  const reference=referenceOperation(operation),query=ready(canRetry,reference);
+  const reference=referenceOperation(operation),query=ready(db,canRetry,reference);
   const primary=[taskId,officialRequestId,operation,role];
   if(reference)primary.push('workflow.task.'+sha(canonical([officialRequestId,idleImagePrerequisite.taskKey])));
   const row=db.prepare(query).get(...primary);

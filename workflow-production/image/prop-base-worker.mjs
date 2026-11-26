@@ -29,7 +29,7 @@ export function nextPropBaseFromPath(dbPath){
   protectSchema(db);
   return db.prepare(`SELECT t.task_id AS taskId,t.official_request_id AS officialRequestId,t.task_type AS operation
   FROM workflow_tasks t JOIN workflow_runs r USING(official_request_id) ${parents}
-  WHERE ${scope} AND ${workflowTaskEligibleSql('t')}
+  WHERE ${scope} AND ${workflowTaskEligibleSql(db,'t')}
    AND ((t.task_type=? AND r.request_type=? AND r.schema_version=? AND d.task_type=?) OR
         (t.task_type=? AND r.request_type=? AND r.schema_version=? AND d.task_type=?))
    AND d.result_ref GLOB 'prop.design-spec.*'
@@ -46,7 +46,7 @@ const currentSql=`SELECT t.*,r.request_type,r.schema_version,r.payload,r.payload
  WHERE ${scope} AND r.request_type=? AND r.schema_version=? AND t.task_type=? AND t.official_request_id=? AND t.task_id=?`;
 function readCurrent(db,{operation,officialRequestId,taskId},eligible=false){
  const spec=propBaseOperations[operation];
- return db.prepare(currentSql+(eligible?' AND '+workflowTaskEligibleSql('t'):''))
+ return db.prepare(currentSql+(eligible?' AND '+workflowTaskEligibleSql(db,'t'):''))
   .get(spec.type,spec.schema,operation,officialRequestId,taskId);
 }
 function claimTask(db,request){
@@ -68,7 +68,7 @@ function claimTask(db,request){
   const ownerTracked=hasPortraitReadOwner(db);
   need(db.prepare(`UPDATE workflow_tasks SET status='running',updated_at=?,${ownerTracked?'portrait_read_owner_pid=?,':''}${workflowTaskRetrySetSql}
    WHERE task_id=? AND official_request_id=? AND worker_type=? AND task_type=? AND task_key=?
-    AND updated_at=? AND status=? AND result_ref IS NULL AND ${workflowTaskEligibleSql()}`)
+    AND updated_at=? AND status=? AND result_ref IS NULL AND ${workflowTaskEligibleSql(db)}`)
    .run(claimStamp,...(ownerTracked?[process.pid]:[]),taskId,officialRequestId,worker,operation,propKeys.base,row.updated_at,row.status).changes===1);
   db.exec('COMMIT');
   return {row,design,ownerTracked,reference:base.input.reference,request,claim:{officialRequestId,taskId,projectId,payloadSha256:row.payload_sha256,claimStamp}};

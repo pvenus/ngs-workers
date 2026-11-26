@@ -18,19 +18,27 @@ export function assertDatabasePath(dbPath){
 export const workflowTaskRetryDelayMs=600_000;
 export const workflowTaskMaxRetries=3;
 
-/** A failed attempt is eligible only at or after its 10-minute database-clock boundary. */
-export function workflowTaskEligibleSql(alias=''){
+// Read the active ledger capability once per SQLite connection. During a
+// coordinated rollout an old ledger still safely enforces its original cap.
+const retryPolicy=new WeakMap();
+function hasRetryPolicy(db){
+ if(!retryPolicy.has(db))retryPolicy.set(db,db.prepare('PRAGMA table_info(workflow_tasks)').all().some(c=>c.name==='retry_limit'));
+ return retryPolicy.get(db);
+}
+/** Use the stored cap and SQLite's clock; never reopen legacy exhausted rows. */
+export function workflowTaskEligibleSql(db,alias=''){
  if(alias!==''&&!/^[a-z][a-z0-9_]*$/.test(alias))throw Error('WORKFLOW_RETRY_SQL_ALIAS');
  const p=alias?alias+'.':'';
- return `(${p}status='pending' OR (${p}status='failed' AND ${p}retry_count<${workflowTaskMaxRetries} AND ${p}updated_at<=CAST(unixepoch('subsec')*1000 AS INTEGER)-${workflowTaskRetryDelayMs}))`;
+ const pinned=hasRetryPolicy(db),cap=pinned?p+'retry_limit':workflowTaskMaxRetries;
+ const wait=pinned?`(CASE ${p}retry_limit WHEN 30 THEN 60000 ELSE ${workflowTaskRetryDelayMs} END)`:workflowTaskRetryDelayMs;
+ return `(${p}status='pending' OR (${p}status='failed' AND ${p}retry_count<${cap} AND ${p}updated_at<=CAST(unixepoch('subsec')*1000 AS INTEGER)-${wait}))`;
 }
 
-// New authored categories use exactly one section-body invocation, not a
-// second render for a failed stage. Historical add and unrelated retries stay unchanged.
-export const documentTaskEligibleSql=`${workflowTaskEligibleSql('t')} AND NOT (t.status='failed' AND (
- (t.task_type='npc.planning.add' AND r.request_type='npc.planning.add') OR
- (t.task_type='concept.category-generate' AND r.request_type='concept.category.workflow'
-  AND json_extract(r.payload,'$.operation') IS 'add' AND json_type(r.payload,'$.requiredSections') IS 'array')))`;
+export const documentTaskEligibleSql=db=>`${workflowTaskEligibleSql(db,'t')} AND NOT
+  (t.status='failed' AND ${hasRetryPolicy(db)?"t.retry_limit=3 AND ":""}(
+   (t.task_type='npc.planning.add' AND r.request_type='npc.planning.add') OR
+   (t.task_type='concept.category-generate' AND r.request_type='concept.category.workflow'
+    AND json_extract(r.payload,'$.operation') IS 'add' AND json_type(r.payload,'$.requiredSections') IS 'array')))`;
 
 // SQLite SET expressions read the old state, and this assignment runs inside the exact claim UPDATE.
 export const workflowTaskRetrySetSql="retry_count=retry_count+CASE WHEN status='failed' THEN 1 ELSE 0 END";
@@ -46,7 +54,7 @@ export function nextWorkflowTaskFromPath(dbPath,{workerType,taskType,taskKey,pre
   protectSchema(db);
   return db.prepare(`SELECT t.task_id AS taskId, t.official_request_id AS officialRequestId
    FROM workflow_tasks t JOIN workflow_runs r USING(official_request_id)
-   WHERE r.state='planned' AND ${documentTaskEligibleSql} AND t.result_ref IS NULL
+   WHERE r.state='planned' AND ${documentTaskEligibleSql(db)} AND t.result_ref IS NULL
     AND t.worker_type=? AND t.task_type=? AND t.task_key=?
     AND ((? IS NULL AND t.depends_on_task_id IS NULL) OR
      EXISTS (SELECT 1 FROM workflow_tasks p WHERE p.task_id=t.depends_on_task_id
