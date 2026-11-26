@@ -86,6 +86,8 @@ function fixture(t,operation='prop.generate',mode='valid'){
    }
    assert.equal(r.path,propBasePath);
    assert.deepEqual(r.body.artifact,{media:{sha256:sha(png),bytes:png.length,width:1536,height:1024,mediaType:'image/png'},base64:png.toString('base64')});
+   if(mode==='lost ack once'&&calls.filter(c=>c[0]==='http'&&c[1]==='POST'&&c[2]===propBasePath).length===1)
+    throw Error('DOCUMENT_WORKER_LOCAL_TRANSPORT');
    return {ok:true,resultRef:mode==='wrong ack'?'bogus':propRef(propKeys.base,sha(png))};
   }})};
  return {options,state,db,base,design,calls,artifact};
@@ -104,7 +106,7 @@ for(const type of ['prop.generate','prop.regenerate'])test(type+' runs one appro
   f.base.id,'--operation',f.base.type]).operation,f.base.type);
  assert.equal((await imageTick(f.options)).state,'idle');
 });
-for(const mode of ['blocked','wrong design','bad png','alpha','wrong canvas','implicit alpha','wrong ack','revoked'])test(mode+' never falls back or marks uncertain publication as failed',async t=>{
+for(const mode of ['blocked','wrong design','bad png','alpha','wrong canvas','implicit alpha','wrong ack','revoked'])test(mode+' never falls back and reaches a bounded outcome',async t=>{
  const f=fixture(t,'prop.generate',mode);
  const r=await runPropBaseFromPath(f.options);
  const published=f.calls.some(c=>c[0]==='http'&&c[1]==='POST'&&c[2]===propBasePath);
@@ -116,7 +118,7 @@ for(const mode of ['blocked','wrong design','bad png','alpha','wrong canvas','im
  case 'implicit alpha':
  case 'bad png': assert.equal(r.state,'failed');assert.equal(f.state().status,'failed');break;
  case 'revoked': assert.equal(r.state,'failed');assert.equal(f.state().status,'failed');break;
- case 'wrong ack': assert.equal(r.state,'requires_reconciliation');assert.equal(f.state().status,'running');break;
+ case 'wrong ack': assert.equal(r.state,'failed');assert.equal(f.state().status,'failed');break;
  }
  assert.equal(published,mode==='wrong ack');
  if(mode==='wrong design'||mode==='blocked')assert.equal(f.calls.some(c=>c[0]==='render'),false);
@@ -133,7 +135,7 @@ for(const [mode,failureStage,reasonCode] of [
  const f=fixture(t,'prop.generate',mode);
  const r=await imageTick(f.options);
  assert.equal(r.failureStage,failureStage);assert.equal(r.reasonCode,reasonCode);
- assert.equal(r.state,mode==='wrong ack'?'requires_reconciliation':'failed');
+ assert.equal(r.state,'failed');
  assert.ok(!JSON.stringify(r).includes('PRIVATE_TEXT'));
 });
 test('only successful exact aged claim increments retry, cap blocks re-entry',async t=>{
@@ -163,3 +165,16 @@ for(const mode of ['reference valid','reference missing','reference corrupt','re
    assert.equal(rendered.length,0);
   }
  });
+
+test('lost save response marks failed and the normal retry renders and saves again',async t=>{
+ const f=fixture(t,'prop.generate','lost ack once');
+ const first=await runPropBaseFromPath(f.options);
+ assert.equal(first.state,'failed');assert.equal(first.failureStage,'stage-write');
+ assert.equal(first.reasonCode,'DOCUMENT_WORKER_LOCAL_TRANSPORT');
+ assert.equal(f.state().status,'failed');assert.equal(f.state().result_ref,null);
+ assert.equal((await runPropBaseFromPath(f.options)).state,'not_claimable');
+ f.db.prepare('UPDATE workflow_tasks SET updated_at=? WHERE task_id=?').run(Date.now()-601000,f.base.id);
+ assert.equal((await runPropBaseFromPath(f.options)).state,'completed');
+ assert.equal(f.calls.filter(c=>c[0]==='render').length,2);
+ assert.equal(f.state().retry_count,1);
+});

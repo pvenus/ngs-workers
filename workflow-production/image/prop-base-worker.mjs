@@ -180,7 +180,7 @@ export async function runPropBaseFromPath({dbPath,taskId,officialRequestId,opera
   db.exec('PRAGMA foreign_keys=ON; PRAGMA busy_timeout=5000;');protectSchema(db);
   const selected=claimTask(db,{officialRequestId,taskId,operation});
   if(!selected)return {state:'not_claimable',taskId};
-  let sent=false,ownerTracked=selected.ownerTracked,stage='input-read';
+  let ownerTracked=selected.ownerTracked,stage='input-read';
   try{
    let packet;
    try{packet=await pds.readPropBase(selected.claim,signal,!!selected.reference);}
@@ -204,18 +204,17 @@ export async function runPropBaseFromPath({dbPath,taskId,officialRequestId,opera
     ownerTracked=false;
    }
    signal?.throwIfAborted();
-   stage='stage-write';sent=true;
+   stage='stage-write';
    const receipt=await pds.publishPropBase(selected.claim,artifact);
    need(exact(receipt,['ok','resultRef'])&&receipt.ok===true&&receipt.resultRef===resultRef,'WORKFLOW_PROP_BASE_PUBLICATION_UNCONFIRMED');
    commit(db,selected,resultRef);
    return {state:'completed',taskId,resultRef};
   }catch(error){
    const diagnostic=diagnosis(stage,error);
-   if(!sent){
-    try{
-     // A write that never started cannot have published. Current running
-     // attempt identity, not the upstream design snapshot, fences this failure.
-     const changed=await settleFailure(()=>{
+   // A missing or invalid staging ACK is a failed attempt. The next normal
+   // retry renders again; PDS stages each base image by its exact result hash.
+   try{
+    const changed=await settleFailure(()=>{
       db.exec('BEGIN IMMEDIATE');
       try{
        const live=db.prepare("SELECT 1 FROM workflow_runs WHERE official_request_id=? AND state='planned' AND reason IS NULL AND payload_sha256=?")
@@ -225,11 +224,10 @@ export async function runPropBaseFromPath({dbPath,taskId,officialRequestId,opera
        db.exec('COMMIT');return changed;
       }catch(e){db.exec('ROLLBACK');throw e;}
      });
-     if(changed)return {state:'failed',taskId,code:safe(error),...diagnostic};
-     diagnostic.failureTransition='CLAIM_NOT_UPDATED';
-    }catch{diagnostic.failureTransition='STATE_WRITE_UNCONFIRMED';}
-   }
-   return {state:'requires_reconciliation',taskId,code:sent?'WORKFLOW_PROP_BASE_PUBLICATION_UNCONFIRMED':diagnostic.failureTransition==='STATE_WRITE_UNCONFIRMED'?'WORKFLOW_PROP_BASE_FAILURE_WRITE_UNCONFIRMED':'WORKFLOW_PROP_BASE_CLAIM_CHANGED',...diagnostic};
+    if(changed)return {state:'failed',taskId,code:stage==='stage-write'?'WORKFLOW_PROP_BASE_STAGE_WRITE_FAILED':safe(error),...diagnostic};
+    diagnostic.failureTransition='CLAIM_NOT_UPDATED';
+   }catch{diagnostic.failureTransition='STATE_WRITE_UNCONFIRMED';}
+   return {state:'requires_reconciliation',taskId,code:diagnostic.failureTransition==='STATE_WRITE_UNCONFIRMED'?'WORKFLOW_PROP_BASE_FAILURE_WRITE_UNCONFIRMED':'WORKFLOW_PROP_BASE_CLAIM_CHANGED',...diagnostic};
   }
  }finally{db.close();}
 }
