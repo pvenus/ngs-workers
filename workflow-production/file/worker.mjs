@@ -1,3 +1,4 @@
+import {fileDeleteSchema,fileDeleteTaskKey,fileDeleteType,validateFileDelete} from './file-delete-envelope.mjs';
 /** Single exact task only. PDS is an injected trusted boundary, not implemented here. */
 import {DatabaseSync} from 'node:sqlite';
 import {lstatSync,realpathSync} from 'node:fs';
@@ -12,7 +13,7 @@ import {buildPlan as buildSelectionPlan,isSelectionSchema} from './vendor/planne
 import {canonical,sha} from './vendor/planner-f24d23a/envelope.mjs';
 
 const validId=(v)=>typeof v==='string'&&/^workflow\.task\.[a-f0-9]{64}$/.test(v);
-const operations=Object.freeze([npcDelete,conceptDelete,audioDelete]);
+const operations=Object.freeze([npcDelete,conceptDelete,audioDelete,fileDeleteType]);
 const ready=`SELECT t.task_id,t.task_key,t.task_input,t.depends_on_task_id,
   t.updated_at AS task_updated_at,r.*
  FROM workflow_tasks t JOIN workflow_runs r USING(official_request_id)
@@ -40,16 +41,24 @@ function buildAudioDeletePlan(row){
  return {payload,tasks:[{id:'workflow.task.'+sha(canonical([row.official_request_id,audioDeleteKey])),
   key:audioDeleteKey,type:audioDelete,workerType:'file',dependsOn:null,input}]};
 }
+function buildFileDeletePlan(row){
+ const payload=validateFileDelete(JSON.parse(row.payload),row.project_id),{target,expected}=JSON.parse(payload);
+ if(row.request_type!==fileDeleteType||row.schema_version!==fileDeleteSchema||row.reason!==null||
+    !Number.isSafeInteger(row.registered_at)||row.registered_at<0||row.payload_sha256!==sha(payload)||
+    target.path.split('/').at(-1)===row.official_request_id)throw Error('WORKFLOW_DELETE_BINDING_INVALID');
+ return {payload,tasks:[{id:'workflow.task.'+sha(canonical([row.official_request_id,fileDeleteTaskKey])),
+  key:fileDeleteTaskKey,type:fileDeleteType,workerType:'file',dependsOn:null,input:{target,expected}}]};
+}
 function claim(db,taskId,officialRequestId,operation){
  db.exec('BEGIN IMMEDIATE');
  try{
   const row=db.prepare(ready).get(taskId,officialRequestId,operation);
   if(!row){db.exec('COMMIT');return null;}
   const concept=operation===conceptDelete;
-  const plan=operation===audioDelete?buildAudioDeletePlan(row):(concept?buildConceptPlan:isSelectionSchema(row.schema_version)?buildSelectionPlan:buildPlan)({officialRequestId:row.official_request_id,projectId:row.project_id,
+  const plan=operation===fileDeleteType?buildFileDeletePlan(row):operation===audioDelete?buildAudioDeletePlan(row):(concept?buildConceptPlan:isSelectionSchema(row.schema_version)?buildSelectionPlan:buildPlan)({officialRequestId:row.official_request_id,projectId:row.project_id,
    requestType:row.request_type,schemaVersion:row.schema_version,payload:JSON.parse(row.payload),
    payloadSha256:row.payload_sha256,status:'registered',registeredAt:row.registered_at});
-  const expected=plan.tasks.find(t=>t.key===(concept?'category_delete':operation===audioDelete?audioDeleteKey:'delete')&&t.type===operation&&t.workerType==='file');
+  const expected=plan.tasks.find(t=>t.key===(concept?'category_delete':operation===fileDeleteType?fileDeleteTaskKey:operation===audioDelete?audioDeleteKey:'delete')&&t.type===operation&&t.workerType==='file');
   if(!expected||expected.id!==taskId||row.task_key!==expected.key||row.payload!==plan.payload||
       row.task_input!==canonical(expected.input)||row.depends_on_task_id!==expected.dependsOn||
       !Number.isSafeInteger(row.task_updated_at)||row.task_updated_at<0)throw Error('WORKFLOW_DELETE_BINDING_INVALID');
@@ -104,7 +113,7 @@ export async function runSelectedDelete({db,taskId,officialRequestId,pds,operati
  if(!validId(taskId))throw Error('WORKFLOW_DELETE_TASK_ID_INVALID');
  if(!operations.includes(operation))throw Error('WORKFLOW_DELETE_OPERATION_DENIED');
  const concept=operation===conceptDelete;
- if(operation===audioDelete&&pds?.deleteContract!==singleTargetDeleteSchema)throw Error('WORKFLOW_DELETE_PDS_PORT_REQUIRED');
+ if([audioDelete,fileDeleteType].includes(operation)&&pds?.deleteContract!==singleTargetDeleteSchema)throw Error('WORKFLOW_DELETE_PDS_PORT_REQUIRED');
  if(typeof pds?.deleteTargets!=='function'||(pds.deleteContract!==undefined&&pds.deleteContract!==singleTargetDeleteSchema))
   throw Error('WORKFLOW_DELETE_PDS_PORT_REQUIRED');
  const singleTarget=pds.deleteContract===singleTargetDeleteSchema;
@@ -113,9 +122,9 @@ export async function runSelectedDelete({db,taskId,officialRequestId,pds,operati
  if(!selected)return {state:'not_claimable',taskId};
  const unresolved={state:'requires_reconciliation',taskId,code:'WORKFLOW_DELETE_RECONCILIATION_REQUIRED'};
  try{
-  const receipt=await pds.deleteTargets(selected.command,selected.binding);
+  const receipt=await pds.deleteTargets(selected.command,selected.binding,operation);
   if(singleTarget?!verifiedSingleTargetDelete(receipt,taskId):concept?(!exact(receipt,['ok'])||receipt.ok!==true):!verified(receipt,selected))return unresolved;
-  const resultRef=concept||operation===audioDelete?null:singleTarget?receipt.operationId:receipt.receiptId;
+  const resultRef=concept||[audioDelete,fileDeleteType].includes(operation)?null:singleTarget?receipt.operationId:receipt.receiptId;
   finish(db,selected,resultRef);
   return {state:'completed',taskId,resultRef};
  }catch(e){

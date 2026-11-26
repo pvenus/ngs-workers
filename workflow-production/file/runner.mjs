@@ -1,3 +1,4 @@
+import {fileDeleteTaskKey,fileDeleteType} from './file-delete-envelope.mjs';
 import {nextWorkflowTaskFromPath} from './workflow-ready.mjs';
 import {conceptDelete,probeDeleteDatabase,runDeleteFromPath} from './worker.mjs';
 import {npcDelete,audioDelete,audioDeleteKey,singleTargetDeleteSchema} from './file-delete.mjs';
@@ -10,7 +11,7 @@ export function parseArgs(args){
  const singleTarget=args[0]==='--single-target';
  if(singleTarget)args=args.slice(1);
  const config=singleTarget?{singleTarget:true}:{};
- const operation=args.at(-2)==='--operation'&&[conceptDelete,audioDelete,...manifestTypes].includes(args.at(-1))?args.at(-1):undefined;
+ const operation=args.at(-2)==='--operation'&&[conceptDelete,audioDelete,fileDeleteType,...manifestTypes].includes(args.at(-1))?args.at(-1):undefined;
  if(operation){
   if(args[0]!=='--execute')throw Error('FILE_WORKER_EXPLICIT_MODE_REQUIRED');
   args=args.slice(0,-2);
@@ -45,6 +46,7 @@ const scopes=Object.freeze([
  {workerType:'file',taskType:'npc.delete-folder',taskKey:'delete',predecessorKey:null},
  {workerType:'file',taskType:conceptDelete,taskKey:'category_delete',predecessorKey:null},
  {workerType:'file',taskType:audioDelete,taskKey:audioDeleteKey,predecessorKey:null},
+ {workerType:'file',taskType:fileDeleteType,taskKey:fileDeleteTaskKey,predecessorKey:null},
  ...manifestMutationScopes,
 ]);
 
@@ -62,7 +64,7 @@ export async function pollOnce({dbPath,pds,signal,select=nextWorkflowTaskFromPat
    try{return await runPlayback({dbPath,...target,pds,signal,operation:scope.taskType});}
    catch{return {state:'blocked',code:'FILE_WORKER_EXACT_CLAIM_REJECTED'};}
   }
-  if(scope.taskType===audioDelete&&pds.deleteContract!==singleTargetDeleteSchema)continue;
+  if([audioDelete,fileDeleteType].includes(scope.taskType)&&pds.deleteContract!==singleTargetDeleteSchema)continue;
   const operation=scope.taskType===npcDelete?undefined:scope.taskType;
   if(!await pds.capability(signal,pds.deleteContract===singleTargetDeleteSchema?scope.taskType:operation))continue;
   if(signal?.aborted)return {state:'stopping'};

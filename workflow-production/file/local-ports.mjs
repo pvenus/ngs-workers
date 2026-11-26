@@ -1,5 +1,6 @@
+import {fileDeleteType} from './file-delete-envelope.mjs';
 import {request} from 'node:http';
-import {exactDeleteTarget,workflowDeleteFolder,singleTargetDeleteSchema,conceptDeleteRoot,npcDeleteRoot,audioDeleteRoot,conceptDelete,npcDelete,audioDelete} from './file-delete.mjs';
+import {exactDeleteTarget,workflowDeleteFolder,singleTargetDeleteSchema,conceptDeleteRoot,npcDeleteRoot,audioDeleteRoot,propDeleteRoot,conceptDelete,npcDelete,audioDelete} from './file-delete.mjs';
 import {exact} from './vendor/planner-f24d23a/planner.mjs';
 
 export const deletePath='/v1/npcs/ownership/workflow-delete';
@@ -19,7 +20,7 @@ const definitive=new Map([[403,new Set(['WORKFLOW_DELETE_CLAIM_DENIED','WORKFLOW
 const conceptDefinitive=new Map([[403,new Set(['CONCEPT_WORKFLOW_CLAIM_DENIED','CONCEPT_WORKFLOW_INTERNAL_ONLY',
  'CONCEPT_REQUIRED_CATEGORY_REMOVAL_DENIED'])],[404,new Set(['CONCEPT_WORKFLOW_DISABLED'])]]);
 const storageDefinitive=new Map([[403,new Set(['STORAGE_DELETE_CLAIM_DENIED','STORAGE_DELETE_INTERNAL_ONLY'])],
- [404,new Set(['STORAGE_DELETE_DISABLED'])]]);
+ [404,new Set(['STORAGE_DELETE_DISABLED'])],[409,new Set(['STORAGE_DELETE_STALE_TARGET'])]]);
 const roots=new Map([[conceptDelete,conceptDeleteRoot],[npcDelete,npcDeleteRoot],[audioDelete,audioDeleteRoot]]);
 const receiptSchema='workflow.pds-delete-receipt.v1';
 
@@ -56,13 +57,13 @@ export function localPorts({transport=requestLocalJson,singleTarget=false}={}){
   ...(singleTarget?{deleteContract:singleTargetDeleteSchema}:{}),
   async capability(signal,operation){
    if(singleTarget){
-    if(operation!==undefined&&!roots.has(operation))return false;
+    if(operation!==undefined&&operation!==fileDeleteType&&!roots.has(operation))return false;
     try{
      const data=await transport({port:8030,path:storageDeletePath,method:'GET',deadline:5000,signal});
      if(!exact(data,['enabled','schemaVersion','roots'])||data.enabled!==true||data.schemaVersion!==singleTargetDeleteSchema||
         !Array.isArray(data.roots)||!data.roots.length||
-        !data.roots.every((root,i)=>[conceptDeleteRoot,npcDeleteRoot,audioDeleteRoot].includes(root)&&(i===0||data.roots[i-1]<root)))return false;
-     return operation===undefined||data.roots.includes(roots.get(operation));
+        !data.roots.every((root,i)=>[conceptDeleteRoot,npcDeleteRoot,audioDeleteRoot,propDeleteRoot].includes(root)&&(i===0||data.roots[i-1]<root)))return false;
+     return operation===undefined||operation===fileDeleteType&&data.roots.includes(propDeleteRoot)||data.roots.includes(roots.get(operation));
     }catch{return false;}
    }
    operation??='npc.delete-folder';
@@ -103,14 +104,14 @@ export function localPorts({transport=requestLocalJson,singleTarget=false}={}){
     return exact(data,['ok'])&&data.ok===true;
    }catch{return false;}
   },
-  async deleteTargets(command,binding){
+  async deleteTargets(command,binding,operation){
    const target=exactDeleteTarget(command);
    if(!exact(binding,['officialRequestId','taskId','projectId','payloadSha256','claimStamp'])||
       !Number.isSafeInteger(binding.claimStamp)||binding.claimStamp<0)throw Error('WORKFLOW_DELETE_CLAIM_STAMP_INVALID');
    const concept=target.kind==='concept-category';
    const audio=target.kind==='audio-directory';
-   if(audio&&!singleTarget)throw Error('WORKFLOW_DELETE_TARGET_INVALID');
-   const claim={...binding,[concept?'categoryId':audio?'sourceRequestId':'npcId']:target.id};
+   if((audio||operation===fileDeleteType)&&!singleTarget)throw Error('WORKFLOW_DELETE_TARGET_INVALID');
+   const claim=operation===fileDeleteType?binding:{...binding,[concept?'categoryId':audio?'sourceRequestId':'npcId']:target.id};
    return await transport({port:8030,path:singleTarget?storageDeletePath:concept?conceptCategoryPath:deletePath,method:'POST',
     body:singleTarget?{claim,target:workflowDeleteFolder(command)}:{claim},deadline:120000});
   },
