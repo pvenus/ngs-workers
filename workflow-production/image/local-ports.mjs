@@ -15,7 +15,11 @@ export const propImagePath='/v1/props/ownership/workflow-image';
 export const heartbeatPath='/api/service-heartbeat';
 const cinematicSourcePath='/v1/cinematics/ownership/workflow-source';
 const backgroundSourcePath='/v1/cinematics/ownership/workflow-background';
-const routes={
+const chainPath=Object.freeze({
+ 'background.pixel.workflow.cinematic':backgroundSourcePath+'-cinematic-source',
+ 'background.pixel.workflow.draft':backgroundSourcePath+'-pixel-draft'
+});
+const routes={...Object.fromEntries(Object.entries(chainPath).map(([op,path])=>[op,{path,schema:'workflow.background-pixel-write.v1'}])),
  'background.source.generate':{path:backgroundSourcePath,schema:'workflow.background-source-write.v1'},
  'cinematic.source.generate':{path:cinematicSourcePath,schema:'workflow.cinematic-source-write.v1'},
  'prop.generate.base':{path:propBasePath,schema:'workflow.prop-stage.v1'},
@@ -101,6 +105,15 @@ export function localPorts({transport=requestLocalJson}={}){
   },
   async readBackgroundSource(claim,signal){
    return await transport({port:8030,path:backgroundSourcePath+'/read',method:'POST',body:{claim},deadline:5000,signal});
+  },
+  readBackgroundChain(operation,claim,signal){
+   return transport({port:8030,path:chainPath[operation]+'/read',method:'POST',body:{claim},deadline:20000,signal,responseLimit:12*1024*1024});
+  },
+  publishBackgroundChain(operation,claim,artifact){
+   return transport({port:8030,path:chainPath[operation],method:'POST',body:{claim,artifact},deadline:120000});
+  },
+  reconcileBackgroundChain(operation,claim,signal){
+   return transport({port:8030,path:chainPath[operation]+'/reconcile',method:'POST',body:{claim},deadline:10000,signal});
   },
   async readCinematicConcept(signal){
    // The loopback PDS provides the canonical Filex snapshot. The worker

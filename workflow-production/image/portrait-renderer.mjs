@@ -137,7 +137,14 @@ export function createPortraitRenderer(config){
 export function createCinematicSourceRenderer(config){
  const pinned=options(config);
  return async (input,{signal}={})=>{
-  const background=validBackgroundRenderInput(input);
+  const {reference,cinematic,...scene}=input??{};
+  const background=validBackgroundRenderInput(scene);
+  if(reference&&(!background||cinematic||!exact(reference,['assetId','sha256','base64'])||
+    !/^[a-f0-9]{64}$/u.test(reference.sha256)||reference.assetId!==reference.sha256+'.png'||
+    typeof reference.base64!=='string'||reference.base64.length>Math.ceil(8*1024*1024/3)*4))
+   throw fail('BACKGROUND_REFERENCE_INVALID');
+  if(cinematic&&(!background||!validCinematicSourceRenderInput({title:scene.title,prompt:'Cinematic environment',design:cinematic})))
+   throw fail('BACKGROUND_CINEMATIC_DESIGN_INVALID');
   if(!background&&!validCinematicSourceRenderInput(input))throw fail('CINEMATIC_SOURCE_INPUT_INVALID');
   const raw=await call(pinned,background?'render-background-source':'render-cinematic-source',Buffer.from(JSON.stringify(input)),signal);
   sourceGeometry(raw);

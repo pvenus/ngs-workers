@@ -12,8 +12,14 @@ export const sourceType='cinematic.source.generate',sourceSchema='ngs.cinematic-
 export const sourceKey='cinematic_source_generate';
 const projectId='binari',workerType='image',inputKeys=['title','prompt'];
 export const backgroundSourceType='background.source.generate';
+export const backgroundCineOperation='background.pixel.workflow.cinematic';
+export const backgroundDraftOperation='background.pixel.workflow.draft';
+const backgroundChainType='background.pixel.workflow',backgroundChainSchema='ngs.background-pixel-workflow.v1';
+const chainKeys=['background_cinematic_source','background_pixel_generate','background_pixel_postprocess'];
 const sourceProfiles=Object.freeze({
  [sourceType]:{type:sourceType,schema:sourceSchema,key:sourceKey,collection:'sources'},
+ [backgroundCineOperation]:{type:backgroundChainType,schema:backgroundChainSchema,key:chainKeys[0],collection:'backgrounds',chain:1},
+ [backgroundDraftOperation]:{type:backgroundChainType,schema:backgroundChainSchema,key:chainKeys[1],collection:'backgrounds',chain:2},
  [backgroundSourceType]:{type:backgroundSourceType,schema:'ngs.background-source-generate.v1',key:'background_source_generate',collection:'backgrounds'}
 });
 const backgroundLims={title:120,timeOfDay:80,season:80,mood:160,color:120,location:160,requirements:900,additionalNotes:900};
@@ -90,10 +96,10 @@ export function sourceGeometry(png){
  return {width:1536,height:1024};
 }
 export const nextCinematicSourceFromPath=(dbPath,operation=sourceType)=>nextWorkflowTaskFromPath(dbPath,
- {workerType,taskType:operation,taskKey:sourceProfiles[operation].key,predecessorKey:null});
+ {workerType,taskType:sourceProfiles[operation].type,taskKey:sourceProfiles[operation].key,predecessorKey:sourceProfiles[operation].chain===2?chainKeys[0]:null});
 const require=(ok,code='CINEMATIC_SOURCE_CLAIM_BINDING')=>{if(!ok)throw Error(code);};
 const scope=`r.state='planned' AND r.reason IS NULL AND r.project_id=? AND r.request_type=? AND r.schema_version=?
- AND t.worker_type=? AND t.task_type=? AND t.task_key=? AND t.depends_on_task_id IS NULL AND t.result_ref IS NULL`;
+ AND t.worker_type=? AND t.task_type=? AND t.task_key=? AND t.result_ref IS NULL`;
 const args=p=>[projectId,p.type,p.schema,workerType,p.type,p.key];
 const taskIdFor=(id,profile)=>'workflow.task.'+sha(canonical([id,profile.key]));
 const refFor=(id,profile)=>projectId+'/cinematics/'+profile.collection+'/'+id+'.json';
@@ -109,14 +115,21 @@ function candidate(db,t,stamp){
   AND t.task_id=? AND t.official_request_id=? AND ${running?"t.status='running' AND t.updated_at=?":workflowTaskEligibleSql(db,'t')}`)
   .get(...args(t.profile),t.taskId,t.officialRequestId,...(running?[stamp]:[]));
  if(!row)return null;
- const p=JSON.parse(row.payload),background=t.profile.type===backgroundSourceType;
+ const p=JSON.parse(row.payload),background=t.profile.type===backgroundSourceType||Boolean(t.profile.chain);
  const fields=background?Object.keys(backgroundLims):inputKeys, valid=background?validBackground:validCinematicSource;
  require(exact(p,['schemaVersion','projectId',...fields])&&p.schemaVersion===t.profile.schema&&p.projectId===projectId&&
   canonical(p)===row.payload&&sha(row.payload)===row.payload_sha256);
  const input=Object.fromEntries(fields.map(k=>[k,p[k]]));
  require(valid(input)&&canonical(input)===row.task_input);
- const tasks=db.prepare('SELECT task_id FROM workflow_tasks WHERE official_request_id=? LIMIT 2').all(t.officialRequestId);
- require(tasks.length===1&&tasks[0].task_id===t.taskId);
+ const tasks=db.prepare('SELECT task_id,task_key,task_type,worker_type,task_input,depends_on_task_id,status FROM workflow_tasks WHERE official_request_id=? LIMIT 4').all(t.officialRequestId);
+ if(t.profile.chain){
+  require(tasks.length===3&&chainKeys.every((key,i)=>{
+   const q=tasks.find(v=>v.task_key===key),id=key=>taskIdFor(t.officialRequestId,{key});
+   return q&&q.task_id===id(key)&&q.task_type===t.profile.type&&q.worker_type===(i===2?'postprocess':'image')&&q.task_input===row.task_input&&
+    q.depends_on_task_id===(i?id(chainKeys[i-1]):null)&&
+    (i>=t.profile.chain-1||q.status==='completed');
+  }));
+ }else require(tasks.length===1&&tasks[0].task_id===t.taskId&&row.depends_on_task_id===null);
  return {input,row};
 }
 function claimSource(db,t){
@@ -170,8 +183,12 @@ export async function runCinematicSourceFromPath({dbPath,officialRequestId,taskI
  reconcileDelays=[0,1000,2000,4000,8000,10000,15000,20000]}){
  const profile=Object.hasOwn(sourceProfiles,operation)?sourceProfiles[operation]:null;
  require(profile!==null);
- const background=operation===backgroundSourceType;
- if(background)pds={readCinematicSource:pds.readBackgroundSource,readCinematicConcept:pds.readCinematicConcept,
+ const background=operation===backgroundSourceType||Boolean(profile.chain);
+ if(profile.chain){
+  const originalPds=pds;
+  pds={readCinematicSource:(...a)=>originalPds.readBackgroundChain(operation,...a),readCinematicConcept:originalPds.readCinematicConcept,
+   publishCinematicSource:(...a)=>originalPds.publishBackgroundChain(operation,...a),reconcileCinematicSource:(...a)=>originalPds.reconcileBackgroundChain(operation,...a)};
+ }else if(background)pds={readCinematicSource:pds.readBackgroundSource,readCinematicConcept:pds.readCinematicConcept,
   publishCinematicSource:pds.publishBackgroundSource,reconcileCinematicSource:pds.reconcileBackgroundSource};
  require(typeof pds?.readCinematicSource==='function'&&typeof pds?.readCinematicConcept==='function'&&typeof pds?.publishCinematicSource==='function'&&typeof renderCinematicSource==='function','CINEMATIC_SOURCE_PORT_REQUIRED');
  if(signal?.aborted)return {state:'not_claimable',taskId};
@@ -191,14 +208,22 @@ export async function runCinematicSourceFromPath({dbPath,officialRequestId,taskI
   let sent=false,ownerTracked=found.ownerTracked,stage='read-inputs';
   try{
    verifyCurrent();
-   const bound=await pds.readCinematicSource(claim,signal);
+   const rawBound=await pds.readCinematicSource(claim,signal);
+   const {sourceSha256,base64,...bound}=rawBound;
    require((background?validBackground:validCinematicSource)(bound)&&canonical(bound)===canonical(input),'CINEMATIC_SOURCE_READ_MISMATCH');
+   let reference;
+   if(profile.chain===2){
+    require(typeof base64==='string'&&base64.length<=Math.ceil(8*1024*1024/3)*4);
+    const bytes=Buffer.from(base64,'base64');sourceGeometry(bytes);
+    require(sha(bytes)===sourceSha256);
+    reference={assetId:sourceSha256+'.png',sha256:sourceSha256,base64};
+   }else require(sourceSha256===undefined&&base64===undefined);
    stage='read-design';
    const snapshot=await pds.readCinematicConcept(signal);
    const selected=background?selectCinematicDesign(snapshot,true):{design:selectCinematicDesign(snapshot)};
    signal?.throwIfAborted();verifyCurrent();
    stage='render';
-   const png=await renderCinematicSource({...background?{title:input.title,prompt:Object.entries(backgroundLabels).flatMap(([key,label])=>input[key]?[label+': '+input[key]]:[]).join('\n')}:input,...selected},{signal});
+   const png=await renderCinematicSource({...background?{title:input.title,prompt:Object.entries(backgroundLabels).flatMap(([key,label])=>input[key]?[label+': '+input[key]]:[]).join('\n')}:input,...selected,...(profile.chain===1?{cinematic:selectCinematicDesign(snapshot)}:{}),...(reference?{reference}:{})},{signal});
    stage='validate-png';
    const geometry=sourceGeometry(png),sha256=sha(png),resultRef=refFor(sha256,profile);
    const artifact={sha256,bytes:png.length,...geometry,base64:png.toString('base64')};

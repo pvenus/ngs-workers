@@ -90,6 +90,39 @@ def process(raw):
     data=io.BytesIO();output.save(data,format='PNG',optimize=False)
     return data.getvalue()
 
+
+
+def process_background(raw,source_sha):
+    """Full-canvas background correction. Never sample, resize or blur output coordinates."""
+    import re
+    from functools import lru_cache
+    from PIL.PngImagePlugin import PngInfo
+    if not re.fullmatch('[a-f0-9]{64}',source_sha):
+        raise ValueError('BACKGROUND_PIXEL_SOURCE_PIN')
+    with Image.open(io.BytesIO(raw)) as src:
+        if (src.format,src.size,getattr(src,'n_frames',1))!=('PNG',(1536,1024),1):
+            raise ValueError('BACKGROUND_PIXEL_SOURCE_INVALID')
+        src.load()
+        if src.convert('RGBA').getchannel('A').getextrema()!=(255,255):
+            raise ValueError('BACKGROUND_PIXEL_SOURCE_NOT_OPAQUE')
+        original=src.convert('RGB')
+    # A strided training sample defines the palette only. Every output pixel
+    # still comes from the matching original coordinate, without interpolation.
+    sampled=Counter(original.getpixel((x,y)) for y in range(0,1024,3)
+                    for x in range(y%5,1536,5))
+    palette=palette_for(sampled)
+    @lru_cache(maxsize=65536)
+    def nearest(c):
+        return min(palette,key=lambda q:(sum((u-v)**2 for u,v in zip(c,q)),q))
+    output=Image.new('RGB',original.size)
+    output.putdata([nearest(x) for x in original.getdata()])
+    metadata=PngInfo();metadata.add_text('BackgroundPixelSourceSHA256',source_sha)
+    stream=io.BytesIO();output.save(stream,format='PNG',pnginfo=metadata)
+    return stream.getvalue()
+
+
 if __name__=='__main__':
     root=Path(sys.argv[1])
-    (root/'pixel.png').write_bytes(process((root/'source.png').read_bytes()))
+    raw=(root/'source.png').read_bytes()
+    result=process_background(raw,sys.argv[3]) if len(sys.argv)==4 and sys.argv[2]=='background' else process(raw)
+    (root/'pixel.png').write_bytes(result)

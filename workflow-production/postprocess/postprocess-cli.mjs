@@ -7,6 +7,7 @@ import {createPostprocessRenderer} from './postprocess-provider.mjs';
 import {probePresetEncoder} from './preset-video-artifact.mjs';
 import {presetPostprocessPorts} from './preset-video-ports.mjs';
 import {choosePresetPostprocess,runPresetPostprocessFromPath} from './preset-video-postprocess.mjs';
+import {backgroundPixelPorts,createBackgroundPixelRenderer,nextBackgroundPixel,runBackgroundPixel} from './background-pixel-worker.mjs';
 import {propStagePorts} from './prop-stage-ports.mjs';
 import {createPropDerivationRenderer} from './prop-derivation-provider.mjs';
 import {nextPropDerivationFromPath,runPropDerivationFromPath} from './prop-derivation-worker.mjs';
@@ -25,7 +26,9 @@ async function main(){
  try{protectSchema(db);}finally{db.close();}
  const pds=postprocessPorts(),presetPds=presetPostprocessPorts();
  const propPds=propStagePorts();
- let render,renderProp;
+ const bgPds=backgroundPixelPorts();
+ let render,renderProp,renderBG;
+ void createBackgroundPixelRenderer(options).then(value=>{renderBG=value;}).catch(()=>{});
  // Existing NPC alpha/pixel setup never blocks or becomes a dependency of the
  // new CPU-only lane. This promise validates paths only; no GPU is loaded.
  void createPostprocessRenderer({...options,pds}).then(value=>{render=value;}).catch(()=>{});
@@ -44,7 +47,8 @@ async function main(){
     const [[frames,portraits],motion,props]=await Promise.all([
      render?Promise.all([pds.capability(),pds.capabilityPortrait()]):[false,false],motionCheck,renderProp?propPds.capabilities(stop.signal):null
     ]);
-    ready=frames||portraits||motion||Boolean(props);
+    const bgReady=Boolean(renderBG)&&await bgPds.ready(stop.signal);
+    ready=frames||portraits||motion||Boolean(props)||bgReady;
     if(ready&&!heartbeatStarted){heartbeatStarted=true;void pulse();}
     if(!ready)heartbeatStarted=false;
     const available=!stop.signal.aborted;
@@ -55,8 +59,10 @@ async function main(){
     const propMode={stillOnly:true,appendEnabled:Boolean(props)};
     const prop=available&&!target&&!preset&&props&&nextPropDerivationFromPath(options.dbPath,propMode);
     const pack=available&&!target&&!preset&&!prop&&props&&nextPropPackageFromPath(options.dbPath,propMode);
+    const bg=available&&bgReady&&!target&&!preset&&nextBackgroundPixel(options.dbPath);
     result=target?await runPostprocessFromPath({...options,...target,pds,render,signal:stop.signal}):
      preset?await runPresetPostprocessFromPath({...options,...preset,pds:presetPds,signal:stop.signal}):
+     bg?await runBackgroundPixel({...options,...bg,pds:bgPds,render:renderBG,signal:stop.signal}):
            prop?await runPropDerivationFromPath({...options,...prop,pds:propPds,render:renderProp,signal:stop.signal,...propMode}):
      pack?await runPropPackageFromPath({...options,...pack,pds:propPds,signal:stop.signal,...propMode}):
      {state:ready?'idle':'not_ready'};
