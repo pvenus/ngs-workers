@@ -251,3 +251,35 @@ test('background claim moves exactly one file through the generic DELETE transpo
  assert.equal((await pollOnce({...f,pds})).state,'completed');
  assert.equal(task().status,'completed');assert.equal(posts,1);
 });
+
+test('cinematic child deletes claim before source aliases and each uses the generic one-target POST',async t=>{
+ const f=audioSetup(t),root='canonical-files/binari/cinematics',sourceSha256='d'.repeat(64);
+ const projectId='binari',schemaVersion='ngs.file-delete.v1',type='file.delete',key='file_delete';
+ f.db.prepare('DELETE FROM workflow_tasks').run();
+ f.db.prepare('DELETE FROM workflow_runs').run();
+ const stage=(path,index,kind='file')=>{
+  const target={root,path,kind},expected={sourceSha256},officialRequestId='request.official.'+sha(path);
+  const taskId='workflow.task.'+sha(canonical([officialRequestId,key]));
+  const payload=canonical({target,expected,projectId,schemaVersion}),payloadSha256=sha(payload);
+  f.db.prepare("INSERT INTO workflow_runs VALUES (?,?,?,?,?,?,?,'planned',2,NULL)")
+   .run(officialRequestId,projectId,type,schemaVersion,payload,payloadSha256,index);
+  f.db.prepare("INSERT INTO workflow_tasks (task_id,official_request_id,task_key,task_type,worker_type,task_input,updated_at,status) VALUES (?,?,?,?, 'file',?,2,'pending')")
+   .run(taskId,officialRequestId,key,type,canonical({target,expected}));
+  return taskId;
+ };
+ const sourcePng='sources/'+sourceSha256+'.png',sourceJson='sources/'+sourceSha256+'.json';
+ const legacy='results/request.official.'+'a'.repeat(64),seq='sequences/request.official.'+'b'.repeat(64);
+ stage(sourcePng,1);stage(sourceJson,2);stage(legacy+'.json',3);stage(legacy+'.mp4',4);stage(seq,5,'directory');
+ const posts=[];
+ const pds=localPorts({singleTarget:true,transport:async({method,path,body})=>{
+  if(method==='GET'){
+   assert.equal(path,storageDeletePath+'/cinematic');
+   return {enabled:true,schemaVersion:singleTargetDeleteSchema,roots:[root]};
+  }
+  assert.equal(path,storageDeletePath);assert.equal(body.target.root,root);
+  posts.push(body.target.path);
+  return {ok:true,operationId:body.claim.taskId,targetAbsent:true,recoveryId:'a'.repeat(64)};
+ }});
+ for(let i=0;i<5;i++)assert.equal((await pollOnce({...f,pds})).state,'completed');
+ assert.deepEqual(posts,[legacy+'.mp4',legacy+'.json',seq,sourceJson,sourcePng]);
+});
