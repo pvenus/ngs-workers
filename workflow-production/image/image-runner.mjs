@@ -76,12 +76,12 @@ export async function imageTick(options,{select=selectImageTasks,execute=execute
 }
 
 /** Keep OPS liveness independent of a long asynchronous renderer call. */
-export function startImageHeartbeat({pds,signal,intervalMs=60000}){
+export function startImageHeartbeat({pds,signal,serverName='image-worker',intervalMs=60000}){
  let ready=false,inFlight=false,stopped=false;
  const pulse=async()=>{
   if(!ready||inFlight||stopped||signal?.aborted)return;
   inFlight=true;
-  try{await pds.heartbeat(signal,'image-worker');}catch{/* next regular tick may report */}
+  try{await pds.heartbeat(signal,serverName);}catch{/* next regular tick may report */}
   finally{inFlight=false;}
  };
  const timer=setInterval(pulse,intervalMs);timer.unref();

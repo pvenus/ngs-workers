@@ -349,7 +349,7 @@ export const runSelectedPreset=options=>runSelectedDocument({...options,operatio
 // polling, executable hook, credentials or deployment configuration.
 export function probePresetDatabase(dbPath){
  assertDatabasePath(dbPath);
- const db=new DatabaseSync(dbPath,{readOnly:true});
+ const db=new DatabaseSync(dbPath,{readOnly:true,timeout:1500});
  try{protectSchema(db);return true;}finally{db.close();}
 }
 async function runFromPath(runner,{dbPath,taskId,officialRequestId,pds,operation,render,withPlanningSnapshot,signal,onPhase}){

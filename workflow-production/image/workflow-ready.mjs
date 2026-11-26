@@ -45,7 +45,7 @@ export function nextWorkflowTaskFromPath(dbPath,{workerType,taskType,taskKey,pre
  if(alsoCompleted!==null&&(!name(alsoCompleted.taskKey)||!name(alsoCompleted.taskType)||!name(alsoCompleted.workerType)))
   throw Error('WORKFLOW_POLL_SCOPE_REQUIRED');
  assertDatabasePath(dbPath);
- const db=new DatabaseSync(dbPath,{readOnly:true});
+ const db=new DatabaseSync(dbPath,{readOnly:true,timeout:1500});
  try{
   protectSchema(db);
   const extra=alsoCompleted?
@@ -82,7 +82,7 @@ export function oldestRunnable(dbPath, candidates) {
  const ids=[...new Set(ready.map(task=>task.officialRequestId))];
  if(ids.length<=1)return ready;
  assertDatabasePath(dbPath);
- const db=new DatabaseSync(dbPath,{readOnly:true});
+ const db=new DatabaseSync(dbPath,{readOnly:true,timeout:1500});
  try {
   const parents=db.prepare(`SELECT official_request_id FROM workflow_runs
    WHERE state='planned' AND official_request_id IN (${ids.map(()=>'?').join(',')})

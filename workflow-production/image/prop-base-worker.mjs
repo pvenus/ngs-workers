@@ -24,7 +24,7 @@ const parents=`JOIN workflow_tasks d ON d.task_id=t.depends_on_task_id AND d.off
 
 export function nextPropBaseFromPath(dbPath){
  assertDatabasePath(dbPath);
- const db=new DatabaseSync(dbPath,{readOnly:true});
+ const db=new DatabaseSync(dbPath,{readOnly:true,timeout:1500});
  try{
   protectSchema(db);
   return db.prepare(`SELECT t.task_id AS taskId,t.official_request_id AS officialRequestId,t.task_type AS operation

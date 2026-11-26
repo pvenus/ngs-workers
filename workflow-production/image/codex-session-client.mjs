@@ -8,7 +8,7 @@ export function createCodexSessionClient({python='/opt/homebrew/bin/python3.12',
  const close=()=>{if(child){child.kill('SIGTERM');child.stdin.end();child.unref();child=null;}};
  function start(){
   const p=spawn(python,['-I','-B',fileURLToPath(script),...args],{
-   env:{HOME:homedir(),PATH:'/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin'},
+   env:{HOME:homedir(),PATH:'/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin',...(process.env.TMPDIR?{TMPDIR:process.env.TMPDIR}:{})},
    stdio:['pipe','pipe','inherit'],
   });
   child=p;
