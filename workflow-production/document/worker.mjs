@@ -52,7 +52,7 @@ const planningFailureCodes=new Set([
  'WORKFLOW_PLAN_CONCEPT_SECTION','WORKFLOW_PLAN_CONCEPT_SUMMARY','WORKFLOW_PLAN_PROMPT_TOO_LARGE','REPRESENTATIVE_INPUT_INVALID',
  'REPRESENTATIVE_CODEX_UNAVAILABLE','REPRESENTATIVE_CODEX_START_FAILED','REPRESENTATIVE_CODEX_TIMEOUT',
  'REPRESENTATIVE_CODEX_FAILED','REPRESENTATIVE_CODEX_OUTPUT_INVALID','REPRESENTATIVE_CODEX_STDIO_FAILED',
- 'WORKFLOW_PLAN_MARKDOWN_INVALID','WORKFLOW_PLAN_CONTENT_INVALID','WORKFLOW_PLAN_COMBAT_WEAPON_REQUIRED',
+ 'WORKFLOW_DOCUMENT_PUBLICATION_REJECTED','WORKFLOW_PLAN_MARKDOWN_INVALID','WORKFLOW_PLAN_CONTENT_INVALID','WORKFLOW_PLAN_COMBAT_WEAPON_REQUIRED',
 ]);
 const pdsTransportKinds=new Set(['deadline_exceeded','caller_aborted','http_error','invalid_content_type',
  'response_too_large','response_aborted','response_stream_error','unexpected_conflict_response',
@@ -365,13 +365,14 @@ export async function runSelectedDocument({db,taskId,officialRequestId,pds,opera
   // post-ack completion recording errors follow the ordinary retry path.
   const presetRejected=operation===PRESET&&error?.message==='WORKFLOW_PRESET_REJECTED_BEFORE_WRITE';
   const notSent=error?.message==='DOCUMENT_PDS_CONNECT_REFUSED_BEFORE_SEND';
+  const planRejected=planningFailureStage==='publish-request'&&error?.message==='WORKFLOW_DOCUMENT_PUBLICATION_REJECTED';
   // If BUSY persists after the bounded DB-only retries, do not attempt a
   // second state write into the same locked DB. Other completion errors can fail normally.
   const completionFailed=planningFailureStage==='record-completion';
-  if(isSqliteBusyExhausted(error)||publicationStarted&&!presetRejected&&!notSent&&!completionFailed)return {...unresolved,...planningFailureFields(planningFailureStage,error)};
+  if(isSqliteBusyExhausted(error)||publicationStarted&&!presetRejected&&!notSent&&!planRejected&&!completionFailed)return {...unresolved,...planningFailureFields(planningFailureStage,error)};
   try{
    const changed=await settleFailure(()=>markWorkflowTaskFailed(db,{taskId,officialRequestId,claimStamp:selected.stamp,workerType:'document'}));
-   if(changed===true)return {state:'failed',taskId,code:completionFailed?'WORKFLOW_DOCUMENT_COMPLETION_RECORD_FAILED':presetRejected||notSent?error.message:'WORKFLOW_DOCUMENT_FAILED_BEFORE_PUBLICATION',
+   if(changed===true)return {state:'failed',taskId,code:completionFailed?'WORKFLOW_DOCUMENT_COMPLETION_RECORD_FAILED':presetRejected||notSent||planRejected?error.message:'WORKFLOW_DOCUMENT_FAILED_BEFORE_PUBLICATION',
     ...planningFailureFields(planningFailureStage,error)};
   }catch{
    // An unconfirmed terminal DB write requires reconciliation as well.

@@ -86,8 +86,8 @@ test('CLI has no implicit execute, override URL, scope glob, or missing identity
   ['--execute','--db',p,'--official-request-id','*','--task-id',id]])assert.throws(()=>parseArgs(args),/EXPLICIT_MODE_REQUIRED/);
 });
 
-for(const mode of ['write ACK','negative ACK','legacy receipt','render failed','claim changed','completion CAS changed'])test('representative exact HTTP and row updates: '+mode,async t=>{
- const accepted=mode==='write ACK';
+for(const mode of ['write ACK','negative ACK','legacy receipt','storage 409','unknown 409','render failed','claim changed','completion CAS changed'])test('representative exact HTTP and row updates: '+mode,async t=>{
+ const accepted=mode==='write ACK',ordinaryFailure=['render failed','storage 409'].includes(mode);
  const ackCommitted=accepted||mode==='completion CAS changed';
  const beforePublicationFailure=['render failed','claim changed'].includes(mode);
  const f=setup(t),op='npc.plan-representative';
@@ -100,7 +100,7 @@ for(const mode of ['write ACK','negative ACK','legacy receipt','render failed','
  const presetMetadata=canonical({creationBasis:{},planningPreset:{},category:{id:basis.categoryId},chapters:[],status:'fresh'});
  const srv=createServer(async(req,res)=>{
   calls.push([req.method,req.url]);
-  let result;
+  let result,status=200;
   if(req.method==='GET')result={enabled:true,schemaVersion:schema};
   else{
    let data='';for await(const part of req)data+=part;
@@ -121,9 +121,13 @@ for(const mode of ['write ACK','negative ACK','legacy receipt','render failed','
      f.s.db.prepare('UPDATE workflow_tasks SET updated_at=updated_at+1 WHERE task_id=?').run(taskId);
     result=mode==='legacy receipt'?{...bound,schemaVersion:'workflow.representative-plan-publication-receipt.v1',
      operation:op,status:'committed',verified:true,artifactSha256:sha(canonical(artifact)),receiptId:taskId}:{ok:ackCommitted};
+    if(mode==='storage 409'||mode==='unknown 409'){
+     status=409;
+     result={error:mode==='storage 409'?'WORKFLOW_REPRESENTATIVE_NOT_CONFIRMED':'UNKNOWN'};
+    }
    }
   }
-  res.writeHead(200,{'Content-Type':'application/json'}).end(JSON.stringify(result));
+  res.writeHead(status,{'Content-Type':'application/json'}).end(JSON.stringify(result));
  });
  await new Promise(resolve=>srv.listen(0,'127.0.0.1',resolve));t.after(()=>new Promise(resolve=>srv.close(resolve)));
  const pds=localPorts({transport:opts=>{assert.equal(opts.port,8030);return requestLocalJson({...opts,port:srv.address().port});}});
@@ -159,15 +163,16 @@ for(const mode of ['write ACK','negative ACK','legacy receipt','render failed','
  const others=f.s.db.prepare('SELECT * FROM workflow_tasks WHERE task_id<>? ORDER BY task_id');
  const before=others.all(taskId);
  const result=await executeOnce({...held,pds,render,withPlanningSnapshot});
- assert.equal(result.state,accepted?'completed':mode==='render failed'?'failed':'requires_reconciliation');
+ assert.equal(result.state,accepted?'completed':ordinaryFailure?'failed':'requires_reconciliation');
  if(mode==='render failed'){assert.equal(result.failureStage,'render');assert.equal(result.reasonCode,'NPC_PLANNING_STAGE_FAILED');
   assert.doesNotMatch(JSON.stringify(result),/fixture definitive render error/);}
+ if(mode==='storage 409'){assert.equal(result.code,'WORKFLOW_DOCUMENT_PUBLICATION_REJECTED');assert.equal(result.pdsHttpStatus,409);}
  assert.deepEqual(calls.slice(1),[['GET',representativePath+'?inputMode=folder-snapshot'],['POST',representativePath+'/read'],['render'],...(beforePublicationFailure?[]:[['POST',representativePath]])]);
  assert.equal(readdirSync(realpathSync(new URL('.', 'file://'+f.dbPath))).some(n=>n.startsWith('workflow-planning-folders-')),false);
  assert.deepEqual(mcpCalls.filter(x=>x.tool==='npc_folders_compare').map(x=>x.args.scope),
    ['binari/concept','binari/npcs/npc.ch1_dajeong/planning','binari/concept','binari/npcs/npc.ch1_dajeong/planning']);
  assert.equal(picked().result_ref,null);
- assert.equal(picked().status,accepted?'completed':mode==='render failed'?'failed':'running');assert.deepEqual(others.all(taskId),before);
+ assert.equal(picked().status,accepted?'completed':ordinaryFailure?'failed':'running');assert.deepEqual(others.all(taskId),before);
  assert.deepEqual(f.s.db.prepare('SELECT * FROM workflow_runs').get(),run);
  assert.equal((await executeOnce({...held,pds,render,withPlanningSnapshot})).state,'not_claimable');
 });
