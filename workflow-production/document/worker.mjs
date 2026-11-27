@@ -56,8 +56,17 @@ const planningFailureCodes=new Set([
 const pdsTransportKinds=new Set(['deadline_exceeded','caller_aborted','http_error','invalid_content_type',
  'response_too_large','response_aborted','response_stream_error','unexpected_conflict_response',
  'invalid_json','connection_refused','connection_reset','request_error','connection_error']);
+const completionFailureReason=error=>{
+ if(error?.message==='WORKFLOW_PRESET_COMPLETION_CHANGED')return 'WORKFLOW_DOCUMENT_COMPLETION_CLAIM_CHANGED';
+ const sqlite=Number.isInteger(error?.errcode)?error.errcode&255:null;
+ if(sqlite===5)return 'SQLITE_BUSY';
+ if(sqlite===6)return 'SQLITE_LOCKED';
+ if(sqlite===19)return 'SQLITE_CONSTRAINT';
+ return sqlite!==null?'WORKFLOW_DOCUMENT_COMPLETION_SQLITE_ERROR':'WORKFLOW_DOCUMENT_COMPLETION_RECORD_FAILED';
+};
 const planningFailureFields=(stage,error)=>stage?{
- failureStage:stage,reasonCode:planningFailureCodes.has(error?.message)?error.message:'NPC_PLANNING_STAGE_FAILED',
+ failureStage:stage,reasonCode:stage==='record-completion'?completionFailureReason(error):
+  planningFailureCodes.has(error?.message)?error.message:'NPC_PLANNING_STAGE_FAILED',
  ...(stage==='publish-request'&&pdsTransportKinds.has(error?.pdsTransportKind)?{
   pdsTransportKind:error.pdsTransportKind,
   ...(Number.isInteger(error.pdsHttpStatus)&&error.pdsHttpStatus>=100&&error.pdsHttpStatus<=599?
@@ -351,20 +360,22 @@ export async function runSelectedDocument({db,taskId,officialRequestId,pds,opera
   return {state:'completed',taskId,resultRef,...(operation===CONCEPT&&selected.payload.operation==='migrate'?
    {conversion:'deterministic-markdown'}:{})};
  }catch(error){
-  // Once the PDS RPC was invoked, even a locally thrown error can mask
-  // a committed write. Only a proven refusal before TCP connection or the
-  // typed no-write preset response may be converted to ordinary failure.
+  // Fail closed on an ambiguous save result. Definite no-send/rejection and
+  // post-ack completion recording errors follow the ordinary retry path.
   const presetRejected=operation===PRESET&&error?.message==='WORKFLOW_PRESET_REJECTED_BEFORE_WRITE';
   const notSent=error?.message==='DOCUMENT_PDS_CONNECT_REFUSED_BEFORE_SEND';
-  if(publicationStarted&&!presetRejected&&!notSent)return {...unresolved,...planningFailureFields(planningFailureStage,error)};
+  // Once the save was acknowledged, a failed completion write is handled as
+  // an ordinary failed attempt. Do not recover completion or resend here.
+  const completionFailed=planningFailureStage==='record-completion';
+  if(publicationStarted&&!presetRejected&&!notSent&&!completionFailed)return {...unresolved,...planningFailureFields(planningFailureStage,error)};
   try{
    const changed=await settleFailure(()=>markWorkflowTaskFailed(db,{taskId,officialRequestId,claimStamp:selected.stamp,workerType:'document'}));
-   if(changed===true)return {state:'failed',taskId,code:presetRejected||notSent?error.message:'WORKFLOW_DOCUMENT_FAILED_BEFORE_PUBLICATION',
+   if(changed===true)return {state:'failed',taskId,code:completionFailed?'WORKFLOW_DOCUMENT_COMPLETION_RECORD_FAILED':presetRejected||notSent?error.message:'WORKFLOW_DOCUMENT_FAILED_BEFORE_PUBLICATION',
     ...planningFailureFields(planningFailureStage,error)};
   }catch{
    // An unconfirmed terminal DB write requires reconciliation as well.
   }
-  return unresolved;
+  return {...unresolved,...planningFailureFields(planningFailureStage,error)};
  }
 }
 export const runSelectedPreset=options=>runSelectedDocument({...options,operation:PRESET});

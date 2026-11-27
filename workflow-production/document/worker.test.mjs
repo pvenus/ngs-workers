@@ -123,3 +123,20 @@ test('definite pre-connect refusal from PDS is an ordinary failure, not a rerend
  assert.equal(f.task('preset').status,'failed');assert.equal(f.task('preset').retry_count,0);
  assert.equal(count,1);
 });
+
+test('a verified save followed by a completion write error settles failed without replay or recovery',async t=>{
+ const f=setup(t,{newNPC:true});f.s.acknowledge(f.id);
+ let publishes=0;
+ f.db.exec(`CREATE TRIGGER reject_fixture_completion BEFORE UPDATE OF status ON workflow_tasks
+  WHEN NEW.status='completed' BEGIN SELECT RAISE(ABORT,'fixture'); END;`);
+ const out=await runSelectedPreset({...f.entry,pds:{publishExactPreset(c){publishes++;return verified(c);}}});
+ assert.equal(out.state,'failed');
+ assert.equal(out.code,'WORKFLOW_DOCUMENT_COMPLETION_RECORD_FAILED');
+ assert.equal(out.failureStage,'record-completion');
+ assert.equal(out.reasonCode,'SQLITE_CONSTRAINT');
+ assert.equal(publishes,1);
+ assert.equal(f.task('preset').status,'failed');
+ assert.equal(f.task('preset').retry_count,0);
+ assert.equal(f.task('preset').result_ref,null);
+ assert.equal(f.task('planning_representative').status,'pending');
+});
