@@ -24,11 +24,21 @@ const mixedOutputSchema=entry({puzzles:{type:'array',minItems:1,maxItems:8,items
  entry({id,layout,attachments}),entry({id,layout:spiritPuzzleSchema.properties.layout,scale:spiritPuzzleSchema.properties.scale}),
 ]}}});
 const mixedSchema='ngs.assembly-generate.v3',definitionSchema='ngs.assembly-generate.v4';
-// The provider accepts disjoint alternatives using anyOf, including null/string.
-const outputTypes=schema=>Array.isArray(schema)?schema.map(outputTypes):schema!==null&&typeof schema==='object'?
- Object.fromEntries(Object.entries(schema).map(([k,v])=>[k==='oneOf'?'anyOf':k,outputTypes(v)])):schema;
-const definedOutputSchema=entry({puzzles:{type:'array',minItems:1,maxItems:1,
- items:entry({id,layout,attachments,definition:outputTypes(puzzleDefinitionSchema)})}});
+// Codex app-server only needs the strict shape; local canonical and C#
+// validators still enforce all limits, literal codes and mechanics.
+function codexShape(schema){
+ if(schema.oneOf?.length===2&&schema.oneOf[0].type==='string'&&schema.oneOf[1].type==='null')
+  return {type:['string','null']};
+ if(schema.type==='object')return entry(Object.fromEntries(Object.entries(schema.properties).map(([k,v])=>[k,codexShape(v)])));
+ if(schema.type==='array')return {type:'array',items:codexShape(schema.items)};
+ if(schema.type==='integer'||schema.type==='boolean'||schema.type==='string')return {type:schema.type};
+ if(typeof schema.const==='string'||schema.enum?.every(v=>typeof v==='string'))return {type:'string'};
+ throw Error('ASSEMBLY_CODEX_SCHEMA_INVALID');
+}
+const definedOutputSchema=codexShape(entry({puzzles:{type:'array',minItems:1,maxItems:1,
+ items:entry({id,layout,attachments,definition:puzzleDefinitionSchema})}}));
+const codexOutcomes=new Set(['cancelled','timeout','output_limit','invalid_output','invalid_event','start_failed',
+ 'turn_failed','turn_interrupted','invalid_schema']);
 export function createAssemblyRenderer({execute=executeTypedCodexDocument,codexPath=REPRESENTATIVE_CODEX_PATH}={}){
  return async (input,{signal}={})=>{
   await access(codexPath,constants.X_OK);
@@ -105,7 +115,11 @@ export async function runAssemblyFromPath({dbPath,taskId,officialRequestId,opera
     const input={title:p.title,intent:p.intent,map:context,...(mixed||defined?{schemaVersion:p.schemaVersion}:{}),...(batch?
      {puzzles:p.puzzles.map((row,i)=>({...row,bindings:state.puzzles[i].bindings}))}:{bindings:state.puzzles[0].bindings})};
     try{placement=await render(input,{signal});}
-    catch{throw Error('ASSEMBLY_CLI_FAILED');}
+    catch(error){
+     const failure=Error('ASSEMBLY_CLI_FAILED');
+     if(defined&&codexOutcomes.has(error?.codexOutcome))failure.codexOutcome=error.codexOutcome;
+     throw failure;
+    }
     let placements;
     if(batch){
      if(!exact(placement,['puzzles'])||!Array.isArray(placement.puzzles)||placement.puzzles.length!==state.puzzles.length||
@@ -152,6 +166,7 @@ export async function runAssemblyFromPath({dbPath,taskId,officialRequestId,opera
     'WORKFLOW_CINEMATIC_NOT_READY','WORKFLOW_CINEMATIC_OUTCOME_UNCERTAIN','DOCUMENT_PDS_CONNECT_REFUSED_BEFORE_SEND'];
    const code=allowed.includes(e?.message)?e.message:`ASSEMBLY_${stage.toUpperCase()}_FAILED`;
    return {state:failed?'failed':'not_claimable',taskId,code,stage,
+    ...(codexOutcomes.has(e?.codexOutcome)?{codexOutcome:e.codexOutcome}:{}),
     ...(Number.isInteger(e?.pdsHttpStatus)&&e.pdsHttpStatus>=400&&e.pdsHttpStatus<=599?{pdsHttpStatus:e.pdsHttpStatus}:{}),
     ...(['deadline_exceeded','caller_aborted','http_error','connection_refused','connection_reset','response_aborted',
        'response_stream_error','response_too_large','invalid_content_type','invalid_json','unexpected_assembly_error_response',

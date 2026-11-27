@@ -122,10 +122,13 @@ async function execute(binary,cwd,prompt,schema,timeoutMs,signal,outputLimit=max
   return await session.call({binary,cwd,prompt,schema,timeoutMs,outputLimit,...(images.length?{images}:{})},
    {signal,timeoutMs:timeoutMs+10_000,maxReply:2*outputLimit+4096});
  }catch(error){
-  throw Error(({cancelled:'REPRESENTATIVE_CODEX_CANCELLED',timeout:'REPRESENTATIVE_CODEX_TIMEOUT',
+  const mapped=Error(({cancelled:'REPRESENTATIVE_CODEX_CANCELLED',timeout:'REPRESENTATIVE_CODEX_TIMEOUT',
    output_limit:'REPRESENTATIVE_CODEX_OUTPUT_TOO_LARGE',invalid_output:'REPRESENTATIVE_CODEX_OUTPUT_INVALID',
    invalid_event:'REPRESENTATIVE_CODEX_OUTPUT_INVALID',start_failed:'REPRESENTATIVE_CODEX_START_FAILED'})[error.message]
    ??'REPRESENTATIVE_CODEX_FAILED');
+  if(['cancelled','timeout','output_limit','invalid_output','invalid_event','start_failed',
+      'turn_failed','turn_interrupted','invalid_schema'].includes(error?.message))mapped.codexOutcome=error.message;
+  throw mapped;
  }
 }
 function parseOutput(data,{update=false,sectionCount=0}={}){

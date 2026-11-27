@@ -216,3 +216,41 @@ test('v4 fails closed before publish on missing or negative C# proof or missing 
   assert.equal(f.calls.length,2);
  }
 });
+
+test('v4 uses provider-safe primitive types and fully required exact object shapes',async ()=>{
+ const render=createAssemblyRenderer({codexPath:process.execPath,execute:async ({outputSchema})=>{
+  function visit(node){
+   if(node.type==='object'){
+    assert.deepEqual(Object.keys(node).sort(),['additionalProperties','properties','required','type']);
+    assert.equal(node.additionalProperties,false);
+    assert.deepEqual(node.required,Object.keys(node.properties));
+    Object.values(node.properties).forEach(visit);
+   }else if(node.type==='array'){
+    assert.deepEqual(Object.keys(node).sort(),['items','type']);visit(node.items);
+   }else{
+    assert.deepEqual(Object.keys(node),['type']);
+    if(Array.isArray(node.type))assert.deepEqual(node.type,['string','null']);
+    else assert.ok(['string','integer','boolean'].includes(node.type));
+   }
+  }
+  visit(outputSchema);
+  const row=outputSchema.properties.puzzles.items;
+  assert.deepEqual(row.required,['id','layout','attachments','definition']);
+  const {rules,solution,entities,goal,schemaVersion}=row.properties.definition.properties;
+  assert.deepEqual(rules.items.properties.action.properties.item,{type:['string','null']});
+  assert.deepEqual(solution.items.properties.item,{type:['string','null']});
+  assert.deepEqual(rules.items.properties.module,{type:'string'});
+  assert.deepEqual(entities.items.properties.states.items.required,['id','held','payload']);
+  assert.deepEqual(goal.required,['role','state']);assert.deepEqual(schemaVersion,{type:'string'});
+  return {};
+ }});
+ await render({schemaVersion:'ngs.assembly-generate.v4',puzzles:[{}]});
+});
+test('v4 propagates a bounded Codex reason without exposing failure message',async t=>{
+ const f=fixture(t,'assembly.generate',{defined:true});
+ const renderError=Object.assign(Error('private provider detail'),{codexOutcome:'turn_failed'});
+ const result=await documentTick({...f,rendererFor:()=>()=>{throw renderError;}});
+ assert.deepEqual(result,{state:'failed',taskId,code:'ASSEMBLY_CLI_FAILED',stage:'cli',
+  codexOutcome:'turn_failed',operation:f.operation});
+ assert.equal(f.calls.length,2);
+});
