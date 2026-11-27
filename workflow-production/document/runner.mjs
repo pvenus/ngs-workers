@@ -1,4 +1,4 @@
-import {mapTypes,mapStage} from './map-contract.mjs';
+import {mapTypes,mapStage,mapDocumentStages} from './map-contract.mjs';
 import {runMapFromPath} from './map-worker.mjs';
 const runner=(op,ordinary,prop)=>mapTypes.includes(op)?runMapFromPath:isPropDesignOperation(op)?prop:ordinary;
 import {isPropDesignOperation,propDesignKey,propDesignOperations} from './prop-design-contract.mjs';
@@ -23,6 +23,7 @@ const supported=Object.freeze([
  {workerType:'document',taskType:UPDATE,taskKey:'planning_update',predecessorKey:null},
  {workerType:'document',taskType:ADD,taskKey:'planning_add',predecessorKey:null},
  ...mapTypes.map(taskType=>({workerType:'document',taskType,taskKey:mapStage,predecessorKey:null})),
+ ...mapDocumentStages.map((taskKey,i)=>({workerType:'document',taskType:mapTypes[0],taskKey,predecessorKey:i===0?null:mapDocumentStages[i-1]})),
  ...Object.keys(propDesignOperations).map(taskType=>({workerType:'document',taskType,taskKey:propDesignKey,predecessorKey:null})),
 ]);
 export function parseArgs(args){

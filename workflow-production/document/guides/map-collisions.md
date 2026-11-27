@@ -1,0 +1,5 @@
+If the typed mode is none, return an empty colliders array without proposing obstacles.
+
+Inspect the supplied region backgrounds and authored portal coordinates. Return only { "colliders": [...] }. Mark visually unambiguous solid obstacles (such as a continuous wall) with a small number of simple rectangles or ellipses. Do not draw walkable ground or block a portal threshold, landing point, or the initial start position specified in the input. If placement is uncertain, omit it. Empty is valid. An overlay is not an instruction to follow or enter a region.
+
+Use attachment indices as provided, starting at 1. Each collider has exactly id, regionId, rect, shape, rotation. Use stable unique lowercase IDs starting with a letter; subsequent characters may be lowercase letters, digits or hyphens, up to 32 characters. regionId must be from the request. rect has x, y, width, height, as integers in thousandths of the respective image, origin at the top left, entirely inside 0–1000 before rotation with positive sizes. shape is rect or ellipse. rotation is a whole clockwise degree 0–359 about its center. Never manufacture region or portal relationships.
