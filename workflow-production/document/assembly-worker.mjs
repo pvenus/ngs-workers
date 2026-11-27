@@ -58,6 +58,7 @@ export async function runAssemblyFromPath({dbPath,taskId,officialRequestId,opera
    claim={taskId,officialRequestId,projectId:'binari',claimStamp,payloadSha256:row.payload_sha256};
    db.exec('COMMIT');
   }catch(e){db.exec('ROLLBACK');throw e;}
+  let stage='prepare';
   try{
    const assemblyId=p.assemblyId??officialRequestId,revision=(p.expectedRevision??0)+1;
    const resultRef=assemblyRef(assemblyId,revision);
@@ -72,6 +73,7 @@ export async function runAssemblyFromPath({dbPath,taskId,officialRequestId,opera
       (p.puzzles!==undefined&&canonical(state.puzzles)!==canonical(p.puzzles))||
       (generating&&(state.puzzles.length!==1||!validContext(context,state.title,state.puzzles[0]))))throw Error('ASSEMBLY_PREPARE_INVALID');
    if(generating&&state.updatedAt===claim.claimStamp){
+    stage='cli';
     signal?.throwIfAborted();
     let placement;
     try{placement=await render({title:p.title,intent:p.intent,map:context,bindings:state.puzzles[0].bindings},{signal});}
@@ -82,8 +84,10 @@ export async function runAssemblyFromPath({dbPath,taskId,officialRequestId,opera
     state={...state,puzzles:[puzzle]};
    }
    signal?.throwIfAborted();
+   stage='publish';
    const receipt=await pds.publishAssembly(claim,state,signal);
    if(!exact(receipt,['ok','resultRef'])||receipt.ok!==true||receipt.resultRef!==resultRef)throw Error('ASSEMBLY_SAVE_NOT_CONFIRMED');
+   stage='complete';
    const n=db.prepare(`UPDATE workflow_tasks SET status='completed',result_ref=?,updated_at=?
     WHERE ${immutable} AND status='running' AND updated_at=? AND EXISTS (SELECT 1 FROM workflow_runs r WHERE
     r.official_request_id=workflow_tasks.official_request_id AND r.state='planned' AND r.reason IS NULL AND r.payload_sha256=?)`)
@@ -91,7 +95,17 @@ export async function runAssemblyFromPath({dbPath,taskId,officialRequestId,opera
    return n.changes===1?{state:'completed',taskId,resultRef}:{state:'not_claimable',taskId};
   }catch(e){
    const failed=markWorkflowTaskFailed(db,{...claim,workerType:'document'});
-   return {state:failed?'failed':'not_claimable',taskId,code:/^ASSEMBLY_[A-Z_]+$/.test(e?.message)?e.message:'ASSEMBLY_WORKFLOW_FAILED'};
+   const allowed=['ASSEMBLY_PREPARE_INVALID','ASSEMBLY_CLI_FAILED','ASSEMBLY_CLI_OUTPUT_INVALID','ASSEMBLY_SAVE_NOT_CONFIRMED',
+    'ASSEMBLY_REVISION_CONFLICT','ASSEMBLY_PROP_UNAVAILABLE','ASSEMBLY_ROUTE_NOT_PLAYABLE','ASSEMBLY_INPUT_CHANGED',
+    'WORKFLOW_CINEMATIC_BAD_BODY','WORKFLOW_CINEMATIC_DENIED','WORKFLOW_CINEMATIC_INTERNAL_ONLY',
+    'WORKFLOW_CINEMATIC_NOT_FOUND','WORKFLOW_CINEMATIC_DISABLED','WORKFLOW_CINEMATIC_ROUTE',
+    'WORKFLOW_CINEMATIC_NOT_READY','WORKFLOW_CINEMATIC_OUTCOME_UNCERTAIN','DOCUMENT_PDS_CONNECT_REFUSED_BEFORE_SEND'];
+   const code=allowed.includes(e?.message)?e.message:`ASSEMBLY_${stage.toUpperCase()}_FAILED`;
+   return {state:failed?'failed':'not_claimable',taskId,code,stage,
+    ...(Number.isInteger(e?.pdsHttpStatus)&&e.pdsHttpStatus>=400&&e.pdsHttpStatus<=599?{pdsHttpStatus:e.pdsHttpStatus}:{}),
+    ...(['deadline_exceeded','caller_aborted','http_error','connection_refused','connection_reset','response_aborted',
+       'response_stream_error','response_too_large','invalid_content_type','invalid_json','unexpected_assembly_error_response',
+       'connection_error','request_error'].includes(e?.pdsTransportKind)?{pdsTransportKind:e.pdsTransportKind}:{})};
   }
  }finally{db.close();}
 }

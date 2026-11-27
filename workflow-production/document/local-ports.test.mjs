@@ -48,3 +48,16 @@ test('closed port is unsent; an accepted request with a broken ACK remains ambig
  await new Promise(resolve=>peer.close(resolve));
  await assert.rejects(requestLocalJson(args),{message:'DOCUMENT_PDS_CONNECT_REFUSED_BEFORE_SEND'});
 });
+
+test('assembly loopback retains only exact allowlisted failure proofs on assembly POST routes',async t=>{
+ let error={error:'ASSEMBLY_PROP_UNAVAILABLE'};
+ const server=createServer((req,res)=>{req.resume();res.writeHead(409,{'Content-Type':'application/json'}).end(JSON.stringify(error));});
+ await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
+ t.after(()=>new Promise(resolve=>server.close(resolve)));
+ const params={port:server.address().port,method:'POST',body:{},deadline:1000};
+ const path='/v1/assemblies/ownership/workflow-assembly/read';
+ await assert.rejects(requestLocalJson({...params,path}),{message:'ASSEMBLY_PROP_UNAVAILABLE',pdsHttpStatus:409});
+ await assert.rejects(requestLocalJson({...params,path:'/read'}),{message:'DOCUMENT_WORKER_LOCAL_TRANSPORT',pdsHttpStatus:409});
+ error={error:'ASSEMBLY_PROP_UNAVAILABLE',detail:'do not expose'};
+ await assert.rejects(requestLocalJson({...params,path}),{message:'DOCUMENT_WORKER_LOCAL_TRANSPORT',pdsTransportKind:'unexpected_assembly_error_response',pdsHttpStatus:409});
+});

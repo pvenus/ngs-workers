@@ -73,7 +73,7 @@ test('explicit assembly.update publishes the prepared next revision with edits p
 });
 for(const [flag,code] of [['wrongReceipt','ASSEMBLY_SAVE_NOT_CONFIRMED'],['wrongMap','ASSEMBLY_PREPARE_INVALID']])test(flag,async t=>{
  const f=fixture(t,'assembly.generate',{[flag]:true});
- assert.deepEqual(await executeOnce(f),{state:'failed',taskId,code});
+ assert.deepEqual(await executeOnce(f),{state:'failed',taskId,code,stage:flag==='wrongMap'?'prepare':'publish'});
  assert.equal(f.row().status,'failed');
  assert.equal(f.row().retry_count,0);
  assert.equal(f.row().result_ref,null);
@@ -87,7 +87,7 @@ test('committed generation retry republishes immutable state without running CLI
 });
 test('malformed model result becomes normal failure without publishing defaults',async t=>{
  const f=fixture(t,'assembly.generate',{invalidModel:true});
- assert.deepEqual(await documentTick(f),{state:'failed',taskId,code:'ASSEMBLY_CLI_OUTPUT_INVALID',operation:f.operation});
+ assert.deepEqual(await documentTick(f),{state:'failed',taskId,code:'ASSEMBLY_CLI_OUTPUT_INVALID',stage:'cli',operation:f.operation});
  assert.equal(f.calls.length,2);
 });
 test('CLI uses the shared typed Codex executor and placement-only output schema',async ()=>{

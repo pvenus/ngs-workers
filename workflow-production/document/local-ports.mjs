@@ -40,6 +40,13 @@ function conceptClaim(command,claimStamp){
  return {officialRequestId,taskId,projectId,categoryId,payloadSha256,claimStamp};
 }
 
+const assemblyErrors={
+ 400:['WORKFLOW_CINEMATIC_BAD_BODY'],
+ 403:['WORKFLOW_CINEMATIC_DENIED','WORKFLOW_CINEMATIC_INTERNAL_ONLY'],
+ 404:['WORKFLOW_CINEMATIC_NOT_FOUND','WORKFLOW_CINEMATIC_DISABLED','WORKFLOW_CINEMATIC_ROUTE'],
+ 409:['ASSEMBLY_REVISION_CONFLICT','ASSEMBLY_PROP_UNAVAILABLE','ASSEMBLY_ROUTE_NOT_PLAYABLE','ASSEMBLY_INPUT_CHANGED'],
+ 503:['WORKFLOW_CINEMATIC_NOT_READY','WORKFLOW_CINEMATIC_OUTCOME_UNCERTAIN'],
+};
 export const npcPlanningReadDeadlineMs=30_000;
 export function requestLocalJson({port,path,method,body,deadline,signal,responseLimit=131072,npcPlanningRead=false,presetPublication=false,mapPublication=false}){
  return new Promise((resolve,reject)=>{
@@ -59,14 +66,19 @@ export function requestLocalJson({port,path,method,body,deadline,signal,response
    responseStatus=resp.statusCode;
    const presetConflict=presetPublication&&path===presetPath&&method==='POST'&&resp.statusCode===409;
    const mapConflict=mapPublication&&resp.statusCode===409;
-   if(resp.statusCode!==200&&!presetConflict&&!mapConflict){resp.destroy();fail('http_error');return;}
+   const allowedAssembly=method==='POST'&&[assemblyPds,assemblyPds+'/read'].includes(path)&&assemblyErrors[resp.statusCode];
+   if(resp.statusCode!==200&&!presetConflict&&!mapConflict&&!allowedAssembly){resp.destroy();fail('http_error');return;}
    if(!/^application\/json(?:\s*;|$)/i.test(String(resp.headers['content-type']??''))){resp.destroy();fail('invalid_content_type');return;}
    let len=0;const chunks=[];
    resp.on('data',part=>{len+=part.length;if(len>responseLimit){req.destroy();fail('response_too_large');}else chunks.push(part);});
    resp.on('aborted',()=>fail('response_aborted'));resp.on('error',()=>fail('response_stream_error'));
    resp.on('end',()=>{try{
     const reply=JSON.parse(new TextDecoder('utf-8',{fatal:true}).decode(Buffer.concat(chunks)));
-    if(mapConflict&&reply?.error==='MAP_REVISION_CONFLICT')reject(Error('MAP_REVISION_CONFLICT'));
+    if(allowedAssembly){
+     if(exact(reply,['error'])&&allowedAssembly.includes(reply.error)){
+      const error=Error(reply.error);error.pdsHttpStatus=responseStatus;reject(error);
+     }else fail('unexpected_assembly_error_response');
+    }else if(mapConflict&&reply?.error==='MAP_REVISION_CONFLICT')reject(Error('MAP_REVISION_CONFLICT'));
     else if(mapConflict)fail('unexpected_conflict_response');
     else if(presetConflict){
      if(exact(reply,['error'])&&reply.error==='WORKFLOW_PRESET_REJECTED_BEFORE_WRITE')reject(Error(reply.error));
