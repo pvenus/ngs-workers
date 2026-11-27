@@ -1,16 +1,33 @@
+import {readFile,access} from 'node:fs/promises';
+import {constants} from 'node:fs';
 import {DatabaseSync} from 'node:sqlite';
 import {createHash} from 'node:crypto';
-import {mapCanonical as canonical,mapFields as exact,officialId} from './map-contract.mjs';
+import {mapCanonical as canonical,mapFields as exact,officialId,validMapGraph} from './map-contract.mjs';
 import {assertDatabasePath,protectSchema,documentTaskEligibleSql,workflowTaskRetrySetSql,markWorkflowTaskFailed} from './workflow-ready.mjs';
 
-import {assemblyTypes,assemblyStage,assemblyPds,assemblyRef,validateAssembly,validPuzzles} from './assembly-contract.mjs';
+import {executeTypedCodexDocument,REPRESENTATIVE_CODEX_PATH} from './representative-renderer.mjs';
+import {assemblyTypes,assemblyStage,assemblyPds,assemblyRef,validateAssembly,validPuzzles,assemblyPayloadSchemas} from './assembly-contract.mjs';
 export {assemblyTypes,assemblyStage,assemblyPds};
 export const assemblyCapability='workflow.assembly.v1';
 const sha=x=>createHash('sha256').update(x).digest('hex');
 const rev=x=>Number.isSafeInteger(x)&&x>=1;
 const immutable=`task_id=? AND official_request_id=? AND worker_type='document' AND task_key=? AND task_type=?
  AND depends_on_task_id IS NULL AND result_ref IS NULL`;
-export async function runAssemblyFromPath({dbPath,taskId,officialRequestId,operation,pds,signal}){
+const generation=assemblyTypes[0];
+const {layout,attachments}=assemblyPayloadSchemas[1].properties.puzzles.items.properties;
+const outputSchema={type:'object',properties:{layout,attachments},required:['layout','attachments'],additionalProperties:false};
+export function createAssemblyRenderer({execute=executeTypedCodexDocument,codexPath=REPRESENTATIVE_CODEX_PATH}={}){
+ return async (input,{signal}={})=>{
+  await access(codexPath,constants.X_OK);
+  const guide=await readFile(new URL('./guides/assembly-placement.md',import.meta.url),'utf8');
+  return execute({codexPath,signal,prompt:guide+'\n\n'+JSON.stringify(input),outputSchema});
+ };
+}
+function validContext(context,title,puzzle){
+ return exact(context,['regions','connections','startRegionId'])&&validMapGraph({...context,title})&&
+  ['altar','well'].every(role=>context.regions.some(r=>r.id===puzzle.layout[role].regionId));
+}
+export async function runAssemblyFromPath({dbPath,taskId,officialRequestId,operation,pds,render,signal}){
  if(!assemblyTypes.includes(operation)||!officialId(officialRequestId)||
     taskId!=='workflow.task.'+sha(canonical([officialRequestId,assemblyStage])))throw Error('ASSEMBLY_TASK_INVALID');
  assertDatabasePath(dbPath);
@@ -44,13 +61,26 @@ export async function runAssemblyFromPath({dbPath,taskId,officialRequestId,opera
   try{
    const assemblyId=p.assemblyId??officialRequestId,revision=(p.expectedRevision??0)+1;
    const resultRef=assemblyRef(assemblyId,revision);
-   const context=await pds.readAssembly(claim,signal),state=context?.state;
-   if(!exact(context,['state'])||!exact(state,['schemaVersion','projectId','assemblyId','revision','updatedAt','officialRequestId','title','map','puzzles'])||
+   const generating=operation===generation;
+   const prepared=await pds.readAssembly(claim,signal),context=prepared?.context;
+   let state=prepared?.state;
+   if(!exact(prepared,generating?['state','context']:['state'])||!exact(state,['schemaVersion','projectId','assemblyId','revision','updatedAt','officialRequestId','title','map','puzzles'])||
       state.schemaVersion!=='ngs.assembly.v1'||state.projectId!=='binari'||state.assemblyId!==assemblyId||state.revision!==revision||
-      state.officialRequestId!==officialRequestId||state.updatedAt!==claim.claimStamp||!validPuzzles(state.puzzles)||
+      state.officialRequestId!==officialRequestId||(!rev(state.updatedAt)||state.updatedAt>claim.claimStamp)||!validPuzzles(state.puzzles)||
       !exact(state.map,['mapId','revision','officialRequestId'])||!officialId(state.map.mapId)||!rev(state.map.revision)||
       !officialId(state.map.officialRequestId)||(p.mapId!==undefined&&(state.map.mapId!==p.mapId||state.title!==p.title))||
-      (p.puzzles!==undefined&&canonical(state.puzzles)!==canonical(p.puzzles)))throw Error('ASSEMBLY_PREPARE_INVALID');
+      (p.puzzles!==undefined&&canonical(state.puzzles)!==canonical(p.puzzles))||
+      (generating&&(state.puzzles.length!==1||!validContext(context,state.title,state.puzzles[0]))))throw Error('ASSEMBLY_PREPARE_INVALID');
+   if(generating&&state.updatedAt===claim.claimStamp){
+    signal?.throwIfAborted();
+    let placement;
+    try{placement=await render({title:p.title,intent:p.intent,map:context,bindings:state.puzzles[0].bindings},{signal});}
+    catch{throw Error('ASSEMBLY_CLI_FAILED');}
+    if(!exact(placement,['layout','attachments']))throw Error('ASSEMBLY_CLI_OUTPUT_INVALID');
+    const puzzle={...state.puzzles[0],layout:placement.layout,attachments:placement.attachments};
+    if(!validPuzzles([puzzle])||!validContext(context,state.title,puzzle))throw Error('ASSEMBLY_CLI_OUTPUT_INVALID');
+    state={...state,puzzles:[puzzle]};
+   }
    signal?.throwIfAborted();
    const receipt=await pds.publishAssembly(claim,state,signal);
    if(!exact(receipt,['ok','resultRef'])||receipt.ok!==true||receipt.resultRef!==resultRef)throw Error('ASSEMBLY_SAVE_NOT_CONFIRMED');

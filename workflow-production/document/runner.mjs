@@ -84,7 +84,7 @@ export async function documentTick({dbPath,pds,operation,rendererFor,withPlannin
    if(!await pds.capability(signal,operation)){unavailable=true;continue;}
    if(stopping())return {state:'stopping'};
    const result=await runner(operation,run,runProp)({dbPath,pds,...task,withPlanningSnapshot,signal,
-    render:operation===PRESET||assemblyTypes.includes(operation)?undefined:rendererFor(operation)});
+    render:operation===PRESET||operation===assemblyTypes[1]?undefined:rendererFor(operation)});
    if(result.state!=='not_claimable')return {...result,operation};
    skipped.add(task.taskId);
    lost=true;

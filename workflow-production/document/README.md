@@ -250,3 +250,16 @@ The lease spans selection, claim, rendering and publication. SIGTERM/SIGINT
 stop new admissions in resident mode but let an already claimed job finish.
 Only after verifying the old process has exited should OPS clear a leftover
 lease after an abrupt crash, and only then remove the pause to admit work.
+
+### Formal assembly metadata
+
+`assembly.generate` obtains the approved map and pinned prop bindings from PDS
+after claiming `assembly_metadata`. The existing typed Codex CLI executor
+authors station placement and attachment offsets only. The worker checks the
+output against the shared contract before publishing through PDS. Invalid or
+missing model output fails the task; draft coordinates are never a fallback.
+If PDS returns an already committed revision for the same request, the worker
+reuses the exact result rather than rerunning Codex.
+
+`assembly.update` uses the exact user-submitted puzzle edits and does not call
+Codex. Both paths complete only after PDS returns the exact revision receipt.

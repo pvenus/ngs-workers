@@ -14,7 +14,7 @@ const offset=v=>mapFields(v,['x','y'])&&xy(v,-12,12);
 const pin=v=>mapFields(v,['propId','revision','sha256'])&&ident(v.propId)&&int(v.revision,1,Number.MAX_SAFE_INTEGER-1)&&
  typeof v.sha256==='string'&&/^[a-f0-9]{64}$/u.test(v.sha256);
 const roles=['table','bowl','well','lid'];
-export const validPuzzles=v=>Array.isArray(v)&&v.length>=1&&v.length<=32&&new Set(v.map(x=>x?.id)).size===v.length&&v.every(p=>
+export const validPuzzles=v=>Array.isArray(v)&&v.length<=32&&new Set(v.map(x=>x?.id)).size===v.length&&v.every(p=>
  mapFields(p,['id','type','layout','attachments','bindings'])&&ident(p.id)&&p.type===assemblyKind&&
  mapFields(p.layout,['altar','well'])&&station(p.layout.altar)&&station(p.layout.well)&&
  mapFields(p.attachments,['bowl','lid'])&&offset(p.attachments.bowl)&&offset(p.attachments.lid)&&
@@ -39,4 +39,4 @@ const puzzle=obj({id:slug,type:{const:assemblyKind},layout:obj({altar:pt,well:pt
  bindings:obj(Object.fromEntries(roles.map(k=>[k,pinSchema])))});
 export const assemblyPayloadSchemas=assemblySchemas.map((schemaVersion,i)=>obj({schemaVersion:{const:schemaVersion},projectId:{const:'binari'},
  ...(i===0?{title:string(1,100),mapId:oid,puzzleType:{const:assemblyKind},intent:string(1,2000)}:
- {assemblyId:oid,expectedRevision:integer(1,Number.MAX_SAFE_INTEGER-2),puzzles:{type:'array',minItems:1,maxItems:32,items:puzzle}})}));
+ {assemblyId:oid,expectedRevision:integer(1,Number.MAX_SAFE_INTEGER-2),puzzles:{type:'array',minItems:0,maxItems:32,items:puzzle}})}));

@@ -1,4 +1,4 @@
-import {assemblyTypes} from './assembly-worker.mjs';
+import {assemblyTypes,createAssemblyRenderer} from './assembly-worker.mjs';
 import {createDocumentSlot,documentSlotIdentity} from './document-slot.mjs';
 import {mapTypes} from './map-contract.mjs';
 import {createMapRenderer} from './map-worker.mjs';
@@ -23,11 +23,11 @@ try{
  const stopOrDrain=()=>settings.mode==='run'?drain.abort():stop.abort();
  process.on('SIGINT',stopOrDrain);process.on('SIGTERM',stopOrDrain);
  const emit=x=>console.log(JSON.stringify({service:serverName,...x}));
- const rendererFor=operation=>mapTypes.includes(operation)?createMapRenderer():isPropDesignOperation(operation)?createPropDesignRenderer():createRepresentativeRenderer({auditDirectory:settings.auditDirectory,operation});
+ const rendererFor=operation=>operation===assemblyTypes[0]?createAssemblyRenderer():mapTypes.includes(operation)?createMapRenderer():isPropDesignOperation(operation)?createPropDesignRenderer():createRepresentativeRenderer({auditDirectory:settings.auditDirectory,operation});
  if(settings.mode==='execute'){
   const release=workspace.tryEnter();
   let result;
-  try{result=release?await executeOnce({...settings,pds,render:settings.operation&&!assemblyTypes.includes(settings.operation)?rendererFor(settings.operation):undefined,
+  try{result=release?await executeOnce({...settings,pds,render:settings.operation&&settings.operation!==assemblyTypes[1]?rendererFor(settings.operation):undefined,
    withPlanningSnapshot,signal}):{state:'not_claimable',code:'DOCUMENT_WORKER_SLOT_PAUSED_OR_ACTIVE'};}finally{release?.();}
   emit({state:result.state,...(result.code?{code:result.code}:{}),...(result.conversion?{conversion:result.conversion}:{})});
   if(result.state!=='completed')process.exitCode=1;

@@ -6,7 +6,7 @@ import {mkdtempSync,realpathSync,chmodSync,rmSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {mapCanonical as canonical} from './map-contract.mjs';
-import {assemblyStage} from './assembly-worker.mjs';
+import {assemblyStage,createAssemblyRenderer} from './assembly-worker.mjs';
 import {documentTick,executeOnce,parseArgs} from './runner.mjs';
 import {localPorts} from './local-ports.mjs';
 
@@ -15,7 +15,7 @@ const id=x=>'request.official.'+x.repeat(64);
 const officialRequestId=id('a'),mapId=id('b'),existingId=id('c');
 const taskId='workflow.task.'+hash(canonical([officialRequestId,assemblyStage]));
 const noModel=()=>assert.fail('Assembly must not initialize a model renderer');
-function fixture(t,operation,{wrongReceipt=false,wrongMap=false}={}){
+function fixture(t,operation,{wrongReceipt=false,wrongMap=false,replay=false,invalidModel=false}={}){
  const dir=realpathSync(mkdtempSync(join(tmpdir(),'assembly-worker-test-'))),dbPath=join(dir,'planner.sqlite');
  const db=new DatabaseSync(dbPath);chmodSync(dbPath,0o600);
  t.after(()=>{db.close();rmSync(dir,{force:true,recursive:true});});
@@ -33,6 +33,11 @@ function fixture(t,operation,{wrongReceipt=false,wrongMap=false}={}){
  const wire=canonical(payload),digest=hash(wire);
  db.prepare("INSERT INTO workflow_runs VALUES(?,'planned',NULL,'binari',?,?,?,?,1)").run(officialRequestId,operation,payload.schemaVersion,wire,digest);
  db.prepare("INSERT INTO workflow_tasks VALUES(?,?,?,?,?,'document',NULL,NULL,'pending',1,0)").run(taskId,officialRequestId,wire,operation,assemblyStage);
+ const context={startRegionId:'north',regions:['north','south'].map(id=>({id,name:id,description:'길',
+  backgroundId:'background.'+'a'.repeat(64),imageSha256:'b'.repeat(64)})),connections:[]};
+ const generated={layout:{...puzzle.layout,altar:{...puzzle.layout.altar,x:42}},attachments:puzzle.attachments};
+ const inputs=[];
+ const render=async input=>{inputs.push(input);return invalidModel?{...generated,bindings:{}}:generated;};
  const resultRef=`binari/cinematics/assemblies/${assemblyId}/${revision}.json`;
  let prepared,activeClaim;
  const calls=[],pds=localPorts({async transport({method,path,body,port}){
@@ -42,21 +47,22 @@ function fixture(t,operation,{wrongReceipt=false,wrongMap=false}={}){
   assert.deepEqual(body.claim,{taskId,officialRequestId,projectId:'binari',claimStamp:row().updated_at,payloadSha256:digest});
   if(path.endsWith('/read')){
    activeClaim=body.claim;
-   prepared={schemaVersion:'ngs.assembly.v1',projectId:'binari',assemblyId,revision,updatedAt:body.claim.claimStamp,
+   prepared={schemaVersion:'ngs.assembly.v1',projectId:'binari',assemblyId,revision,updatedAt:body.claim.claimStamp-(replay?1:0),
     officialRequestId,title:'조립',map:{mapId:wrongMap?id('d'):mapId,revision:5,officialRequestId:id('e')},puzzles};
-   return {state:prepared};
+   return generate?{state:prepared,context}:{state:prepared};
   }
-  assert.deepEqual(body,{claim:activeClaim,state:prepared});
+  assert.deepEqual(body,{claim:activeClaim,state:generate&&!replay?{...prepared,puzzles:[{...puzzle,...generated}]}:prepared});
   return {ok:true,resultRef:wrongReceipt?'wrong':resultRef};
  }});
  const row=()=>db.prepare('SELECT status,result_ref,retry_count,updated_at FROM workflow_tasks').get();
- return {dbPath,pds,operation,taskId,officialRequestId,row,resultRef,calls,rendererFor:noModel};
+ return {dbPath,pds,operation,taskId,officialRequestId,row,resultRef,calls,inputs,render,rendererFor:generate?()=>render:noModel};
 }
-test('resident assembly.generate routes exact claimed read and publish without constructing a model renderer',async t=>{
+test('resident assembly.generate routes exact claimed read and publish and sends only claimed map, bindings and intent to the renderer',async t=>{
  const f=fixture(t,'assembly.generate');
  assert.equal(parseArgs(['--run','--db',f.dbPath,'--operation',f.operation]).operation,f.operation);
  assert.deepEqual(await documentTick(f),{state:'completed',taskId,resultRef:f.resultRef,operation:f.operation});
  assert.equal(f.row().status,'completed');
+ assert.deepEqual(Object.keys(f.inputs[0]),['title','intent','map','bindings']);
  assert.deepEqual(f.calls, ['/v1/assemblies/ownership/workflow-assembly','/v1/assemblies/ownership/workflow-assembly/read','/v1/assemblies/ownership/workflow-assembly']);
  assert.equal((await documentTick(f)).state,'idle');
 });
@@ -72,4 +78,25 @@ for(const [flag,code] of [['wrongReceipt','ASSEMBLY_SAVE_NOT_CONFIRMED'],['wrong
  assert.equal(f.row().retry_count,0);
  assert.equal(f.row().result_ref,null);
  if(flag==='wrongMap')assert.equal(f.calls.length,2);
+});
+
+test('committed generation retry republishes immutable state without running CLI a second time',async t=>{
+ const f=fixture(t,'assembly.generate',{replay:true});
+ assert.equal((await documentTick(f)).state,'completed');
+ assert.deepEqual(f.inputs,[]);
+});
+test('malformed model result becomes normal failure without publishing defaults',async t=>{
+ const f=fixture(t,'assembly.generate',{invalidModel:true});
+ assert.deepEqual(await documentTick(f),{state:'failed',taskId,code:'ASSEMBLY_CLI_OUTPUT_INVALID',operation:f.operation});
+ assert.equal(f.calls.length,2);
+});
+test('CLI uses the shared typed Codex executor and placement-only output schema',async ()=>{
+ const sample={title:'조립',intent:'테스트',map:{},bindings:{}};
+ const render=createAssemblyRenderer({codexPath:process.execPath,execute:async ({prompt,outputSchema})=>{
+  assert.ok(prompt.endsWith(JSON.stringify(sample)));
+  assert.deepEqual(outputSchema.required,['layout','attachments']);
+  assert.equal(outputSchema.additionalProperties,false);
+  return {layout:{},attachments:{}};
+ }});
+ assert.deepEqual(await render(sample),{layout:{},attachments:{}});
 });
