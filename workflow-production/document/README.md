@@ -258,6 +258,9 @@ after claiming `assembly_metadata`. The existing typed Codex CLI executor
 authors station placement and attachment offsets only. The worker checks the
 output against the shared contract before publishing through PDS. Invalid or
 missing model output fails the task; draft coordinates are never a fallback.
+Generation v2 takes one overall intent and 1–8 ordered puzzles, each with its
+own ID and intent. One CLI call authors the batch. The worker matches every
+returned placement to an exact input ID and publishes the whole assembly only.
 If PDS returns an already committed revision for the same request, the worker
 reuses the exact result rather than rerunning Codex.
 

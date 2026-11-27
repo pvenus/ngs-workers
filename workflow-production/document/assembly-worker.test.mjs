@@ -15,7 +15,7 @@ const id=x=>'request.official.'+x.repeat(64);
 const officialRequestId=id('a'),mapId=id('b'),existingId=id('c');
 const taskId='workflow.task.'+hash(canonical([officialRequestId,assemblyStage]));
 const noModel=()=>assert.fail('Assembly must not initialize a model renderer');
-function fixture(t,operation,{wrongReceipt=false,wrongMap=false,replay=false,invalidModel=false}={}){
+function fixture(t,operation,{wrongReceipt=false,wrongMap=false,replay=false,invalidModel=false,batch=false}={}){
  const dir=realpathSync(mkdtempSync(join(tmpdir(),'assembly-worker-test-'))),dbPath=join(dir,'planner.sqlite');
  const db=new DatabaseSync(dbPath);chmodSync(dbPath,0o600);
  t.after(()=>{db.close();rmSync(dir,{force:true,recursive:true});});
@@ -27,8 +27,8 @@ function fixture(t,operation,{wrongReceipt=false,wrongMap=false,replay=false,inv
  const puzzle={id:'ritual-well-water',type:'binari.ritual-well-water-demo',
   layout:{altar:{regionId:'north',x:40,y:50},well:{regionId:'south',x:60,y:50}},
   attachments:{bowl:{x:0,y:1},lid:{x:2,y:3}},
-  bindings:Object.fromEntries(['table','bowl','well','lid'].map(k=>[k,{propId:k,revision:1,sha256:'a'.repeat(64)}]))},puzzles=[puzzle];
- const payload=generate?{schemaVersion:'ngs.assembly-generate.v1',projectId:'binari',title:'조립',mapId,puzzleType:puzzle.type,intent:'의식을 준비한다.'}:
+  bindings:Object.fromEntries(['table','bowl','well','lid'].map(k=>[k,{propId:k,revision:1,sha256:'a'.repeat(64)}]))},puzzles=batch?[puzzle,{...puzzle,id:'other-ritual'}]:[puzzle];
+ const payload=generate?{schemaVersion:batch?'ngs.assembly-generate.v2':'ngs.assembly-generate.v1',projectId:'binari',title:'조립',mapId,intent:'의식을 준비한다.',...(batch?{puzzles:puzzles.map(({id,type},i)=>({id,type,intent:'퍼즐 '+i}))}:{puzzleType:puzzle.type})}:
    {schemaVersion:'ngs.assembly-update.v1',projectId:'binari',assemblyId,expectedRevision:2,puzzles};
  const wire=canonical(payload),digest=hash(wire);
  db.prepare("INSERT INTO workflow_runs VALUES(?,'planned',NULL,'binari',?,?,?,?,1)").run(officialRequestId,operation,payload.schemaVersion,wire,digest);
@@ -36,8 +36,11 @@ function fixture(t,operation,{wrongReceipt=false,wrongMap=false,replay=false,inv
  const context={startRegionId:'north',regions:['north','south'].map(id=>({id,name:id,description:'길',
   backgroundId:'background.'+'a'.repeat(64),imageSha256:'b'.repeat(64)})),connections:[]};
  const generated={layout:{...puzzle.layout,altar:{...puzzle.layout.altar,x:42}},attachments:puzzle.attachments};
+ const batchOutput=puzzles.map(({id},i)=>({id,...generated,layout:{...generated.layout,altar:{...generated.layout.altar,x:42+i}}}));
  const inputs=[];
- const render=async input=>{inputs.push(input);return invalidModel?{...generated,bindings:{}}:generated;};
+ const render=async input=>{inputs.push(input);
+  if(batch)return {puzzles:invalidModel?[batchOutput[0],batchOutput[0]]:[...batchOutput].reverse()};
+  return invalidModel?{...generated,bindings:{}}:generated;};
  const resultRef=`binari/cinematics/assemblies/${assemblyId}/${revision}.json`;
  let prepared,activeClaim;
  const calls=[],pds=localPorts({async transport({method,path,body,port}){
@@ -51,7 +54,7 @@ function fixture(t,operation,{wrongReceipt=false,wrongMap=false,replay=false,inv
     officialRequestId,title:'조립',map:{mapId:wrongMap?id('d'):mapId,revision:5,officialRequestId:id('e')},puzzles};
    return generate?{state:prepared,context}:{state:prepared};
   }
-  assert.deepEqual(body,{claim:activeClaim,state:generate&&!replay?{...prepared,puzzles:[{...puzzle,...generated}]}:prepared});
+  assert.deepEqual(body,{claim:activeClaim,state:generate&&!replay?{...prepared,puzzles:batch?puzzles.map((row,i)=>({...row,...batchOutput[i]})):[{...puzzle,...generated}]}:prepared});
   return {ok:true,resultRef:wrongReceipt?'wrong':resultRef};
  }});
  const row=()=>db.prepare('SELECT status,result_ref,retry_count,updated_at FROM workflow_tasks').get();
@@ -99,4 +102,31 @@ test('CLI uses the shared typed Codex executor and placement-only output schema'
   return {layout:{},attachments:{}};
  }});
  assert.deepEqual(await render(sample),{layout:{},attachments:{}});
+});
+
+test('v2 groups two independently annotated puzzles in one CLI call and merges placement by exact ID',async t=>{
+ const f=fixture(t,'assembly.generate',{batch:true});
+ assert.equal((await documentTick(f)).state,'completed');
+ assert.equal(f.inputs.length,1);
+ assert.equal(f.inputs[0].intent,'의식을 준비한다.');
+ assert.deepEqual(f.inputs[0].puzzles.map(({id,intent})=>[id,intent]),[['ritual-well-water','퍼즐 0'],['other-ritual','퍼즐 1']]);
+});
+test('v2 refuses duplicate model IDs rather than publishing a partial batch',async t=>{
+ const f=fixture(t,'assembly.generate',{batch:true,invalidModel:true});
+ assert.deepEqual(await documentTick(f),{state:'failed',taskId,code:'ASSEMBLY_CLI_OUTPUT_INVALID',stage:'cli',operation:f.operation});
+ assert.equal(f.calls.length,2);
+});
+test('v2 typed executor uses exact puzzle-ID geometry rows and one bounded list',async ()=>{
+ const sample={title:'조립',intent:'공통',map:{},puzzles:[{id:'first',intent:'개별'}]};
+ const render=createAssemblyRenderer({codexPath:process.execPath,execute:async ({prompt,outputSchema})=>{
+  assert.ok(prompt.endsWith(JSON.stringify(sample)));
+  assert.match(prompt,/each puzzle’s own intent/);
+  assert.deepEqual(outputSchema.required,['puzzles']);
+  const rows=outputSchema.properties.puzzles;
+  assert.equal(rows.maxItems,8);
+  assert.deepEqual(rows.items.required,['id','layout','attachments']);
+  assert.equal(rows.items.additionalProperties,false);
+  return {puzzles:[]};
+ }});
+ assert.deepEqual(await render(sample),{puzzles:[]});
 });

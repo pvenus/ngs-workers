@@ -14,13 +14,18 @@ const rev=x=>Number.isSafeInteger(x)&&x>=1;
 const immutable=`task_id=? AND official_request_id=? AND worker_type='document' AND task_key=? AND task_type=?
  AND depends_on_task_id IS NULL AND result_ref IS NULL`;
 const generation=assemblyTypes[0];
-const {layout,attachments}=assemblyPayloadSchemas[1].properties.puzzles.items.properties;
+const {id,layout,attachments}=assemblyPayloadSchemas[1].properties.puzzles.items.properties;
 const outputSchema={type:'object',properties:{layout,attachments},required:['layout','attachments'],additionalProperties:false};
+const batchOutputSchema={type:'object',properties:{puzzles:{type:'array',minItems:1,maxItems:8,items:{
+ type:'object',properties:{id,layout,attachments},required:['id','layout','attachments'],additionalProperties:false
+}}},required:['puzzles'],additionalProperties:false};
 export function createAssemblyRenderer({execute=executeTypedCodexDocument,codexPath=REPRESENTATIVE_CODEX_PATH}={}){
  return async (input,{signal}={})=>{
   await access(codexPath,constants.X_OK);
   const guide=await readFile(new URL('./guides/assembly-placement.md',import.meta.url),'utf8');
-  return execute({codexPath,signal,prompt:guide+'\n\n'+JSON.stringify(input),outputSchema});
+  const batch=Array.isArray(input.puzzles);
+  const task=batch?'\n\nFor this batch, return exactly one entry per input puzzle ID in a puzzles array. Consider the overall intent together with each puzzle’s own intent; plan all placements as one assembly. Do not omit, duplicate or invent a puzzle ID.':'';
+  return execute({codexPath,signal,prompt:guide+task+'\n\n'+JSON.stringify(input),outputSchema:batch?batchOutputSchema:outputSchema});
  };
 }
 function validContext(context,title,puzzle){
@@ -63,6 +68,7 @@ export async function runAssemblyFromPath({dbPath,taskId,officialRequestId,opera
    const assemblyId=p.assemblyId??officialRequestId,revision=(p.expectedRevision??0)+1;
    const resultRef=assemblyRef(assemblyId,revision);
    const generating=operation===generation;
+   const batch=generating&&Array.isArray(p.puzzles);
    const prepared=await pds.readAssembly(claim,signal),context=prepared?.context;
    let state=prepared?.state;
    if(!exact(prepared,generating?['state','context']:['state'])||!exact(state,['schemaVersion','projectId','assemblyId','revision','updatedAt','officialRequestId','title','map','puzzles'])||
@@ -70,18 +76,30 @@ export async function runAssemblyFromPath({dbPath,taskId,officialRequestId,opera
       state.officialRequestId!==officialRequestId||(!rev(state.updatedAt)||state.updatedAt>claim.claimStamp)||!validPuzzles(state.puzzles)||
       !exact(state.map,['mapId','revision','officialRequestId'])||!officialId(state.map.mapId)||!rev(state.map.revision)||
       !officialId(state.map.officialRequestId)||(p.mapId!==undefined&&(state.map.mapId!==p.mapId||state.title!==p.title))||
-      (p.puzzles!==undefined&&canonical(state.puzzles)!==canonical(p.puzzles))||
-      (generating&&(state.puzzles.length!==1||!validContext(context,state.title,state.puzzles[0]))))throw Error('ASSEMBLY_PREPARE_INVALID');
+      (!generating&&canonical(state.puzzles)!==canonical(p.puzzles))||
+      (generating&&(state.puzzles.length!==(batch?p.puzzles.length:1)||!state.puzzles.every((row,i)=>
+       validContext(context,state.title,row)&&(!batch||(row.id===p.puzzles[i].id&&row.type===p.puzzles[i].type))))))throw Error('ASSEMBLY_PREPARE_INVALID');
    if(generating&&state.updatedAt===claim.claimStamp){
     stage='cli';
     signal?.throwIfAborted();
     let placement;
-    try{placement=await render({title:p.title,intent:p.intent,map:context,bindings:state.puzzles[0].bindings},{signal});}
+    const input={title:p.title,intent:p.intent,map:context,...(batch?
+     {puzzles:p.puzzles.map((row,i)=>({...row,bindings:state.puzzles[i].bindings}))}:{bindings:state.puzzles[0].bindings})};
+    try{placement=await render(input,{signal});}
     catch{throw Error('ASSEMBLY_CLI_FAILED');}
-    if(!exact(placement,['layout','attachments']))throw Error('ASSEMBLY_CLI_OUTPUT_INVALID');
-    const puzzle={...state.puzzles[0],layout:placement.layout,attachments:placement.attachments};
-    if(!validPuzzles([puzzle])||!validContext(context,state.title,puzzle))throw Error('ASSEMBLY_CLI_OUTPUT_INVALID');
-    state={...state,puzzles:[puzzle]};
+    let placements;
+    if(batch){
+     if(!exact(placement,['puzzles'])||!Array.isArray(placement.puzzles)||placement.puzzles.length!==state.puzzles.length||
+        !placement.puzzles.every(row=>exact(row,['id','layout','attachments'])))throw Error('ASSEMBLY_CLI_OUTPUT_INVALID');
+     placements=new Map(placement.puzzles.map(row=>[row.id,row]));
+     if(placements.size!==state.puzzles.length||!state.puzzles.every(row=>placements.has(row.id)))throw Error('ASSEMBLY_CLI_OUTPUT_INVALID');
+    }else if(!exact(placement,['layout','attachments']))throw Error('ASSEMBLY_CLI_OUTPUT_INVALID');
+    const puzzles=state.puzzles.map(row=>{
+     const {layout,attachments}=batch?placements.get(row.id):placement;
+     return {...row,layout,attachments};
+    });
+    if(!validPuzzles(puzzles)||!puzzles.every(row=>validContext(context,state.title,row)))throw Error('ASSEMBLY_CLI_OUTPUT_INVALID');
+    state={...state,puzzles};
    }
    signal?.throwIfAborted();
    stage='publish';
