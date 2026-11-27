@@ -1,4 +1,4 @@
-import {fileDeleteSchema,fileDeleteTaskKey,fileDeleteType,validateFileDelete,backgroundDeleteRoot,cinematicDeleteRoot,mapDeleteRoot,cinematicDeleteTarget} from './file-delete-envelope.mjs';
+import {fileDeleteSchema,fileDeleteTaskKey,fileDeleteType,validateFileDelete,backgroundDeleteRoot,cinematicDeleteRoot,mapDeleteRoot,assemblyDeleteRoot,cinematicDeleteTarget} from './file-delete-envelope.mjs';
 // Machine-only execution boundary. One workflow claim can authorize one target.
 import {exact} from './vendor/planner-f24d23a/planner.mjs';
 
@@ -19,7 +19,7 @@ export function exactDeleteTarget(command){
     !Array.isArray(targets)||targets.length!==1||!exact(targets[0],['kind','id']))
   throw Error('WORKFLOW_DELETE_TARGET_INVALID');
  const target=targets[0];
- const pattern=target.kind==='concept-category'?categoryId:target.kind==='npc-directory'?npcId:['audio-directory','map-directory'].includes(target.kind)?audioResultId:null;
+ const pattern=target.kind==='concept-category'?categoryId:target.kind==='npc-directory'?npcId:['audio-directory','map-directory','assembly-directory'].includes(target.kind)?audioResultId:null;
  if(target.kind==='background-file'){
   if(typeof target.id!=='string'||!/^[a-f0-9]{64}\.(?:png|json)$/u.test(target.id))throw Error('WORKFLOW_DELETE_TARGET_INVALID');
   return target;
@@ -52,7 +52,7 @@ export function deleteCommandFromPlannedTask(task){
  else if(task.type===fileDeleteType&&task.key===fileDeleteTaskKey&&exact(task.input,['target','expected'])){
   const physical=task.input.target;
   validateFileDelete({schemaVersion:fileDeleteSchema,projectId:'binari',target:physical,expected:task.input.expected},'binari');
-  target={kind:physical.root===npcDeleteRoot?'npc-directory':physical.root===backgroundDeleteRoot?'background-file':physical.root===cinematicDeleteRoot?'cinematic-'+physical.kind:physical.root===mapDeleteRoot?'map-directory':'prop-directory',id:physical.path};
+  target={kind:physical.root===npcDeleteRoot?'npc-directory':physical.root===backgroundDeleteRoot?'background-file':physical.root===cinematicDeleteRoot?'cinematic-'+physical.kind:physical.root===mapDeleteRoot?'map-directory':physical.root===assemblyDeleteRoot?'assembly-directory':'prop-directory',id:physical.path};
  }
  else if(task.type===audioDelete&&task.key===audioDeleteKey&&exact(task.input,['officialRequestId','target'])&&
          typeof task.input.officialRequestId==='string'&&audioResultId.test(task.input.officialRequestId)&&
@@ -75,6 +75,7 @@ export function workflowDeleteFolder(command){
  const concept=target.kind==='concept-category';
  if(target.kind==='background-file')return Object.freeze({root:backgroundDeleteRoot,path:target.id,kind:'file'});
  if(target.kind.startsWith('cinematic-'))return Object.freeze({root:cinematicDeleteRoot,path:target.id,kind:target.kind.split('-')[1]});
+ if(target.kind==='assembly-directory')return Object.freeze({root:assemblyDeleteRoot,path:target.id,kind:'directory'});
  if(target.kind==='map-directory')return Object.freeze({root:mapDeleteRoot,path:target.id,kind:'directory'});
  if(target.kind==='prop-directory')return Object.freeze({root:propDeleteRoot,path:target.id,kind:'directory'});
  return Object.freeze({root:concept?conceptDeleteRoot:target.kind==='audio-directory'?audioDeleteRoot:npcDeleteRoot,

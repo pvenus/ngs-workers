@@ -147,3 +147,9 @@ map. It requires PDS map readiness (`/v1/storage/delete-target/map`) and sends
 the exact claim and one map-directory target through the common storage delete
 port. PDS and Filex enforce the frozen latest map revision and publisher;
 this worker does not directly access map files or source backgrounds.
+
+A published assembly uses the same single-target `file.delete` request. The worker
+checks the assembly deletion capability (`/v1/storage/delete-target/assembly`) and
+claims one exact directory under `canonical-files/binari/cinematics/assemblies`,
+with the expected revision and publishing request verified against the official
+plan. It does not delete the referenced map, prop assets, or unrelated folders.

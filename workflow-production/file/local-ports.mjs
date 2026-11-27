@@ -1,4 +1,4 @@
-import {fileDeleteType,cinematicDeleteRoot,backgroundDeleteRoot,mapDeleteRoot} from './file-delete-envelope.mjs';
+import {fileDeleteType,cinematicDeleteRoot,backgroundDeleteRoot,mapDeleteRoot,assemblyDeleteRoot} from './file-delete-envelope.mjs';
 import {request} from 'node:http';
 import {exactDeleteTarget,workflowDeleteFolder,singleTargetDeleteSchema,conceptDeleteRoot,npcDeleteRoot,audioDeleteRoot,propDeleteRoot,conceptDelete,npcDelete,audioDelete} from './file-delete.mjs';
 import {exact} from './vendor/planner-f24d23a/planner.mjs';
@@ -60,11 +60,11 @@ export function localPorts({transport=requestLocalJson,singleTarget=false}={}){
     if(operation!==undefined&&operation!==fileDeleteType&&!roots.has(operation))return false;
     try{
      const path=storageDeletePath+(operation===fileDeleteType?
-      targetRoot===npcDeleteRoot?'/npc-standalone':targetRoot===cinematicDeleteRoot?'/cinematic':targetRoot===backgroundDeleteRoot?'/background':targetRoot===mapDeleteRoot?'/map':'':'');
+      targetRoot===npcDeleteRoot?'/npc-standalone':targetRoot===cinematicDeleteRoot?'/cinematic':targetRoot===backgroundDeleteRoot?'/background':targetRoot===mapDeleteRoot?'/map':targetRoot===assemblyDeleteRoot?'/assembly':'':'');
      const data=await transport({port:8030,path,method:'GET',deadline:5000,signal});
      if(!exact(data,['enabled','schemaVersion','roots'])||data.enabled!==true||data.schemaVersion!==singleTargetDeleteSchema||
         !Array.isArray(data.roots)||!data.roots.length||
-        !data.roots.every((root,i)=>[conceptDeleteRoot,npcDeleteRoot,audioDeleteRoot,propDeleteRoot,cinematicDeleteRoot,backgroundDeleteRoot,mapDeleteRoot].includes(root)&&(i===0||data.roots[i-1]<root)))return false;
+        !data.roots.every((root,i)=>[conceptDeleteRoot,npcDeleteRoot,audioDeleteRoot,propDeleteRoot,cinematicDeleteRoot,backgroundDeleteRoot,mapDeleteRoot,assemblyDeleteRoot].includes(root)&&(i===0||data.roots[i-1]<root)))return false;
      return operation===undefined||operation===fileDeleteType&&data.roots.includes(targetRoot??propDeleteRoot)||data.roots.includes(roots.get(operation));
     }catch{return false;}
    }

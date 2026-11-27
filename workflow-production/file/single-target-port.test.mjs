@@ -284,8 +284,9 @@ test('cinematic child deletes claim before source aliases and each uses the gene
  assert.deepEqual(posts,[legacy+'.mp4',legacy+'.json',seq,sourceJson,sourcePng]);
 });
 
-test('map delete claims no work before its dedicated capability, then posts one exact map folder',async t=>{
- const f=audioSetup(t),root='canonical-files/binari/cinematics/maps';
+for(const [scope,folder] of [['map','maps'],['assembly','assemblies']])
+ test(scope+' delete claims no work before its dedicated capability, then posts one exact folder',async t=>{
+ const f=audioSetup(t),root='canonical-files/binari/cinematics/'+folder;
  const target={root,path:'request.official.'+'b'.repeat(64),kind:'directory'};
  const expected={revision:2,officialRequestId:'request.official.'+'c'.repeat(64)};
  const schemaVersion='ngs.file-delete.v1',type='file.delete',key='file_delete';
@@ -300,7 +301,7 @@ test('map delete claims no work before its dedicated capability, then posts one 
  let enabled=false,posts=0;
  const pds=localPorts({singleTarget:true,transport:async({method,path,body})=>{
   if(method==='GET'){
-   assert.equal(path,storageDeletePath+'/map');
+   assert.equal(path,storageDeletePath+'/'+scope);
    return {enabled,schemaVersion:singleTargetDeleteSchema,roots:enabled?[root]:[]};
   }
   assert.equal(path,storageDeletePath);
