@@ -28,8 +28,10 @@ const visibility=v=>['both','pixel','cinematic'].includes(v);
 export const mapPropPin=v=>mapFields(v,['propId','revision','sha256'])&&typeof v.propId==='string'&&v.propId.length>=2&&v.propId.length<=80&&
  /^[a-z0-9]+(?:[-._][a-z0-9]+)*$/.test(v.propId)&&Number.isSafeInteger(v.revision)&&v.revision>=1&&
  v.revision<Number.MAX_SAFE_INTEGER&&typeof v.sha256==='string'&&/^[a-f0-9]{64}$/.test(v.sha256);
+const decorationFields=['id','regionId','prop','anchor','scale','visibility'];
+export const mapDecorationRotation=row=>row.rotation??0;
 export const validDecorations=(v,ids)=>Array.isArray(v)&&v.length<=48&&new Set(v.map(x=>x?.id)).size===v.length&&v.every(r=>
- mapFields(r,['id','regionId','prop','anchor','scale','visibility'])&&regionId(r.id)&&ids.has(r.regionId)&&mapPropPin(r.prop)&&
+ (mapFields(r,decorationFields)||(mapFields(r,[...decorationFields,'rotation'])&&Number.isInteger(r.rotation)&&r.rotation>=0&&r.rotation<360))&&regionId(r.id)&&ids.has(r.regionId)&&mapPropPin(r.prop)&&
  mapPoint(r.anchor)&&Number.isInteger(r.scale)&&10<=r.scale&&r.scale<=300&&visibility(r.visibility));
 export const validDecorationDesign=v=>mapFields(v,['mode','notes','candidates'])&&['none','suggest'].includes(v.mode)&&note(v.notes)&&
  Array.isArray(v.candidates)&&(v.mode==='none'?v.candidates.length===0:1<=v.candidates.length&&v.candidates.length<=12)&&
