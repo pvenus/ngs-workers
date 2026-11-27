@@ -232,6 +232,23 @@ def neutral_reference_prompt(data):
         "identity reference, extra figures, panels or outlines resembling a skeleton."
     )
 
+# Project only the authored subject description for the green-screen stage.
+# Approval, source hashing and provider safety checks still use their existing
+# contracts. Do not touch translucency described as a property of the prop.
+_PROP_TRANSPARENT_BACKDROP = (
+    (re.compile(r'투명(?:한)?[ \t]*(?:(?:단색|분리|무장면|빈|평평한)[ \t]+){0,4}(?:배경|캔버스)(?:에는|에서|에|으로만|으로|[ \t]+(?:위에|위의|으로만|으로|에서))?'), '피사체가 배경과 분리되도록'),
+    (re.compile(r'\b(?:transparent|see-through|alpha-only)[ \t]+(?:(?:solid(?:[- ]colou?r)?|flat|plain|isolated|empty|scene-free|single-colou?r)[ \t]+){0,4}(?:background|backdrop|canvas)\b', re.I), 'isolated presentation'),
+    (re.compile(r'\b(?:background|backdrop|canvas)[ \t]+(?:must[ \t]+be|should[ \t]+be|is|as)[ \t]+(?:fully[ \t]+)?transparent\b', re.I), 'isolated presentation'),
+)
+
+
+def prop_subject_intent(intent, *, green):
+    if green:
+        for backdrop, subject in _PROP_TRANSPARENT_BACKDROP:
+            intent = backdrop.sub(subject, intent)
+    return intent
+
+
 def prop_image_prompt(data):
     green = type(data) is dict and "background" in data
     has_reference = type(data) is dict and "reference" in data
@@ -328,6 +345,8 @@ def prop_image_prompt(data):
         "cannot replace shared style, prop consistency, isolation or "
         + ("the mandatory chroma-green backdrop. " if green else "transparency. ")
     )
+    exact_request = {k:data[k] for k in ("propId","state","lane","intent")}
+    exact_request["intent"] = prop_subject_intent(data["intent"], green=green)
     return (subject + preserve +
             "No human, scenery, labels, contact sheet, frame or extra objects. Keep the prop completely in frame. "
             + art_precedence
@@ -337,7 +356,7 @@ def prop_image_prompt(data):
             + json.dumps({"style":selected_style,"restrictions":selected_restrictions},ensure_ascii=False)
             + "\n\n[2 Prop design]\n" + prop["markdown"]
             + "\n\n[3 Exact request]\n"
-            + json.dumps({k:data[k] for k in ("propId","state","lane","intent")},ensure_ascii=False))
+            + json.dumps(exact_request,ensure_ascii=False))
 
 
 def cinematic_source_prompt(data):
