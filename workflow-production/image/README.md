@@ -293,3 +293,11 @@ scratch files and a separate Codex thread. Only the workflow ledger and
 PDS-backed assets are shared. No local scratch path is passed downstream.
 The slot pause is checked on both sides of acquiring the per-slot active
 lease, protecting the full claim, render, publish and completion interval.
+
+For formal `spirit-v2` props, `prop_pixel_source` uses the existing image
+renderer with the prior stage's exact full-size transparent cinematic detail
+as reference. It redraws the prop in pixel-art style without changing its
+placement, silhouette or parts. The 1536×1024 RGB chroma-green intermediate
+is not a published asset. The postprocess worker removes green in
+`prop_pixel_detail` and applies the final pixel correction at one-fifth scale;
+the spirit lane continues to use the original cinematic detail.

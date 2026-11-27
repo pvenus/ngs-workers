@@ -10,17 +10,21 @@ import {finishPortraitRead,hasPortraitReadOwner} from './portrait-read-owner.mjs
 import {validatePropDesign} from './prop-image-design.mjs';
 
 export const propBaseOperations=Object.freeze({
- 'prop.generate.base':Object.freeze({type:propGenerateType,schema:propGenerateSchema,validate:validatePropGenerate}),
- 'prop.regenerate.base':Object.freeze({type:propRegenerateType,schema:propRegenerateSchema,validate:validatePropRegenerate}),
+ 'prop.generate.base':Object.freeze({type:propGenerateType,schema:propGenerateSchema,validate:validatePropGenerate,key:propKeys.base}),
+ 'prop.regenerate.base':Object.freeze({type:propRegenerateType,schema:propRegenerateSchema,validate:validatePropRegenerate,key:propKeys.base}),
+ 'prop.generate.pixel-source':Object.freeze({type:propGenerateType,schema:propGenerateSchema,validate:validatePropGenerate,key:propKeys.pixelSource}),
+ 'prop.regenerate.pixel-source':Object.freeze({type:propRegenerateType,schema:propRegenerateSchema,validate:validatePropRegenerate,key:propKeys.pixelSource}),
 });
 const worker='image', projectId='binari', official=/^request\.official\.[a-f0-9]{64}$/u;
 const signature=Buffer.from('89504e470d0a1a0a','hex');
 const need=(cond,code='WORKFLOW_PROP_BASE_BINDING_INVALID')=>{if(!cond)throw Error(code);};
 const supported=v=>typeof v==='string'&&Object.hasOwn(propBaseOperations,v);
 const scope=`r.state='planned' AND r.reason IS NULL AND r.project_id='binari'
- AND t.task_key='prop_base' AND t.worker_type='image' AND t.result_ref IS NULL`;
-const parents=`JOIN workflow_tasks d ON d.task_id=t.depends_on_task_id AND d.official_request_id=t.official_request_id
- AND d.task_key='prop_design' AND d.worker_type='document' AND d.status='completed'`;
+ AND t.task_key IN ('prop_base','prop_pixel_source') AND t.worker_type='image' AND t.result_ref IS NULL`;
+const parents=`JOIN workflow_tasks s ON s.task_id=t.depends_on_task_id AND s.official_request_id=t.official_request_id AND s.status='completed'
+ JOIN workflow_tasks d ON d.official_request_id=t.official_request_id AND d.task_key='prop_design' AND d.worker_type='document' AND d.status='completed'
+ AND ((t.task_key='prop_base' AND d.task_id=s.task_id) OR
+      (t.task_key='prop_pixel_source' AND s.task_key='prop_detail' AND s.worker_type='postprocess' AND s.result_ref GLOB 'prop.detail-rgba.*'))`;
 
 export function nextPropBaseFromPath(dbPath){
  assertDatabasePath(dbPath);
@@ -30,18 +34,16 @@ export function nextPropBaseFromPath(dbPath){
   return db.prepare(`SELECT t.task_id AS taskId,t.official_request_id AS officialRequestId,t.task_type AS operation
   FROM workflow_tasks t JOIN workflow_runs r USING(official_request_id) ${parents}
   WHERE ${scope} AND ${workflowTaskEligibleSql(db,'t')}
-   AND ((t.task_type=? AND r.request_type=? AND r.schema_version=? AND d.task_type=?) OR
-        (t.task_type=? AND r.request_type=? AND r.schema_version=? AND d.task_type=?))
+   AND (${Object.keys(propBaseOperations).map(()=>'(t.task_type=? AND t.task_key=? AND r.request_type=? AND r.schema_version=?)').join(' OR ')})
    AND d.result_ref GLOB 'prop.design-spec.*'
-  ORDER BY r.registered_at,t.official_request_id LIMIT 1`)
-   .get('prop.generate.base',propGenerateType,propGenerateSchema,'prop.generate.design',
-    'prop.regenerate.base',propRegenerateType,propRegenerateSchema,'prop.regenerate.design')??null;
+  ORDER BY r.registered_at,t.official_request_id,t.task_id LIMIT 1`)
+   .get(...Object.entries(propBaseOperations).flatMap(([op,spec])=>[op,spec.key,spec.type,spec.schema]))??null;
  }finally{db.close();}
 }
 
 const currentSql=`SELECT t.*,r.request_type,r.schema_version,r.payload,r.payload_sha256,r.registered_at,
  d.result_ref AS design_ref,d.task_input AS design_input,d.task_type AS design_type,d.updated_at AS design_stamp,
- d.depends_on_task_id AS design_predecessor
+ d.depends_on_task_id AS design_predecessor,s.result_ref AS source_ref,s.updated_at AS source_stamp,s.task_id AS source_id,d.task_id AS design_id
  FROM workflow_tasks t JOIN workflow_runs r USING(official_request_id) ${parents}
  WHERE ${scope} AND r.request_type=? AND r.schema_version=? AND t.task_type=? AND t.official_request_id=? AND t.task_id=?`;
 function readCurrent(db,{operation,officialRequestId,taskId},eligible=false){
@@ -59,26 +61,30 @@ function claimTask(db,request){
   need(spec.validate(payload,projectId)===row.payload&&canonical(payload)===row.payload&&sha(row.payload)===row.payload_sha256&&
    Number.isSafeInteger(row.updated_at)&&row.updated_at>=0&&row.updated_at<Number.MAX_SAFE_INTEGER-1&&
    Number.isSafeInteger(row.registered_at)&&row.registered_at>=0);
-  const [design,base]=buildPropGeneratePlan({officialRequestId,requestType:row.request_type,payload});
-  need(base.key===propKeys.base&&design.key===propKeys.design&&exactPropTask(row,base)&&
+  const plan=buildPropGeneratePlan({officialRequestId,requestType:row.request_type,payload});
+  const design=plan.find(t=>t.key===propKeys.design),base=plan.find(t=>t.key===spec.key),pixelSource=spec.key===propKeys.pixelSource;
+  const source=plan.find(t=>t.id===base?.dependsOn);
+  const sourceRow=db.prepare('SELECT * FROM workflow_tasks WHERE task_id=?').get(row.source_id);
+  need(base&&design?.id===row.design_id&&source?.id===row.source_id&&exactPropTask(sourceRow,source)&&isPropRef(source.key,row.source_ref)&&
+   (!pixelSource||payload.presentationProfile==='spirit-v2'&&source.key===propKeys.detail)&&exactPropTask(row,base)&&
    row.design_input===canonical(design.input)&&row.design_type===design.type&&row.design_predecessor===null&&
    Number.isSafeInteger(row.design_stamp)&&row.design_stamp>=0&&isPropRef(propKeys.design,row.design_ref));
   const claimStamp=Math.max(Date.now(),row.updated_at+1);
-  need(row.registered_at<=claimStamp&&row.design_stamp<=claimStamp);
+  need(row.registered_at<=claimStamp&&row.design_stamp<=claimStamp&&Number.isSafeInteger(row.source_stamp)&&row.source_stamp>=0&&row.source_stamp<=claimStamp);
   const ownerTracked=hasPortraitReadOwner(db);
   need(db.prepare(`UPDATE workflow_tasks SET status='running',updated_at=?,${ownerTracked?'portrait_read_owner_pid=?,':''}${workflowTaskRetrySetSql}
    WHERE task_id=? AND official_request_id=? AND worker_type=? AND task_type=? AND task_key=?
     AND updated_at=? AND status=? AND result_ref IS NULL AND ${workflowTaskEligibleSql(db)}`)
-   .run(claimStamp,...(ownerTracked?[process.pid]:[]),taskId,officialRequestId,worker,operation,propKeys.base,row.updated_at,row.status).changes===1);
+   .run(claimStamp,...(ownerTracked?[process.pid]:[]),taskId,officialRequestId,worker,operation,spec.key,row.updated_at,row.status).changes===1);
   db.exec('COMMIT');
-  return {row,design,ownerTracked,reference:base.input.reference,request,claim:{officialRequestId,taskId,projectId,payloadSha256:row.payload_sha256,claimStamp}};
+  return {row,design,ownerTracked,key:spec.key,pixelSource,source,reference:base.input.reference,request,claim:{officialRequestId,taskId,projectId,payloadSha256:row.payload_sha256,claimStamp}};
  }catch(error){db.exec('ROLLBACK');throw error;}
 }
 function assertCurrent(db,selected){
  const {row,request,claim}=selected,live=readCurrent(db,request);
  need(live?.status==='running'&&live.updated_at===claim.claimStamp&&
   ['payload','payload_sha256','registered_at','task_input','depends_on_task_id','design_ref','design_input','design_type',
-   'design_stamp','design_predecessor'].every(k=>row[k]===live[k]),'WORKFLOW_PROP_BASE_CLAIM_CHANGED');
+   'design_stamp','design_predecessor','design_id','source_id','source_ref','source_stamp'].every(k=>row[k]===live[k]),'WORKFLOW_PROP_BASE_CLAIM_CHANGED');
 }
 function commit(db,selected,resultRef){
  db.exec('BEGIN IMMEDIATE');
@@ -88,7 +94,7 @@ function commit(db,selected,resultRef){
   need(db.prepare(`UPDATE workflow_tasks SET status='completed',result_ref=?,updated_at=?
    WHERE official_request_id=? AND task_id=? AND worker_type=? AND task_type=? AND task_key=?
    AND status='running' AND updated_at=? AND result_ref IS NULL`).run(resultRef,Math.max(Date.now(),claim.claimStamp+1),
-    claim.officialRequestId,claim.taskId,worker,selected.request.operation,propKeys.base,claim.claimStamp).changes===1);
+    claim.officialRequestId,claim.taskId,worker,selected.request.operation,selected.key,claim.claimStamp).changes===1);
   db.exec('COMMIT');
  }catch(error){db.exec('ROLLBACK');throw error;}
 }
@@ -97,11 +103,22 @@ const text=(s,n)=>typeof s==='string'&&s.isWellFormed()&&s.trim()===s&&s.length>
 const perms=['xPermille','yPermille','widthPermille','heightPermille'];
 const box=b=>b===null||(exact(b,perms)&&perms.every(k=>Number.isSafeInteger(b[k])&&b[k]>=0&&b[k]<=1000)&&
  b.widthPermille>=1&&b.heightPermille>=1&&b.xPermille+b.widthPermille<=1000&&b.yPermille+b.heightPermille<=1000);
-export function propBaseRenderInput(packet,selected){
- const {claim,design,row,reference}=selected,i=design.input;
- need(exact(packet,['design','context',...(reference?['reference']:[])]),
+export function propBaseRenderInput(packet,selected,pixelBytes){
+ const {claim,design,row,reference,pixelSource,source}=selected,i=design.input;
+ need(exact(packet,['design','context',...(reference?['reference']:[]),...(pixelSource?['source','media','canvas']:[])]),
   reference?'WORKFLOW_PROP_BASE_REFERENCE_INVALID':'WORKFLOW_PROP_BASE_DESIGN_INVALID');
  let referenceImage;
+ if(pixelSource){
+  const m=packet.media,c=packet.canvas,r=packet.source;
+  need(exact(r,['taskId','resultRef'])&&r.taskId===source.id&&r.resultRef===row.source_ref&&
+   exact(m,['sha256','bytes','width','height','mediaType'])&&m.mediaType==='image/png'&&m.sha256===r.resultRef.slice(-64)&&
+   exact(c,['width','height'])&&m.width===c.width&&m.height===c.height&&c.width===1536&&c.height===1024&&
+   Buffer.isBuffer(pixelBytes)&&pixelBytes.length===m.bytes&&m.bytes>=57&&m.bytes<=8*1024*1024&&
+   pixelBytes.subarray(0,8).equals(signature)&&pixelBytes.readUInt32BE(8)===13&&pixelBytes.toString('ascii',12,16)==='IHDR'&&
+   pixelBytes.readUInt32BE(16)===c.width&&pixelBytes.readUInt32BE(20)===c.height&&pixelBytes[24]===8&&pixelBytes[25]===6&&
+   sha(pixelBytes)===m.sha256,'WORKFLOW_PROP_BASE_REFERENCE_INVALID');
+  referenceImage={assetId:m.sha256+'.png',sha256:m.sha256,base64:pixelBytes.toString('base64')};
+ }
  if(reference){
   const r=packet.reference;
   need(exact(r,['pin','assetId','sha256','base64'])&&canonical(r.pin)===canonical(reference)&&
@@ -127,7 +144,7 @@ export function propBaseRenderInput(packet,selected){
   exact(a.interaction,['pixelOpen','detailTrigger'])&&Object.values(a.interaction).every(box),
   'WORKFLOW_PROP_BASE_DESIGN_INVALID');
  const ctx=validatePropDesign(packet.context,{projectId,designContextSha256:i.designContextSha256});
- return {projectId,propId:i.propId,state:'base',lane:'detail',background:'green-screen.v1',intent:a.appearancePrompt,sources:ctx.sources,contextSha256:ctx.contextSha256,
+ return {projectId,propId:i.propId,state:'base',lane:pixelSource?'pixel':'detail',background:'green-screen.v1',intent:a.appearancePrompt,sources:ctx.sources,contextSha256:ctx.contextSha256,
   ...(referenceImage?{reference:referenceImage}:{}),...(i.presentationProfile?{presentationProfile:i.presentationProfile}:{})};
 }
 function mediaArtifact(buffer){
@@ -171,7 +188,7 @@ const diagnosis=(stage,e)=>({failureStage:stage==='model-render'&&pngReasons.has
 
 export async function runPropBaseFromPath({dbPath,taskId,officialRequestId,operation,pds,renderProp,signal}){
  need(typeof officialRequestId==='string'&&officialRequestId.length===81&&official.test(officialRequestId)&&
-  supported(operation)&&taskId===propTaskId(officialRequestId,propKeys.base)&&typeof renderProp==='function'&&
+  supported(operation)&&taskId===propTaskId(officialRequestId,propBaseOperations[operation].key)&&typeof renderProp==='function'&&
   typeof pds?.readPropBase==='function'&&typeof pds?.publishPropBase==='function');
  assertDatabasePath(dbPath);
  if(signal?.aborted)return {state:'stopping'};
@@ -189,7 +206,8 @@ export async function runPropBaseFromPath({dbPath,taskId,officialRequestId,opera
     throw error;
    }
    stage='input-validation';
-   const input=propBaseRenderInput(packet,selected);
+   const pixelBytes=selected.pixelSource?await pds.fetchPropPixelSourceAsset(selected.claim,signal):undefined;
+   const input=propBaseRenderInput(packet,selected,pixelBytes);
    stage='claim-validation';
    signal?.throwIfAborted();assertCurrent(db,selected);
    stage='model-render';
@@ -198,7 +216,8 @@ export async function runPropBaseFromPath({dbPath,taskId,officialRequestId,opera
    const artifact=mediaArtifact(rendered);
    stage='claim-validation';
    signal?.throwIfAborted();assertCurrent(db,selected);
-   const resultRef=propRef(propKeys.base,artifact.media.sha256);
+   need(!selected.pixelSource||artifact.media.width===1536&&artifact.media.height===1024,'WORKFLOW_PROP_BASE_PNG_CANVAS');
+   const resultRef=propRef(selected.key,artifact.media.sha256);
    if(ownerTracked){
     need(await settleFailure(()=>finishPortraitRead(db,selected.claim)),'WORKFLOW_PROP_BASE_CLAIM_CHANGED');
     ownerTracked=false;

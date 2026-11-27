@@ -40,20 +40,24 @@ function fixture(t,operation='prop.generate',mode='valid'){
  const officialRequestId='request.official.'+sha(operation),schemaVersion='ngs.'+operation.replace('.','-')+'.v1';
  const reference=mode.startsWith('reference')?{propId:'original-prop',revision:1,sha256:'c'.repeat(64)}:null;
  const payload={schemaVersion,projectId:'binari',propId:'12.candle',designContextSha256:contextSha256,
-  intent:'raw request should not be model input',...(mode==='spirit'?{presentationProfile:'spirit-v1'}:{}),...(reference?{reference}:{}),...(operation==='prop.regenerate'?{source:{revision:3,sha256:'a'.repeat(64)}}:{})};
+  intent:'raw request should not be model input',...(mode==='spirit'?{presentationProfile:'spirit-v1'}:mode.startsWith('pixel-v2')?{presentationProfile:'spirit-v2'}:{}),...(reference?{reference}:{}),...(operation==='prop.regenerate'?{source:{revision:3,sha256:'a'.repeat(64)}}:{})};
  const payloadSha256=sha(canonical(payload));
  const artifact={schemaVersion:'ngs.prop-design-spec.v1',propId:payload.propId,designContextSha256:contextSha256,
   title:'촛불',appearancePrompt:'exact approved game prop, clear design',motion:'still',motionPrompt:null,
   interaction:{pixelOpen:null,detailTrigger:null}};
  const designRef=propRef(propKeys.design,sha(canonical(artifact)));
- const [design,base,...remaining]=buildPropGeneratePlan({officialRequestId,requestType:operation,payload});
+ const [design,initialBase,...remaining]=buildPropGeneratePlan({officialRequestId,requestType:operation,payload});
+ const pixel=mode.startsWith('pixel-v2'),base=pixel?remaining.find(row=>row.key===propKeys.pixelSource):initialBase;
+ const detail=remaining.find(row=>row.key===propKeys.detail),detailPng=basePng({alpha:true});
+ const prior=new Map([[design,mode==='blocked'?null:designRef],...(pixel?
+  [[initialBase,propRef(propKeys.base,sha(png))],[detail,propRef(propKeys.detail,sha(detailPng))]]:[])]);
  db.prepare(`INSERT INTO workflow_runs VALUES(?,?,?,?,?,?,1,'planned',2,NULL)`)
   .run(officialRequestId,'binari',operation,schemaVersion,canonical(payload),payloadSha256);
- for(const row of [design,base,...remaining])db.prepare(`INSERT INTO workflow_tasks
+ for(const row of [design,initialBase,...remaining])db.prepare(`INSERT INTO workflow_tasks
    (task_id,official_request_id,task_key,task_type,worker_type,task_input,result_ref,updated_at,depends_on_task_id,status)
    VALUES(?,?,?,?,?,?,?,2,?,?)`)
   .run(row.id,officialRequestId,row.key,row.type,row.workerType,canonical(row.input),
-   row===design&&mode!=='blocked'?designRef:null,row.dependsOn,row===design&&mode!=='blocked'?'completed':'pending');
+   prior.get(row)??null,row.dependsOn,prior.get(row)?'completed':'pending');
  const state=()=>db.prepare('SELECT * FROM workflow_tasks WHERE task_id=?').get(base.id);
  const calls=[],options={dbPath,taskId:base.id,officialRequestId,operation:base.type,signal:new AbortController().signal,
   providerReady:async()=>true,mode:'run',
@@ -82,13 +86,19 @@ function fixture(t,operation='prop.generate',mode='valid'){
     const actualRef=reference&&mode!=='reference missing'?{pin:reference,assetId:hash+'.png',
      sha256:hash,base64:(mode==='reference corrupt'?Buffer.from('bad'):asset).toString('base64')}:null;
     return {design:{officialRequestId,taskId:design.id,key:design.key,resultRef:designRef,
-     artifact:mode==='wrong design'?{...artifact,appearancePrompt:'tampered'}:artifact,lineage:null},context,...(actualRef?{reference:actualRef}:{})};
+     artifact:mode==='wrong design'?{...artifact,appearancePrompt:'tampered'}:artifact,lineage:null},context,...(actualRef?{reference:actualRef}:{}),
+     ...(pixel?{source:{taskId:detail.id,resultRef:prior.get(detail)},media:{sha256:sha(detailPng),bytes:detailPng.length,width:1536,height:1024,mediaType:'image/png'},
+      canvas:{width:1536,height:1024}}:{})};
+   }
+   if(pixel&&r.path===propBasePath+'/asset'){
+    assert.deepEqual(Object.keys(r.body),['claim','purpose','index']);assert.equal(r.body.purpose,'input');assert.equal(r.body.index,null);
+    return mode==='pixel-v2 corrupted'?Buffer.from('corrupt'):detailPng;
    }
    assert.equal(r.path,propBasePath);
    assert.deepEqual(r.body.artifact,{media:{sha256:sha(png),bytes:png.length,width:1536,height:1024,mediaType:'image/png'},base64:png.toString('base64')});
    if(mode==='lost ack once'&&calls.filter(c=>c[0]==='http'&&c[1]==='POST'&&c[2]===propBasePath).length===1)
     throw Error('DOCUMENT_WORKER_LOCAL_TRANSPORT');
-   return {ok:true,resultRef:mode==='wrong ack'?'bogus':propRef(propKeys.base,sha(png))};
+   return {ok:true,resultRef:mode==='wrong ack'?'bogus':propRef(base.key,sha(png))};
   }})};
  return {options,state,db,base,design,calls,artifact};
 }
@@ -188,4 +198,20 @@ test('official spirit profile reaches the isolated base image renderer',async t=
   assert.equal(q.background,'green-screen.v1');
   assert.equal(q.intent,f.artifact.appearancePrompt);
  }
+});
+
+for(const operation of ['prop.generate','prop.regenerate'])test(operation+' pixel source reads exact RGBA detail and makes a new stage-scoped render',async t=>{
+ const f=fixture(t,operation,'pixel-v2');
+ assert.equal(nextPropBaseFromPath(f.options.dbPath).operation,f.base.type);
+ assert.equal((await runPropBaseFromPath(f.options)).state,'completed');
+ const input=f.calls.find(c=>c[0]==='render')[1];
+ assert.equal(input.lane,'pixel');
+ assert.equal(input.presentationProfile,'spirit-v2');
+ assert.equal(sha(Buffer.from(input.reference.base64,'base64')),input.reference.sha256);
+ assert.ok(f.state().result_ref.startsWith('prop.pixel-source-png.'));
+});
+test('pixel source cannot generate with corrupted cinematic reference',async t=>{
+ const f=fixture(t,'prop.generate','pixel-v2 corrupted');
+ assert.equal((await runPropBaseFromPath(f.options)).state,'failed');
+ assert.equal(f.calls.some(c=>c[0]==='render'),false);
 });

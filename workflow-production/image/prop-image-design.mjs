@@ -24,7 +24,7 @@ export function validatePropImageRequest(request){
 function validateRenderRequest(request,formalBase){
  if(!exact(request,['schemaVersion','projectId','propId','state','lane','intent','designContextSha256'])||
     request.schemaVersion!==propImageRequestSchema||request.projectId!=='binari'||
-    !((id(request.propId)&&id(request.state))||(formalBase&&basePropId(request.propId)&&request.state==='base'&&request.lane==='detail'))||
+    !((id(request.propId)&&id(request.state))||(formalBase&&basePropId(request.propId)&&request.state==='base'))||
     !['detail','pixel'].includes(request.lane)||!text(request.intent,4000)||!hex(request.designContextSha256))
   throw fail('PROP_IMAGE_REQUEST_INVALID');
  return request;

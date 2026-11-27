@@ -1,14 +1,14 @@
 /** Exact formal prop derivative execution. No filesystem authority or global scan. */
 import {DatabaseSync} from 'node:sqlite';
 import {canonical,sha} from './vendor/planner-f24d23a/envelope.mjs';
-import {exactProp,propValidator,propAnimationType,propTypes,spiritPresentationProfile} from './vendor/prop-composite/prop-generate-envelope.mjs';
+import {exactProp,propValidator,propAnimationType,propTypes,spiritPresentationProfile,pixelSourcePresentationProfile} from './vendor/prop-composite/prop-generate-envelope.mjs';
 import {buildPropGeneratePlan,exactPropTask,isPropRef,propKeys,propRef} from './vendor/prop-composite/prop-generate-plan.mjs';
 import {propRenderDiagnostic} from './prop-derivation-provider.mjs';
 import {verifyPropMedia,propPackageMediaLimit} from './vendor/prop-composite/prop-package-contract.mjs';
 import {assertDatabasePath,protectSchema,workflowTaskEligibleSql,workflowTaskRetrySetSql,markWorkflowTaskFailed} from './workflow-ready.mjs';
 
 const roles={
- [propKeys.detail]:'detail',[propKeys.pixel]:'pixel',[propKeys.spirit]:'spirit',
+ [propKeys.detail]:'detail',[propKeys.pixelDetail]:'detail',[propKeys.pixel]:'pixel',[propKeys.spirit]:'spirit',
  [propKeys.animDetail]:'detail',[propKeys.animPixel]:'pixel',
 };
 const check=(x,reason='PROP_DERIVATION_BINDING')=>{if(!x)throw Error(reason);};
@@ -82,7 +82,7 @@ function frozenRef(value,expected){
 export async function preparePropDerivation(pds,binding,{signal}={}){
  const {role,animated,renderProfile,presentationProfile}=binding;
  const reduced=role==='pixel'||role==='spirit';
- const scaled=(!animated&&reduced&&presentationProfile===spiritPresentationProfile);
+ const scaled=!animated&&reduced&&[spiritPresentationProfile,pixelSourcePresentationProfile].includes(presentationProfile);
  const dto=await pds.readPropDerivation(binding,{signal});
  const mediaInput=!animated||role==='pixel';
  const geometryProof=animated?'geometry':null;
@@ -118,6 +118,8 @@ export async function preparePropDerivation(pds,binding,{signal}={}){
   check(descriptor.sha256===source.resultRef.slice(-64),'PROP_DERIVATION_SOURCE_REF');
   const frameDurationsMs=timing(reduced?descriptor.frameDurationsMs:[],animated);
   check(dto.canvas.width*dto.canvas.height*(frameDurationsMs.length||1)<=MAX_PIXELS,'PROP_DERIVATION_OUTPUT_BUDGET');
+  if(!animated&&presentationProfile===pixelSourcePresentationProfile)
+   check(descriptor.width===1536&&descriptor.height===1024,'PROP_DERIVATION_CANVAS');
   if(scaled)check(dto.canvas.width===Math.round(descriptor.width/5)&&dto.canvas.height===Math.round(descriptor.height/5),
     'PROP_DERIVATION_PIXEL_SCALE');
   else if(reduced)check(dto.canvas.width<=descriptor.width&&dto.canvas.height<=descriptor.height&&

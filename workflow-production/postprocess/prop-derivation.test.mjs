@@ -46,7 +46,7 @@ function fixture(t,type='prop.generate',options={motion:'subtle'}){
   const scratch=realpathSync(mkdtempSync(join(root,'render-')));
   try{return await renderPropInScratch(job,binding,{root:scratch,signal,execute(directory){
    execFileSync(py,['-B','-c',`
-import json,runpy,sys
+import json,runpy,sys,types
 from pathlib import Path
 from PIL import Image
 code=runpy.run_path(sys.argv[1]);path=Path(sys.argv[2])
@@ -59,7 +59,14 @@ def matte(root,paths,key):
       0 if r==0 and g==0 and b==0 else 220 for r,g,b,a in rgba.getdata())))
   rgba.save(target);out.append(target)
  return out
-result=code['process'](path,json.loads((path/'job.json').read_bytes()),matte)
+spec=json.loads((path/'job.json').read_bytes())
+first=path/'raw'/'frame-00000000.png'
+corridor=spec['kind']=='detail' and not spec['frameDurationsMs'] and first.read_bytes()[25]==2
+if corridor:
+ fake=types.ModuleType('prop_corridor')
+ fake.cutouts=lambda root,job: [Image.open(p).copy() for p in matte(root,[first],None)]
+ sys.modules['prop_corridor']=fake
+result=code['process'](path,spec,matte,corridor=corridor)
 (path/'result.png').write_bytes(result)
 `,program,directory]);
   }});}
@@ -333,4 +340,40 @@ test('Spirit keeps smooth transparent material detail while pixel stays quantize
    "import io,sys;from PIL import Image; print(any(0<a<255 for a in Image.open(io.BytesIO(sys.stdin.buffer.read())).getchannel('A').getdata()))"],{input:output}).toString().trim();
   assert.equal(smooth,key===propKeys.spirit?'True':'False');
  }
+});
+
+test('spirit-v2 keys the full-size pixel redraw, then reduces it independently of the cinematic spirit lane',{skip:!hasPillow},async t=>{
+ const f=fixture(t,'prop.generate',{motion:'still',presentationProfile:'spirit-v2'});
+ const cine=raw(1536,1024,0,'RGBA'),draft=raw(1536,1024,80);
+ f.complete(propKeys.design,'5'.repeat(64));f.complete(propKeys.base,'6'.repeat(64));
+ f.complete(propKeys.detail,sha(cine));f.complete(propKeys.pixelSource,sha(draft));
+ const staged=new Map(),inputByKey={
+  [propKeys.pixelDetail]:{key:propKeys.pixelSource,bytes:draft},
+  [propKeys.spirit]:{key:propKeys.detail,bytes:cine,media:{...descriptor(cine,1536,1024),assetId:sha(cine)+".png",frameDurationsMs:[]}},
+ };
+ const pds={
+  async readPropDerivation(b){
+   const item=inputByKey[b.key];
+   assert.equal(b.source.taskId,f.by[item.key].id);
+   const media=item.media??descriptor(item.bytes,1536,1024);
+   return {source:b.source,canvas:b.key===propKeys.pixelDetail?canvas(1536,1024):canvas(307,205),media};
+  },
+  async fetchPropDerivationAsset(b,item){
+   assert.equal(item.sha256,sha(inputByKey[b.key].bytes));
+   return inputByKey[b.key].bytes;
+  },
+  async stagePropDerivation(b,result){
+   staged.set(b.key,result);
+   return {ok:true,resultRef:propRef(b.key,result.media.sha256)};
+  },
+ };
+ const keyed=await f.run(propKeys.pixelDetail,pds); assert.equal(keyed.state,'completed',JSON.stringify(keyed));
+ inputByKey[propKeys.pixel]={key:propKeys.pixelDetail,...staged.get(propKeys.pixelDetail)};
+ assert.equal((await f.run(propKeys.pixel,pds)).state,'completed');
+ assert.equal((await f.run(propKeys.spirit,pds)).state,'completed');
+ for(const key of [propKeys.pixel,propKeys.spirit]){
+  const {width,height}=staged.get(key).media;
+  assert.deepEqual([width,height],[307,205]);
+ }
+ assert.notEqual(staged.get(propKeys.pixel).media.sha256,staged.get(propKeys.spirit).media.sha256);
 });

@@ -23,6 +23,8 @@ const routes={...Object.fromEntries(Object.entries(chainPath).map(([op,path])=>[
  'background.source.generate':{path:backgroundSourcePath,schema:'workflow.background-source-write.v1'},
  'cinematic.source.generate':{path:cinematicSourcePath,schema:'workflow.cinematic-source-write.v1'},
  'prop.generate.base':{path:propBasePath,schema:'workflow.prop-stage.v1'},
+ 'prop.generate.pixel-source':{path:propBasePath,schema:'workflow.prop-stage.v1'},
+ 'prop.regenerate.pixel-source':{path:propBasePath,schema:'workflow.prop-stage.v1'},
  'prop.regenerate.base':{path:propBasePath,schema:'workflow.prop-stage.v1'},
  'prop.image-generate':{path:propImagePath,schema:'workflow.prop-image-write.v1'},
  'motion-preset.convert-2d.image':{path:motionImagePath,schema:'workflow.motion-preset-convert-2d.v1'},
@@ -40,7 +42,7 @@ function claimOf(command,claimStamp){
  return {officialRequestId,taskId,projectId,npcId,payloadSha256,claimStamp};
 }
 
-export function requestLocalJson({port,path,method,body,deadline,signal,responseLimit=65536,portraitRead=false,propBaseReference=false}){
+export function requestLocalJson({port,path,method,body,deadline,signal,responseLimit=65536,portraitRead=false,propBaseReference=false,propAsset=false}){
  return new Promise((resolve,reject)=>{
   const payload=body?Buffer.from(JSON.stringify(body)):null;
   const timeout=portraitRead?undefined:AbortSignal.timeout(deadline);
@@ -48,13 +50,15 @@ export function requestLocalJson({port,path,method,body,deadline,signal,response
   const connectError=Error('WORKFLOW_PORTRAIT_PDS_CONNECT_TIMEOUT');
   const fail=error=>reject(error===connectError?error:Error('DOCUMENT_WORKER_LOCAL_TRANSPORT'));
   const req=request({hostname:'127.0.0.1',port,path,method,agent:false,signal:requestSignal,
-   headers:{Accept:'application/json',...(payload?{'Content-Type':'application/json','Content-Length':payload.length}:{})}},resp=>{
+   headers:{Accept:propAsset?'image/png':'application/json',...(payload?{'Content-Type':'application/json','Content-Length':payload.length}:{})}},resp=>{
    const propConflict=propBaseReference&&resp.statusCode===409;
-   if((resp.statusCode!==200&&!propConflict)||!/^application\/json(?:\s*;|$)/i.test(String(resp.headers['content-type']??''))){resp.destroy();fail();return;}
+   const contentType=propAsset?/^image\/png(?:\s*;|$)/i:/^application\/json(?:\s*;|$)/i;
+   if((resp.statusCode!==200&&!propConflict)||!contentType.test(String(resp.headers['content-type']??''))){resp.destroy();fail();return;}
    let len=0;const chunks=[];
    resp.on('data',part=>{len+=part.length;if(len>(propConflict?1024:responseLimit)){req.destroy();fail();}else chunks.push(part);});
    resp.on('aborted',fail);resp.on('error',fail);
    resp.on('end',()=>{try{
+    if(propAsset){resolve(Buffer.concat(chunks));return;}
     const body=JSON.parse(new TextDecoder('utf-8',{fatal:true}).decode(Buffer.concat(chunks)));
     if(propConflict){
      if(exact(body,['error'])&&body.error==='WORKFLOW_PROP_REFERENCE_CHANGED')
@@ -134,6 +138,9 @@ export function localPorts({transport=requestLocalJson}={}){
   },
   async readPropBase(claim,signal,withReference=false){
    return transport({port:8030,path:propBasePath+'/read',method:'POST',body:{claim},deadline:withReference?20000:5000,signal,responseLimit:withReference?12*1024*1024:128*1024,propBaseReference:withReference});
+  },
+  async fetchPropPixelSourceAsset(claim,signal){
+   return transport({port:8030,path:propBasePath+'/asset',method:'POST',body:{claim,purpose:'input',index:null},deadline:20000,signal,responseLimit:8*1024*1024,propAsset:true});
   },
   async publishPropBase(claim,artifact){
    return transport({port:8030,path:propBasePath,method:'POST',body:{claim,artifact},deadline:120000});
