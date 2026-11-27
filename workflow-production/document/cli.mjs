@@ -1,3 +1,4 @@
+import {assemblyTypes} from './assembly-worker.mjs';
 import {createDocumentSlot,documentSlotIdentity} from './document-slot.mjs';
 import {mapTypes} from './map-contract.mjs';
 import {createMapRenderer} from './map-worker.mjs';
@@ -26,7 +27,7 @@ try{
  if(settings.mode==='execute'){
   const release=workspace.tryEnter();
   let result;
-  try{result=release?await executeOnce({...settings,pds,render:settings.operation?rendererFor(settings.operation):undefined,
+  try{result=release?await executeOnce({...settings,pds,render:settings.operation&&!assemblyTypes.includes(settings.operation)?rendererFor(settings.operation):undefined,
    withPlanningSnapshot,signal}):{state:'not_claimable',code:'DOCUMENT_WORKER_SLOT_PAUSED_OR_ACTIVE'};}finally{release?.();}
   emit({state:result.state,...(result.code?{code:result.code}:{}),...(result.conversion?{conversion:result.conversion}:{})});
   if(result.state!=='completed')process.exitCode=1;

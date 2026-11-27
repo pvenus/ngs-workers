@@ -1,3 +1,4 @@
+import {assemblyTypes,assemblyPds,assemblyCapability} from './assembly-worker.mjs';
 import {mapTypes,mapPds,mapCapability} from './map-contract.mjs';
 import {propDesignOperations,propDesignPath,propDesignCapability} from './prop-design-contract.mjs';
 import {request} from 'node:http';
@@ -14,6 +15,7 @@ export const idlePath='/v1/npcs/ownership/workflow-plan-idle';
 export const conceptCategoryPath='/v1/concept/category-workflow';
 export const heartbeatPath='/api/service-heartbeat';
 const routes={
+ ...Object.fromEntries(assemblyTypes.map(v=>[v,{path:assemblyPds,schema:assemblyCapability}])),
  ...Object.fromEntries(mapTypes.map(v=>[v,{path:mapPds,schema:mapCapability}])),
  ...Object.fromEntries(Object.keys(propDesignOperations).map(v=>[v,{path:propDesignPath,schema:propDesignCapability}])),
  'concept.category-generate':{path:conceptCategoryPath,schema:'workflow.concept-category-write.v1'},
@@ -107,6 +109,12 @@ export function localPorts({transport=requestLocalJson}={}){
    const {predecessorReceiptRef,artifact}=command;
    return await transport({port:8030,path:presetPath,method:'POST',
     body:{claim:claimOf(command,claimStamp),artifact:JSON.parse(artifact),predecessorReceiptRef},deadline:120000,presetPublication:true});
+  },
+  async readAssembly(claim,signal){
+   return await transport({port:8030,path:assemblyPds+'/read',method:'POST',body:{claim},deadline:30000,signal});
+  },
+  async publishAssembly(claim,state,signal){
+   return await transport({port:8030,path:assemblyPds,method:'POST',body:{claim,state},deadline:30000,signal});
   },
   async readMap(claim,signal){
    return await transport({port:8030,path:mapPds+'/read',method:'POST',body:{claim},deadline:10000,signal});
