@@ -15,7 +15,7 @@ const id=x=>'request.official.'+x.repeat(64);
 const officialRequestId=id('a'),mapId=id('b'),existingId=id('c');
 const taskId='workflow.task.'+hash(canonical([officialRequestId,assemblyStage]));
 const noModel=()=>assert.fail('Assembly must not initialize a model renderer');
-function fixture(t,operation,{wrongReceipt=false,wrongMap=false,replay=false,invalidModel=false,batch=false}={}){
+function fixture(t,operation,{wrongReceipt=false,wrongMap=false,replay=false,invalidModel=false,batch=false,scale,modelScale}={}){
  const dir=realpathSync(mkdtempSync(join(tmpdir(),'assembly-worker-test-'))),dbPath=join(dir,'planner.sqlite');
  const db=new DatabaseSync(dbPath);chmodSync(dbPath,0o600);
  t.after(()=>{db.close();rmSync(dir,{force:true,recursive:true});});
@@ -27,7 +27,7 @@ function fixture(t,operation,{wrongReceipt=false,wrongMap=false,replay=false,inv
  const puzzle={id:'ritual-well-water',type:'binari.ritual-well-water-demo',
   layout:{altar:{regionId:'north',x:40,y:50},well:{regionId:'south',x:60,y:50}},
   attachments:{bowl:{x:0,y:1},lid:{x:2,y:3}},
-  bindings:Object.fromEntries(['table','bowl','well','lid'].map(k=>[k,{propId:k,revision:1,sha256:'a'.repeat(64)}]))},puzzles=batch?[puzzle,{...puzzle,id:'other-ritual'}]:[puzzle];
+  ...(scale?{scale}:{}),bindings:Object.fromEntries(['table','bowl','well','lid'].map(k=>[k,{propId:k,revision:1,sha256:'a'.repeat(64)}]))},puzzles=batch?[puzzle,{...puzzle,id:'other-ritual'}]:[puzzle];
  const payload=generate?{schemaVersion:batch?'ngs.assembly-generate.v2':'ngs.assembly-generate.v1',projectId:'binari',title:'조립',mapId,intent:'의식을 준비한다.',...(batch?{puzzles:puzzles.map(({id,type},i)=>({id,type,intent:'퍼즐 '+i}))}:{puzzleType:puzzle.type})}:
    {schemaVersion:'ngs.assembly-update.v1',projectId:'binari',assemblyId,expectedRevision:2,puzzles};
  const wire=canonical(payload),digest=hash(wire);
@@ -40,7 +40,7 @@ function fixture(t,operation,{wrongReceipt=false,wrongMap=false,replay=false,inv
  const inputs=[];
  const render=async input=>{inputs.push(input);
   if(batch)return {puzzles:invalidModel?[batchOutput[0],batchOutput[0]]:[...batchOutput].reverse()};
-  return invalidModel?{...generated,bindings:{}}:generated;};
+  return modelScale?{...generated,scale:modelScale}:invalidModel?{...generated,bindings:{}}:generated;};
  const resultRef=`binari/cinematics/assemblies/${assemblyId}/${revision}.json`;
  let prepared,activeClaim;
  const calls=[],pds=localPorts({async transport({method,path,body,port}){
@@ -129,4 +129,16 @@ test('v2 typed executor uses exact puzzle-ID geometry rows and one bounded list'
   return {puzzles:[]};
  }});
  assert.deepEqual(await render(sample),{puzzles:[]});
+});
+
+const resized={table:10,bowl:125,well:300,lid:99};
+test('manual assembly update publishes exact clamped-range scales with no model call',async t=>{
+ const f=fixture(t,'assembly.update',{scale:resized});
+ assert.equal((await executeOnce(f)).state,'completed');
+ assert.deepEqual(f.inputs,[]);
+});
+test('generation rejects a scale proposed outside the CLI placement contract',async t=>{
+ const f=fixture(t,'assembly.generate',{modelScale:resized});
+ assert.deepEqual(await documentTick(f),{state:'failed',taskId,code:'ASSEMBLY_CLI_OUTPUT_INVALID',stage:'cli',operation:f.operation});
+ assert.equal(f.calls.length,2);
 });

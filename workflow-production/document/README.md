@@ -265,4 +265,5 @@ If PDS returns an already committed revision for the same request, the worker
 reuses the exact result rather than rerunning Codex.
 
 `assembly.update` uses the exact user-submitted puzzle edits and does not call
-Codex. Both paths complete only after PDS returns the exact revision receipt.
+Codex. Manual edits can carry per-role scales (10–300%); omitted scales use 100%.
+Both paths complete only after PDS returns the exact revision receipt.

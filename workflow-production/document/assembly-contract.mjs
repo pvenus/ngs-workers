@@ -17,8 +17,11 @@ const offset=v=>mapFields(v,['x','y'])&&xy(v,-12,12);
 const pin=v=>mapFields(v,['propId','revision','sha256'])&&ident(v.propId)&&int(v.revision,1,Number.MAX_SAFE_INTEGER-1)&&
  typeof v.sha256==='string'&&/^[a-f0-9]{64}$/u.test(v.sha256);
 const roles=['table','bowl','well','lid'];
+const puzzleFields=['id','type','layout','attachments','bindings'];
+const hasScale=p=>Object.hasOwn(p??{},'scale');
+const validScale=v=>mapFields(v,roles)&&roles.every(k=>int(v[k],10,300));
 export const validPuzzles=v=>Array.isArray(v)&&v.length<=32&&new Set(v.map(x=>x?.id)).size===v.length&&v.every(p=>
- mapFields(p,['id','type','layout','attachments','bindings'])&&ident(p.id)&&p.type===assemblyKind&&
+ mapFields(p,hasScale(p)?[...puzzleFields,'scale']:puzzleFields)&&(!hasScale(p)||validScale(p.scale))&&ident(p.id)&&p.type===assemblyKind&&
  mapFields(p.layout,['altar','well'])&&station(p.layout.altar)&&station(p.layout.well)&&
  mapFields(p.attachments,['bowl','lid'])&&offset(p.attachments.bowl)&&offset(p.attachments.lid)&&
  mapFields(p.bindings,roles)&&roles.every(k=>pin(p.bindings[k]))&&new Set(roles.map(k=>p.bindings[k].propId)).size===4);
@@ -31,7 +34,7 @@ export function validateAssembly(v,type){
     officialId(v.assemblyId)&&int(v.expectedRevision,1,Number.MAX_SAFE_INTEGER-2)&&validPuzzles(v.puzzles)))throw Error('NGS_ASSEMBLY_PAYLOAD_INVALID');
  return mapCanonical(v);
 }
-const obj=properties=>({type:'object',additionalProperties:false,required:Object.keys(properties),properties});
+const obj=(properties,required=Object.keys(properties))=>({type:'object',additionalProperties:false,required,properties});
 const string=(minLength,maxLength,pattern)=>({type:'string',minLength,maxLength,...(pattern?{pattern}:{})});
 const integer=(minimum,maximum)=>({type:'integer',minimum,maximum});
 const oid=string(81,81,'^request\\.official\\.[a-f0-9]{64}$');
@@ -40,7 +43,7 @@ const pt=obj({regionId:string(1,32,'^[a-z][a-z0-9-]{0,31}$'),x:integer(10,90),y:
 const ofs=obj({x:integer(-12,12),y:integer(-12,12)});
 const pinSchema=obj({propId:slug,revision:integer(1,Number.MAX_SAFE_INTEGER-1),sha256:string(64,64,'^[a-f0-9]{64}$')});
 const puzzle=obj({id:slug,type:{const:assemblyKind},layout:obj({altar:pt,well:pt}),attachments:obj({bowl:ofs,lid:ofs}),
- bindings:obj(Object.fromEntries(roles.map(k=>[k,pinSchema])))});
+ bindings:obj(Object.fromEntries(roles.map(k=>[k,pinSchema]))),scale:obj(Object.fromEntries(roles.map(k=>[k,integer(10,300)])))},puzzleFields);
 export const assemblyPayloadSchemas=assemblySchemas.map((schemaVersion,i)=>obj({schemaVersion:{const:schemaVersion},projectId:{const:'binari'},
  ...(i!==1?{title:string(1,100),mapId:oid,intent:string(1,2000),
   ...(i===0?{puzzleType:{const:assemblyKind}}:{puzzles:{type:'array',minItems:1,maxItems:8,items:obj({id:slug,type:{const:assemblyKind},intent:string(0,1000)})}})}:
