@@ -1,3 +1,4 @@
+import {retrySqliteBusy,isSqliteBusyExhausted} from './sqlite-busy-retry.mjs';
 import {readFile,access} from 'node:fs/promises';
 import {constants} from 'node:fs';
 import {DatabaseSync} from 'node:sqlite';
@@ -151,12 +152,13 @@ export async function runAssemblyFromPath({dbPath,taskId,officialRequestId,opera
    const receipt=await pds.publishAssembly(claim,state,signal);
    if(!exact(receipt,['ok','resultRef'])||receipt.ok!==true||receipt.resultRef!==resultRef)throw Error('ASSEMBLY_SAVE_NOT_CONFIRMED');
    stage='complete';
-   const n=db.prepare(`UPDATE workflow_tasks SET status='completed',result_ref=?,updated_at=?
+   const n=await retrySqliteBusy(()=>db.prepare(`UPDATE workflow_tasks SET status='completed',result_ref=?,updated_at=?
     WHERE ${immutable} AND status='running' AND updated_at=? AND EXISTS (SELECT 1 FROM workflow_runs r WHERE
     r.official_request_id=workflow_tasks.official_request_id AND r.state='planned' AND r.reason IS NULL AND r.payload_sha256=?)`)
-    .run(resultRef,Math.max(Date.now(),claim.claimStamp+1),...scope,claim.claimStamp,claim.payloadSha256);
+    .run(resultRef,Math.max(Date.now(),claim.claimStamp+1),...scope,claim.claimStamp,claim.payloadSha256),taskId);
    return n.changes===1?{state:'completed',taskId,resultRef}:{state:'not_claimable',taskId};
   }catch(e){
+   if(isSqliteBusyExhausted(e))return {state:'requires_reconciliation',taskId,code:'WORKFLOW_SQLITE_BUSY_EXHAUSTED',stage};
    const failed=markWorkflowTaskFailed(db,{...claim,workerType:'document'});
    const allowed=['ASSEMBLY_PREPARE_INVALID','ASSEMBLY_CLI_FAILED','ASSEMBLY_CLI_OUTPUT_INVALID','ASSEMBLY_SAVE_NOT_CONFIRMED',
     'ASSEMBLY_CSHARP_VALIDATOR_UNAVAILABLE','ASSEMBLY_CSHARP_VALIDATION_FAILED',

@@ -1,3 +1,4 @@
+import {retrySqliteBusy} from './sqlite-busy-retry.mjs';
 /** Exact formal prop derivative execution. No filesystem authority or global scan. */
 import {DatabaseSync} from 'node:sqlite';
 import {canonical,sha} from './vendor/planner-f24d23a/envelope.mjs';
@@ -229,12 +230,14 @@ export async function runPropDerivationFromPath({dbPath,officialRequestId,taskId
    const reply=await pds.stagePropDerivation(binding,{source:job.source,geometry:job.geometry,media,bytes:raw},{signal});
    const resultRef=propRef(binding.key,hash);
    check(exactProp(reply,['ok','resultRef'])&&reply.ok===true&&reply.resultRef===resultRef,'PROP_DERIVATION_ACK');
-   tx(db,()=>{
-    exactCurrent();
-    check(db.prepare(`UPDATE workflow_tasks SET status='completed',result_ref=?,updated_at=?
-     WHERE task_id=? AND official_request_id=? AND status='running' AND updated_at=? AND result_ref IS NULL`)
-     .run(resultRef,Math.max(Date.now(),stamp+1),taskId,officialRequestId,stamp).changes===1);
-   });
+   await retrySqliteBusy(()=>{
+    tx(db,()=>{
+     exactCurrent();
+     check(db.prepare(`UPDATE workflow_tasks SET status='completed',result_ref=?,updated_at=?
+      WHERE task_id=? AND official_request_id=? AND status='running' AND updated_at=? AND result_ref IS NULL`)
+      .run(resultRef,Math.max(Date.now(),stamp+1),taskId,officialRequestId,stamp).changes===1);
+    });
+   },taskId);
    return {state:'completed',taskId,resultRef};
   }catch(error){
    if(!sent)try{

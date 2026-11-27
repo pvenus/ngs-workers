@@ -1,3 +1,4 @@
+import {retrySqliteBusy} from './sqlite-busy-retry.mjs';
 import {DatabaseSync} from 'node:sqlite';
 import {mkdtemp,readFile,writeFile,rm,open} from 'node:fs/promises';
 import {constants as fsConstants} from 'node:fs';
@@ -246,9 +247,11 @@ async function execute(db,t,signal,warm=null,{transport=local,native=runNative}=
    ...(regenerate?{source:{generationId:settings.generationId,portraitAssetId:settings.portraitAssetId,resultBasisSha256:settings.resultBasisSha256}}:{})}},signal,timeout:180000});
   insist(Object.keys(ack).length===1&&ack.ok===true,'ANIMATION_PUBLICATION_UNCONFIRMED');
   stage='commit';
-  const done=db.prepare("UPDATE workflow_tasks SET status='completed',updated_at=? WHERE task_id=? AND official_request_id=? AND status='running' AND updated_at=?")
-    .run(Math.max(Date.now(),dto.claimStamp+1),dto.taskId,dto.officialRequestId,dto.claimStamp);
-  insist(done.changes===1,'ANIMATION_DB_COMPLETION');
+  await retrySqliteBusy(()=>{
+   const done=db.prepare("UPDATE workflow_tasks SET status='completed',updated_at=? WHERE task_id=? AND official_request_id=? AND status='running' AND updated_at=?")
+     .run(Math.max(Date.now(),dto.claimStamp+1),dto.taskId,dto.officialRequestId,dto.claimStamp);
+   insist(done.changes===1,'ANIMATION_DB_COMPLETION');
+  },t.taskId);
   console.log(JSON.stringify({state:'completed',taskId:t.taskId,frames:frames.length}));
  }catch(e){
   const message=e?.message;

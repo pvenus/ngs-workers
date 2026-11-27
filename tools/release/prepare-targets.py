@@ -108,6 +108,13 @@ def prepare(root, env, require_node=True):
     if require_node:
         require(ascii_line(subprocess.check_output(["node", "--version"], timeout=8)) == NODE, "TARGET_NODE_VERSION_DRIFT")
     checked = {}
+    # Exact release roots remain independently deployable. Compare the shared
+    # SQLite retry policy by committed blob, without executing worker code.
+    retry = 'sqlite-busy-retry.mjs'
+    shared = ascii_line(git(root, 'rev-parse', head + ':workflow-production/shared/' + retry))
+    for role in ('animation', 'audio', 'candidate-audio-resident', 'document', 'file', 'image', 'postprocess'):
+        copy = ascii_line(git(root, 'rev-parse', head + ':workflow-production/' + role + '/' + retry))
+        require(copy == shared, 'TARGET_SHARED_SQLITE_RETRY_DRIFT')
     targets = {target: target_proof(root, head, roots, entries, checked)
                for target, (roots, entries) in TARGETS.items()}
     with ThreadPoolExecutor(max_workers=4) as pool:

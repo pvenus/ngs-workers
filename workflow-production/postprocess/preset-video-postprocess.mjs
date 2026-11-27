@@ -1,3 +1,4 @@
+import {retrySqliteBusy} from './sqlite-busy-retry.mjs';
 /** CPU-only postprocessing for the formal non-NPC motion preset workflow. */
 import {DatabaseSync} from 'node:sqlite';
 import {mkdir,mkdtemp,rm,writeFile} from 'node:fs/promises';
@@ -191,7 +192,7 @@ export async function executePresetPostprocess(db,t,signal,{pds,encode=encodePre
   need(exact(receipt,['ok','resultRef'])&&receipt.ok===true&&typeof receipt.resultRef==='string'&&
    (s.final?finalResult.test(receipt.resultRef):receipt.resultRef===expected),'PUBLICATION_UNCONFIRMED');
   phase='commit';
-  complete(db,t,s,receipt.resultRef);
+  await retrySqliteBusy(()=>complete(db,t,s,receipt.resultRef),t.taskId);
   return {state:'completed',taskId:t.taskId,resultRef:receipt.resultRef};
  }catch(e){
   const code=typeof e?.message==='string'&&/^PRESET_2D_[A-Z0-9_]{1,90}$/.test(e.message)?e.message:'PRESET_2D_UNCONFIRMED';

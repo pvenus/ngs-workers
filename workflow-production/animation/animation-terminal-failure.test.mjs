@@ -4,6 +4,7 @@ import {readFile} from 'node:fs/promises';
 import {join} from 'node:path';
 import {createHash} from 'node:crypto';
 import {markWorkflowTaskFailed} from './workflow-ready.mjs';
+import {retrySqliteBusy} from './sqlite-busy-retry.mjs';
 import {markFailed,readStopDiagnostic} from './animation-cli.mjs';
 const source=await readFile(new URL('./animation-cli.mjs',import.meta.url),'utf8');
 const executeSrc=source.slice(source.indexOf('async function execute('),source.indexOf('if(process.argv[1]==='));
@@ -15,14 +16,16 @@ const failureArgs=results=>results.find(x=>x[0]==='failure-update')?.slice(2);
 
 async function fixture(opts={}){
  const ops=[],logs=[];const abort=new AbortController();
+ let busy=opts.busy??0;
  const db={prepare(sql){return{run(...args){
   const failure=sql.includes("status='failed'");
   ops.push([failure?'failure-update':'commit-update',sql,...args]);
   if(failure&&opts.updateThrow)throw Error('/private/path');
+  if(!failure&&busy>0){busy--;throw Object.assign(Error('database is locked'),{errcode:5});}
   if(!failure&&opts.commitThrow)throw Error('/private/path');
   return {changes:failure?(opts.updateChanges??1):(opts.commitChanges??1)};
  }}}};
- const f=Function('claim','tmpdir','mkdtemp','join','local','path','insist','sha','writeFile','readFile','runNative','markFailed','readStopDiagnostic','rm','console',executeSrc+';return execute;')(
+ const f=Function('claim','tmpdir','mkdtemp','join','local','path','insist','sha','writeFile','readFile','runNative','markFailed','readStopDiagnostic','rm','console','retrySqliteBusy',executeSrc+';return execute;')(
  ()=>opts.noclaim?null:{dto,intent:{}},()=>'/tmp',async()=>'/fixture',join,async(path)=>{
   ops.push([path]);
   if(path==='/animation/read'){
@@ -51,7 +54,8 @@ async function fixture(opts={}){
   return {frames:['00000.png'],frameHashes:[sha(frame)],fps:24,width:opts.badFrame?1:768,height:432};
  },markFailed,async()=>{ops.push(['sidecar']);return opts.diag??null;},
  async()=>{ops.push(['rm']);if(opts.rmError)throw Error('/private/path');},
- {log:line=>logs.push(JSON.parse(line)),error:line=>logs.push(JSON.parse(line))});
+ {log:line=>logs.push(JSON.parse(line)),error:line=>logs.push(JSON.parse(line))},
+ (write,id)=>retrySqliteBusy(write,id,{sleep:ms=>ops.push(['busy-wait',ms]),log:line=>logs.push(JSON.parse(line))}));
  await f(db,t,abort.signal);
  return {ops,logs,dec:logs.find(x=>x.state==='failed'||x.state==='requires_reconciliation')};
 }
@@ -107,4 +111,17 @@ test('no claim does not alter state; success commits once',async()=>{
  assert.equal(counts(f.ops,'/animation'),1);assert.equal(counts(f.ops,'commit-update'),1);
  assert.equal(counts(f.ops,'failure-update'),0);
  assert.deepEqual(f.logs.filter(x=>x.state).map(x=>x.state),['completed','cleanup_failed']);
+});
+
+test('busy completion retries only the DB and leaves running after exhaustion',async()=>{
+ for(const [busy,commits,state] of [[2,3,'completed'],[11,11,'requires_reconciliation']]){
+  const f=await fixture({busy});
+  assert.equal(counts(f.ops,'/animation'),1);
+  assert.equal(counts(f.ops,'render'),1);
+  assert.equal(counts(f.ops,'commit-update'),commits);
+  assert.equal(counts(f.ops,'failure-update'),0);
+  assert.deepEqual(f.ops.filter(x=>x[0]==='busy-wait').map(x=>x[1]),Array(commits-1).fill(5000));
+  assert.equal(f.logs.filter(x=>x.state).at(-1).state,state);
+  assert.equal(f.logs.filter(x=>x.event==='workflow_sqlite_busy_exhausted').length,busy>10?1:0);
+ }
 });

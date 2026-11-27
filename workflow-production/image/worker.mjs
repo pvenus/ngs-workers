@@ -1,3 +1,4 @@
+import {retrySqliteBusy} from './sqlite-busy-retry.mjs';
 import {planningFolderDiagnostic} from './planning-folders.mjs';
 import {hasPortraitReadOwner,finishPortraitRead} from './portrait-read-owner.mjs';
 /** One exact document task. Storage and rendering are supplied by trusted ports. */
@@ -314,7 +315,7 @@ async function runSelected({db,taskId,officialRequestId,pds,operation=PRESET,ren
     await pds.publishRepresentative(command,selected.stamp,basis);
    if(!exact(response,['ok'])||response.ok!==true){stage='verify_publish_ack';return {...unresolved,...diagnostics()};}
   }
-  stage='record_completion';finish(db,selected,resultRef);phase('completed');
+  stage='record_completion';await retrySqliteBusy(()=>finish(db,selected,resultRef),taskId);phase('completed');
   return {state:'completed',taskId,resultRef};
  }catch(error){
   let failureTransition;

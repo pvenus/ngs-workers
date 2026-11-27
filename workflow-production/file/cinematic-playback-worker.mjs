@@ -1,3 +1,4 @@
+import {retrySqliteBusy} from './sqlite-busy-retry.mjs';
 import {fileUpdateType,fileUpdateSchema,fileUpdateTaskKey,fileUpdateRef,validFileUpdate} from './file-update-envelope.mjs';
 /** Metadata-only file worker. No frame reads/writes and no model or encoder imports. */
 import {DatabaseSync} from 'node:sqlite';
@@ -121,12 +122,14 @@ export async function runManifestMutationFromPath({dbPath,officialRequestId,task
    }
    require(exact(ack,['ok','resultRef'])&&ack.ok===true&&m.ref(ack.resultRef,input),'FILE_WORKER_MANIFEST_ACK_UNCONFIRMED');
    const {resultRef}=ack;
-   tx(db,()=>{
-    current();
-    require(db.prepare(`UPDATE workflow_tasks SET status='completed',result_ref=?,updated_at=?
-     WHERE task_id=? AND official_request_id=? AND status='running' AND result_ref IS NULL AND updated_at=?`)
-     .run(resultRef,Math.max(Date.now(),claim.claimStamp+1),taskId,officialRequestId,claim.claimStamp).changes===1);
-   });
+   await retrySqliteBusy(()=>{
+    tx(db,()=>{
+     current();
+     require(db.prepare(`UPDATE workflow_tasks SET status='completed',result_ref=?,updated_at=?
+      WHERE task_id=? AND official_request_id=? AND status='running' AND result_ref IS NULL AND updated_at=?`)
+      .run(resultRef,Math.max(Date.now(),claim.claimStamp+1),taskId,officialRequestId,claim.claimStamp).changes===1);
+    });
+   },taskId);
    return {state:'completed',taskId,resultRef};
   }catch(e){
    if(e instanceof PlaybackRevisionConflict)try{

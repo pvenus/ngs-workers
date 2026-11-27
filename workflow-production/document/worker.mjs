@@ -1,3 +1,4 @@
+import {retrySqliteBusy,isSqliteBusyExhausted} from './sqlite-busy-retry.mjs';
 import {npcPlanningAddSchema,validateNPCPlanningAdd} from './npc-planning-add-envelope.mjs';
 import {resolvePlanningDocument,resolvePlanningRole} from './planning-document-storage.mjs';
 import {npcPlanningUpdateSchema,validateNPCPlanningUpdate} from './npc-planning-update-envelope.mjs';
@@ -356,7 +357,7 @@ export async function runSelectedDocument({db,taskId,officialRequestId,pds,opera
    if(!exact(response,['ok'])||response.ok!==true)return {...unresolved,failureStage:'verify-publish-ack'};
   }
   planningFailureStage='record-completion';
-  finish(db,selected,resultRef);
+  await retrySqliteBusy(()=>finish(db,selected,resultRef),taskId);
   return {state:'completed',taskId,resultRef,...(operation===CONCEPT&&selected.payload.operation==='migrate'?
    {conversion:'deterministic-markdown'}:{})};
  }catch(error){
@@ -364,10 +365,10 @@ export async function runSelectedDocument({db,taskId,officialRequestId,pds,opera
   // post-ack completion recording errors follow the ordinary retry path.
   const presetRejected=operation===PRESET&&error?.message==='WORKFLOW_PRESET_REJECTED_BEFORE_WRITE';
   const notSent=error?.message==='DOCUMENT_PDS_CONNECT_REFUSED_BEFORE_SEND';
-  // Once the save was acknowledged, a failed completion write is handled as
-  // an ordinary failed attempt. Do not recover completion or resend here.
+  // If BUSY persists after the bounded DB-only retries, do not attempt a
+  // second state write into the same locked DB. Other completion errors can fail normally.
   const completionFailed=planningFailureStage==='record-completion';
-  if(publicationStarted&&!presetRejected&&!notSent&&!completionFailed)return {...unresolved,...planningFailureFields(planningFailureStage,error)};
+  if(isSqliteBusyExhausted(error)||publicationStarted&&!presetRejected&&!notSent&&!completionFailed)return {...unresolved,...planningFailureFields(planningFailureStage,error)};
   try{
    const changed=await settleFailure(()=>markWorkflowTaskFailed(db,{taskId,officialRequestId,claimStamp:selected.stamp,workerType:'document'}));
    if(changed===true)return {state:'failed',taskId,code:completionFailed?'WORKFLOW_DOCUMENT_COMPLETION_RECORD_FAILED':presetRejected||notSent?error.message:'WORKFLOW_DOCUMENT_FAILED_BEFORE_PUBLICATION',

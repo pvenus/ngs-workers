@@ -1,3 +1,4 @@
+import {retrySqliteBusy} from './sqlite-busy-retry.mjs';
 /** Single exact task only. PDS is an injected trusted boundary, not implemented here. */
 import {DatabaseSync} from 'node:sqlite';
 import {lstatSync,realpathSync} from 'node:fs';
@@ -90,7 +91,7 @@ export async function runSelectedDelete({db,taskId,officialRequestId,pds}){
  try{
   const receipt=await pds.deleteExactNpcFolder(selected.command,selected.stamp);
   if(!verified(receipt,selected.command))return unresolved;
-  finish(db,selected,receipt);
+  await retrySqliteBusy(()=>finish(db,selected,receipt),taskId);
   return {state:'completed',taskId,resultRef:receipt.receiptId};
  }catch{return unresolved;}
 }

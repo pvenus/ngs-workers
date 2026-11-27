@@ -1,3 +1,4 @@
+import {retrySqliteBusy} from './sqlite-busy-retry.mjs';
 /** Separate claim-bound motion-preset lane. Legacy NPC animation never uses this path. */
 import {DatabaseSync} from 'node:sqlite';
 import {mkdtemp,rm,writeFile} from 'node:fs/promises';
@@ -192,7 +193,7 @@ export async function executePresetFrames(db,t,signal,{pds,warm=null,native,pack
   const ref='motion.2d.frames.'+state.direction+'.'+manifestSha256;
   need(exact(ack,['ok','resultRef'])&&ack.ok===true&&ack.resultRef===ref,'PUBLICATION_UNCONFIRMED');
   phase='commit';
-  complete(db,t,state,ref);
+  await retrySqliteBusy(()=>complete(db,t,state,ref),t.taskId);
   return {state:'completed',taskId:t.taskId,resultRef:ref};
  }catch(e){
   const safe=typeof e?.message==='string'&&/^[A-Z0-9_]{1,130}$/.test(e.message)?e.message:'PRESET_2D_UNCONFIRMED';

@@ -1,3 +1,4 @@
+import {retrySqliteBusy} from './sqlite-busy-retry.mjs';
 /** Shared official prop request runner, using the existing pinned image provider. */
 import {DatabaseSync} from 'node:sqlite';
 import {canonical,sha} from './vendor/planner-f24d23a/envelope.mjs';
@@ -72,7 +73,7 @@ export async function runPropImageFromPath({dbPath,taskId,officialRequestId,pds,
    const receipt=await pds.publishPropImage(selected.claim,{base64:output.toString('base64'),sha256:imageSha,
     bytes:output.length,mimeType:'image/png',contextSha256});
    assert(exact(receipt,['ok','resultRef'])&&receipt.ok===true&&receipt.resultRef===resultRef,'WORKFLOW_PROP_IMAGE_PUBLICATION_UNCONFIRMED');
-   complete(db,selected,resultRef);
+   await retrySqliteBusy(()=>complete(db,selected,resultRef),taskId);
    return {state:'completed',taskId,resultRef};
   }catch(error){
    if(!sent&&markWorkflowTaskFailed(db,{...selected.claim,workerType:'image'}))return {state:'failed',taskId,

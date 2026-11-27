@@ -1,3 +1,4 @@
+import {retrySqliteBusy} from './sqlite-busy-retry.mjs';
 import {createHash} from 'node:crypto';
 import {DatabaseSync} from 'node:sqlite';
 import {buildPlan,exact} from './vendor/planner/planner.mjs';
@@ -118,11 +119,13 @@ export async function runAudioFromPath({dbPath,taskId,officialRequestId,pds,adap
    publishing=true;
    const r=await pds.publish(claim,sourceBinding,artifact); // no interrupt after sending
    check(exact(r,['ok','resultRef'])&&r.ok===true&&r.resultRef===resultRef,'AUDIO_PUBLICATION_UNVERIFIED');
-   tx(db,()=>{
-    sameClaim(db,claim,found);
-    check(db.prepare("UPDATE workflow_tasks SET status='completed',result_ref=?,updated_at=? WHERE task_id=? AND official_request_id=? AND status='running' AND updated_at=? AND result_ref IS NULL")
-     .run(resultRef,Math.max(Date.now(),claim.claimStamp+1),taskId,officialRequestId,claim.claimStamp).changes===1,'AUDIO_COMPLETE_CHANGED');
-   });
+   await retrySqliteBusy(()=>{
+    tx(db,()=>{
+     sameClaim(db,claim,found);
+     check(db.prepare("UPDATE workflow_tasks SET status='completed',result_ref=?,updated_at=? WHERE task_id=? AND official_request_id=? AND status='running' AND updated_at=? AND result_ref IS NULL")
+      .run(resultRef,Math.max(Date.now(),claim.claimStamp+1),taskId,officialRequestId,claim.claimStamp).changes===1,'AUDIO_COMPLETE_CHANGED');
+    });
+   },taskId);
    return {state:'completed',taskId,resultRef};
   }catch(e){
    if(!publishing||e instanceof AudioDefinitelyRejected){

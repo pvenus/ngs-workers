@@ -1,3 +1,4 @@
+import {retrySqliteBusy} from './sqlite-busy-retry.mjs';
 /** Official cinematic source lane. Native ImageGen output, no video generation. */
 import {DatabaseSync} from 'node:sqlite';
 import {setTimeout as delay} from 'node:timers/promises';
@@ -238,12 +239,14 @@ export async function runCinematicSourceFromPath({dbPath,officialRequestId,taskI
    sent=true;
    await finishPublication({pds,claim,artifact,resultRef,verifyCurrent,signal,reconcileDelays});
    stage='record-completion';
-   tx(db,()=>{
-    current();
-    require(db.prepare(`UPDATE workflow_tasks SET status='completed',result_ref=?,updated_at=?
-     WHERE task_id=? AND official_request_id=? AND status='running' AND result_ref IS NULL AND updated_at=?`)
-     .run(resultRef,Math.max(Date.now(),claim.claimStamp+1),taskId,officialRequestId,claim.claimStamp).changes===1);
-   });
+   await retrySqliteBusy(()=>{
+    tx(db,()=>{
+     current();
+     require(db.prepare(`UPDATE workflow_tasks SET status='completed',result_ref=?,updated_at=?
+      WHERE task_id=? AND official_request_id=? AND status='running' AND result_ref IS NULL AND updated_at=?`)
+      .run(resultRef,Math.max(Date.now(),claim.claimStamp+1),taskId,officialRequestId,claim.claimStamp).changes===1);
+    });
+   },taskId);
    return {state:'completed',taskId,resultRef,designSha256:selected.design.sha256};
   }catch(error){
    const allowed=new Set(['CINEMATIC_SOURCE_PNG_INVALID','CINEMATIC_SOURCE_PNG_GEOMETRY_INVALID','CINEMATIC_SOURCE_READ_MISMATCH',

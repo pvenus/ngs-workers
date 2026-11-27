@@ -22,3 +22,15 @@ keys, logs, and installed third-party/models stay outside this checkout.
 Retarget managed paths only after verifying that the corresponding runtime
 pins still match and that the worker has no active task. Never replace the
 current service first and assume its old paths will still be valid.
+
+### Completion writes on a busy workflow DB
+
+After a publication receipt is validated, each worker retries only its exact
+SQLite completion transaction on `SQLITE_BUSY` (including extended BUSY codes),
+at five-second intervals, up to ten retries. It does not rerun a model, resend
+a publish/delete request, retry a claim mismatch, or treat `SQLITE_LOCKED` as
+BUSY. On exhaustion, the DB row is left unchanged and the worker logs
+`workflow_sqlite_busy_exhausted` with the task ID; OPS alerting is separate.
+The runtime copies of `shared/sqlite-busy-retry.mjs` keep the existing immutable
+per-worker packaging scopes. Update each byte-identical copy when editing the
+shared source; the test suite verifies parity.

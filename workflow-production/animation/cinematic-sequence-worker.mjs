@@ -1,3 +1,4 @@
+import {retrySqliteBusy} from './sqlite-busy-retry.mjs';
 /** Cinematic sequence lane: one Wan run; background finals additionally require a real 2x postprocess. */
 import {DatabaseSync} from 'node:sqlite';
 import {mkdtemp,rm} from 'node:fs/promises';
@@ -206,7 +207,7 @@ export async function executeCinematicSequence(db,t,signal,{ports,runI2V,runUpsc
    if(recorded){
     manifest=nativeManifest(recorded.output,resultId,input,recorded.manifest.upscale,frameCount);
     require(canonical(manifest)===canonical(recorded.manifest),'SEQUENCE_CHECKPOINT_BINDING');
-    commit(recorded.reference);const released=await releasePrevious();
+    await retrySqliteBusy(()=>commit(recorded.reference),t.taskId);const released=await releasePrevious();
     return {state:'completed',taskId:t.taskId,resultRef:recorded.reference,frameCount:manifest.frameCount,...(released?{}:{cleanup:'pending'})};
    }
    const prev=prior?await store.read({...bind,...prior}):null;
@@ -249,7 +250,7 @@ export async function executeCinematicSequence(db,t,signal,{ports,runI2V,runUpsc
    if(phase!=='publish'){
     stage='checkpoint';
     const expected=await store.write({...own,manifest,frames:output.frames,current:()=>tx(db,current),signal});
-    commit(expected);const released=await releasePrevious();
+    await retrySqliteBusy(()=>commit(expected),t.taskId);const released=await releasePrevious();
     result={state:'completed',taskId:t.taskId,resultRef:expected,frameCount:manifest.frameCount,...(released?{}:{cleanup:'pending'})};
     return result;
    }
@@ -310,7 +311,7 @@ export async function executeCinematicSequence(db,t,signal,{ports,runI2V,runUpsc
   const ack=await sameClaimPublication(()=>ports.publish(claim,manifest),upload);
   require(exact(ack,['ok','resultRef'])&&ack.ok===true&&ack.resultRef===expected,'CINEMATIC_SEQUENCE_PUBLICATION_UNCONFIRMED');
   stage='commit';
-  commit(expected);const released=await releasePrevious();
+  await retrySqliteBusy(()=>commit(expected),t.taskId);const released=await releasePrevious();
   result={state:'completed',taskId:t.taskId,resultRef:expected,frameCount:manifest.frameCount,...(released?{}:{cleanup:'pending'})};
  }catch(e){
   let failed=false;

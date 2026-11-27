@@ -1,3 +1,4 @@
+import {retrySqliteBusy} from './sqlite-busy-retry.mjs';
 /** Exact official prop design lane inside the existing resident document worker. */
 import {DatabaseSync} from 'node:sqlite';
 import {assertDatabasePath,protectSchema,documentTaskEligibleSql,workflowTaskEligibleSql,workflowTaskRetrySetSql,markWorkflowTaskFailed} from './workflow-ready.mjs';
@@ -80,7 +81,7 @@ export async function runPropDesignFromPath({dbPath,taskId,officialRequestId,ope
    const receipt=await pds.publishPropDesign(selected.claim,artifact);
    requirePropDesign(exact(receipt,['ok','resultRef'])&&receipt.ok===true&&receipt.resultRef===ref,
     'WORKFLOW_PROP_DESIGN_PUBLICATION_UNCONFIRMED');
-   commit(db,selected,ref);
+   await retrySqliteBusy(()=>commit(db,selected,ref),taskId);
    return {state:'completed',taskId,resultRef:ref};
   }catch(e){
    if(!sent){

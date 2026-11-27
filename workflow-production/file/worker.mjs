@@ -1,3 +1,4 @@
+import {retrySqliteBusy} from './sqlite-busy-retry.mjs';
 import {fileDeleteSchema,fileDeleteTaskKey,fileDeleteType,validateFileDelete} from './file-delete-envelope.mjs';
 /** Single exact task only. PDS is an injected trusted boundary, not implemented here. */
 import {DatabaseSync} from 'node:sqlite';
@@ -125,7 +126,7 @@ export async function runSelectedDelete({db,taskId,officialRequestId,pds,operati
   const receipt=await pds.deleteTargets(selected.command,selected.binding,operation);
   if(singleTarget?!verifiedSingleTargetDelete(receipt,taskId):concept?(!exact(receipt,['ok'])||receipt.ok!==true):!verified(receipt,selected))return unresolved;
   const resultRef=concept||[audioDelete,fileDeleteType].includes(operation)?null:singleTarget?receipt.operationId:receipt.receiptId;
-  finish(db,selected,resultRef);
+  await retrySqliteBusy(()=>finish(db,selected,resultRef),taskId);
   return {state:'completed',taskId,resultRef};
  }catch(e){
   if(e instanceof DeleteDefinitelyRejected){

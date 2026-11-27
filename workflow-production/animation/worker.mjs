@@ -1,3 +1,4 @@
+import {retrySqliteBusy} from './sqlite-busy-retry.mjs';
 /** One exact document task. Storage and rendering are supplied by trusted ports. */
 import {DatabaseSync} from 'node:sqlite';
 import {workflowDependenciesCompletedSql,assertDatabasePath,protectSchema,nextWorkflowTaskFromPath} from './workflow-ready.mjs';
@@ -182,7 +183,7 @@ async function runSelected({db,taskId,officialRequestId,pds,operation=PRESET,ren
     await pds.publishRepresentative(command,selected.stamp,basis);
    if(!exact(response,['ok'])||response.ok!==true)return unresolved;
   }
-  finish(db,selected,resultRef);phase('completed');
+  await retrySqliteBusy(()=>finish(db,selected,resultRef),taskId);phase('completed');
   return {state:'completed',taskId,resultRef};
  }catch{return unresolved;}
 }

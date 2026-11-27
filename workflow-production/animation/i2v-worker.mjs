@@ -1,3 +1,4 @@
+import {retrySqliteBusy} from './sqlite-busy-retry.mjs';
 /** Single still-image I2V stage. No motion preset or implicit alpha. */
 import {DatabaseSync} from 'node:sqlite';
 import {createHash} from 'node:crypto';
@@ -149,13 +150,15 @@ export async function executeI2V(db,t,signal,{ports,renderer,makeDir=()=>mkdtemp
   const ack=await ports.publish(claim,artifact);
   need(exact(ack,['ok','resultRef'])&&ack.ok===true&&ack.resultRef===resultRef,'I2V_PUBLICATION_UNCONFIRMED');
   stage='commit';
-  const done=db.prepare(`UPDATE workflow_tasks SET status='completed',result_ref=?,updated_at=? WHERE task_id=?
-   AND official_request_id=? AND worker_type=? AND task_type=? AND task_key=? AND task_input=? AND depends_on_task_id IS NULL
-   AND status='running' AND updated_at=? AND result_ref IS NULL
-   AND EXISTS(SELECT 1 FROM workflow_runs r WHERE r.official_request_id=workflow_tasks.official_request_id
-   AND r.state='planned' AND r.reason IS NULL AND r.request_type=? AND r.schema_version=? AND r.project_id=? AND r.payload_sha256=?)`)
-   .run(resultRef,Math.max(Date.now(),claim.claimStamp+1),claim.taskId,claim.officialRequestId,worker,i2vType,i2vKey,inputWire,claim.claimStamp,i2vType,i2vSchema,project,claim.payloadSha256);
-  need(done.changes===1,'I2V_DB_COMPLETION');
+  await retrySqliteBusy(()=>{
+   const done=db.prepare(`UPDATE workflow_tasks SET status='completed',result_ref=?,updated_at=? WHERE task_id=?
+    AND official_request_id=? AND worker_type=? AND task_type=? AND task_key=? AND task_input=? AND depends_on_task_id IS NULL
+    AND status='running' AND updated_at=? AND result_ref IS NULL
+    AND EXISTS(SELECT 1 FROM workflow_runs r WHERE r.official_request_id=workflow_tasks.official_request_id
+    AND r.state='planned' AND r.reason IS NULL AND r.request_type=? AND r.schema_version=? AND r.project_id=? AND r.payload_sha256=?)`)
+    .run(resultRef,Math.max(Date.now(),claim.claimStamp+1),claim.taskId,claim.officialRequestId,worker,i2vType,i2vKey,inputWire,claim.claimStamp,i2vType,i2vSchema,project,claim.payloadSha256);
+   need(done.changes===1,'I2V_DB_COMPLETION');
+  },t.taskId);
   result={state:'completed',taskId:t.taskId,resultRef,frameCount:output.frames.length,alpha:'none'};
  }catch(e){
   unknownStop=stage==='render'&&e?.rendererJoined!==true;

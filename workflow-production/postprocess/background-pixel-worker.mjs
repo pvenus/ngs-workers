@@ -1,3 +1,4 @@
+import {retrySqliteBusy} from './sqlite-busy-retry.mjs';
 /** Existing CPU postprocess lane for the last stage of a pinned background graph. */
 import {DatabaseSync} from 'node:sqlite';
 import {createHash} from 'node:crypto';
@@ -98,8 +99,10 @@ export async function runBackgroundPixel({dbPath,officialRequestId,taskId,pds,re
    if(exact(r,['state'])&&r.state==='absent_fenced'){sent=false;throw Error('BACKGROUND_PIXEL_WRITE_ABSENT');}
    need(exact(r,['state','resultRef'])&&r.state==='published'&&r.resultRef===resultRef,'BACKGROUND_PIXEL_WRITE_UNCONFIRMED');
   }
-  tx(db,()=>{alive();need(db.prepare("UPDATE workflow_tasks SET status='completed',result_ref=?,updated_at=? WHERE task_id=? AND updated_at=? AND status='running' AND result_ref IS NULL")
-   .run(resultRef,Math.max(Date.now(),claim.claimStamp+1),taskId,claim.claimStamp).changes===1);});
+  await retrySqliteBusy(()=>{
+   tx(db,()=>{alive();need(db.prepare("UPDATE workflow_tasks SET status='completed',result_ref=?,updated_at=? WHERE task_id=? AND updated_at=? AND status='running' AND result_ref IS NULL")
+    .run(resultRef,Math.max(Date.now(),claim.claimStamp+1),taskId,claim.claimStamp).changes===1);});
+  },taskId);
   return {state:'completed',taskId,resultRef,phase:'publish'};
  }catch(e){
   if(claim&&!sent&&markWorkflowTaskFailed(db,{...claim,workerType}))return {state:'failed',taskId,phase:stage,code:'BACKGROUND_PIXEL_FAILED'};

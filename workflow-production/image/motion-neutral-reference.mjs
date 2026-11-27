@@ -1,3 +1,4 @@
+import {retrySqliteBusy} from './sqlite-busy-retry.mjs';
 /** One non-NPC neutral reference bound to a formal motion conversion task. */
 import {DatabaseSync} from 'node:sqlite';
 import {canonical,sha} from './vendor/planner-f24d23a/envelope.mjs';
@@ -94,7 +95,7 @@ export async function runMotionImageFromPath({dbPath,taskId,officialRequestId,pd
    const receipt=await pds.publishMotionImage(selected.claim,{base64:png.toString('base64'),sha256:hash});
    assert(exact(receipt,['ok','resultRef'])&&receipt.ok===true&&receipt.resultRef===resultRef,
     'WORKFLOW_MOTION_IMAGE_PUBLICATION_UNCONFIRMED');
-   complete(db,selected,resultRef);
+   await retrySqliteBusy(()=>complete(db,selected,resultRef),taskId);
    return {state:'completed',taskId,resultRef};
   }catch(error){
    if(!sent&&markWorkflowTaskFailed(db,{...selected.claim,workerType:'image'}))

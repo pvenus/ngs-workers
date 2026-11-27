@@ -1,3 +1,4 @@
+import {retrySqliteBusy,isSqliteBusyExhausted} from './sqlite-busy-retry.mjs';
 /** Formal static prop image stage: one exact approved design in, one durable RGB/RGBA PNG receipt out. */
 import {DatabaseSync} from 'node:sqlite';
 import {canonical,sha} from './vendor/prop-composite-v1/envelope.mjs';
@@ -226,10 +227,12 @@ export async function runPropBaseFromPath({dbPath,taskId,officialRequestId,opera
    stage='stage-write';
    const receipt=await pds.publishPropBase(selected.claim,artifact);
    need(exact(receipt,['ok','resultRef'])&&receipt.ok===true&&receipt.resultRef===resultRef,'WORKFLOW_PROP_BASE_PUBLICATION_UNCONFIRMED');
-   commit(db,selected,resultRef);
+   stage='record-completion';
+   await retrySqliteBusy(()=>commit(db,selected,resultRef),taskId);
    return {state:'completed',taskId,resultRef};
   }catch(error){
    const diagnostic=diagnosis(stage,error);
+   if(isSqliteBusyExhausted(error))return {state:'requires_reconciliation',taskId,code:'WORKFLOW_SQLITE_BUSY_EXHAUSTED',...diagnostic};
    // A missing or invalid staging ACK is a failed attempt. The next normal
    // retry renders again; PDS stages each base image by its exact result hash.
    try{

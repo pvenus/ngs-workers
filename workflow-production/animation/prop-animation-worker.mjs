@@ -1,3 +1,4 @@
+import {retrySqliteBusy} from './sqlite-busy-retry.mjs';
 /** Official append-only prop motion lane, one local RGB I2V call. */
 import {DatabaseSync} from 'node:sqlite';
 import {mkdtemp,rm} from 'node:fs/promises';
@@ -119,13 +120,15 @@ export async function executePropAnimation(db,t,signal,{ports,renderer,prepareIn
   const ack=await ports.write(claim,artifact);
   require(exactProp(ack,['ok','resultRef'])&&ack.ok===true&&ack.resultRef===resultRef,'PROP_I2V_STAGE_ACK');
   stage='commit';
-  tx(db,()=>{
-   current();
-   require(db.prepare(`UPDATE workflow_tasks SET status='completed',result_ref=?,updated_at=?
-    WHERE task_id=? AND official_request_id=? AND status='running' AND result_ref IS NULL AND updated_at=?`)
-    .run(resultRef,Math.max(Date.now(),claim.claimStamp+1),t.taskId,t.officialRequestId,claim.claimStamp).changes===1,
-    'PROP_I2V_COMPLETION_CHANGED');
-  });
+  await retrySqliteBusy(()=>{
+   tx(db,()=>{
+    current();
+    require(db.prepare(`UPDATE workflow_tasks SET status='completed',result_ref=?,updated_at=?
+     WHERE task_id=? AND official_request_id=? AND status='running' AND result_ref IS NULL AND updated_at=?`)
+     .run(resultRef,Math.max(Date.now(),claim.claimStamp+1),t.taskId,t.officialRequestId,claim.claimStamp).changes===1,
+     'PROP_I2V_COMPLETION_CHANGED');
+   });
+  },t.taskId);
   result={state:'completed',taskId:t.taskId,resultRef,alpha:'none',frameCount:artifact.manifest.frames.length,renderedFrameCount:output.frames.length};
  }catch(e){
   unknownStop=stage==='render'&&e?.rendererJoined!==true;
