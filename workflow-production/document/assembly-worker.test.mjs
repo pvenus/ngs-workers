@@ -15,7 +15,7 @@ const id=x=>'request.official.'+x.repeat(64);
 const officialRequestId=id('a'),mapId=id('b'),existingId=id('c');
 const taskId='workflow.task.'+hash(canonical([officialRequestId,assemblyStage]));
 const noModel=()=>assert.fail('Assembly must not initialize a model renderer');
-function fixture(t,operation,{wrongReceipt=false,wrongMap=false,replay=false,invalidModel=false,batch=false,mixed=false,wrongPin=false,overridePin=false,unreachable=false,scale,modelScale,portalConditions}={}){
+function fixture(t,operation,{wrongReceipt=false,wrongMap=false,replay=false,invalidModel=false,batch=false,mixed=false,wrongPin=false,overridePin=false,unreachable=false,defined=false,rejectDefinition=false,omitValidator=false,scale,modelScale,portalConditions}={}){
  const dir=realpathSync(mkdtempSync(join(tmpdir(),'assembly-worker-test-'))),dbPath=join(dir,'planner.sqlite');
  const db=new DatabaseSync(dbPath);chmodSync(dbPath,0o600);
  t.after(()=>{db.close();rmSync(dir,{force:true,recursive:true});});
@@ -23,7 +23,7 @@ function fixture(t,operation,{wrongReceipt=false,wrongMap=false,replay=false,inv
  request_type TEXT,schema_version TEXT,payload TEXT,payload_sha256 TEXT,registered_at INTEGER);
  CREATE TABLE workflow_tasks(task_id TEXT PRIMARY KEY,official_request_id TEXT,task_input TEXT,task_type TEXT,
  task_key TEXT,worker_type TEXT,depends_on_task_id TEXT,result_ref TEXT,status TEXT,updated_at INTEGER,retry_count INTEGER)`);
- if(mixed)batch=true;
+ if(mixed||defined)batch=true;
  const generate=operation==='assembly.generate',assemblyId=generate?officialRequestId:existingId,revision=generate?1:3;
  const puzzle={id:'ritual-well-water',type:'binari.ritual-well-water-demo',
   layout:{altar:{regionId:'north',x:40,y:50},well:{regionId:'south',x:60,y:50}},
@@ -32,8 +32,8 @@ function fixture(t,operation,{wrongReceipt=false,wrongMap=false,replay=false,inv
  const prop={propId:'spirit-mask',revision:3,sha256:'c'.repeat(64)};
  const spirit={id:'reveal-spirit',type:'binari.ritual-spirit-manifestation',layout:{spirit:{regionId:'north',x:50,y:50}},
   attachments:{},bindings:{spirit:wrongPin?{...prop,revision:4}:prop},scale:{spirit:100}};
- const puzzles=mixed?[puzzle,spirit]:batch?[puzzle,{...puzzle,id:'other-ritual'}]:[puzzle];
- const payload=generate?{schemaVersion:mixed?'ngs.assembly-generate.v3':batch?'ngs.assembly-generate.v2':'ngs.assembly-generate.v1',projectId:'binari',title:'조립',mapId,intent:'의식을 준비한다.',...(batch?{puzzles:puzzles.map(({id,type},i)=>({id,type,intent:'퍼즐 '+i,...(id===spirit.id?{prop}:{})}))}:{puzzleType:puzzle.type})}:
+ const puzzles=defined?[puzzle]:mixed?[puzzle,spirit]:batch?[puzzle,{...puzzle,id:'other-ritual'}]:[puzzle];
+ const payload=generate?{schemaVersion:defined?'ngs.assembly-generate.v4':mixed?'ngs.assembly-generate.v3':batch?'ngs.assembly-generate.v2':'ngs.assembly-generate.v1',projectId:'binari',title:'조립',mapId,intent:'의식을 준비한다.',...(batch?{puzzles:puzzles.map(({id,type},i)=>({id,type,intent:'퍼즐 '+i,...(id===spirit.id?{prop}:{})}))}:{puzzleType:puzzle.type})}:
    {schemaVersion:'ngs.assembly-update.v1',projectId:'binari',assemblyId,expectedRevision:2,puzzles};
  const wire=canonical(payload),digest=hash(wire);
  db.prepare("INSERT INTO workflow_runs VALUES(?,'planned',NULL,'binari',?,?,?,?,1)").run(officialRequestId,operation,payload.schemaVersion,wire,digest);
@@ -41,11 +41,25 @@ function fixture(t,operation,{wrongReceipt=false,wrongMap=false,replay=false,inv
  const context={startRegionId:'north',regions:['north','south'].map(id=>({id,name:id,description:'길',
   backgroundId:'background.'+'a'.repeat(64),imageSha256:'b'.repeat(64)})),connections:[]};
  const generated={layout:{...puzzle.layout,altar:{...puzzle.layout.altar,x:42}},attachments:puzzle.attachments};
+ const ref=(role,state)=>({role,state}),action=(kind,target,item=null)=>({kind,target,item});
+ const rule=(module,action,from,to,requires=[])=>({module,action,from,to,requires});
+ const rules=[
+  rule('inventory.move.v1',action('pickup','bowl'),ref('bowl','altar-empty'),ref('bowl','carried-empty')),
+  rule('switch.v1',action('activate','lid'),ref('lid','closed'),ref('lid','open')),
+  rule('prop.interact.v1',action('drop','well','bowl'),ref('bowl','carried-empty'),ref('bowl','carried-filled'),[ref('lid','open')]),
+  rule('inventory.move.v1',action('drop','altar','bowl'),ref('bowl','carried-filled'),ref('bowl','altar-filled')),
+ ];
+ const definition={schemaVersion:'ngs.puzzle-definition.v1',
+  entities:Object.entries({bowl:['altar-empty','carried-empty','carried-filled','altar-filled'],well:['ready'],altar:['ready'],lid:['closed','open']})
+   .map(([role,ids])=>({role,initial:ids[0],states:ids.map(id=>({id,held:id.startsWith('carried-'),payload:role==='bowl'?(id.endsWith('-filled')?'filled':'empty'):id}))})),
+  rules,goal:ref('bowl','altar-filled'),solution:rules.map(row=>row.action)};
+ const validations=[],validateDefinition=omitValidator?undefined:async data=>{validations.push(data);assert.deepEqual(data,definition);return !rejectDefinition;};
  const batchOutput=puzzles.map(({id},i)=>id===spirit.id?
   {id,layout:{spirit:{regionId:unreachable?'south':'north',x:16,y:88}},scale:{spirit:160},...(overridePin?{bindings:{spirit:{...prop,revision:9}}}:{})}:
-  {id,...generated,layout:{...generated.layout,altar:{...generated.layout.altar,x:42+i}}});
+  {id,...generated,layout:{...generated.layout,altar:{...generated.layout.altar,x:42+i}},...(defined?{definition}:{})});
  const inputs=[];
  const render=async input=>{inputs.push(input);
+  if(defined&&invalidModel)return {puzzles:[{id:puzzle.id,...generated}]};
   if(batch)return {puzzles:invalidModel?[batchOutput[0],batchOutput[0]]:[...batchOutput].reverse()};
   return modelScale?{...generated,scale:modelScale}:invalidModel?{...generated,bindings:{}}:generated;};
  const resultRef=`binari/cinematics/assemblies/${assemblyId}/${revision}.json`;
@@ -65,7 +79,7 @@ function fixture(t,operation,{wrongReceipt=false,wrongMap=false,replay=false,inv
   return {ok:true,resultRef:wrongReceipt?'wrong':resultRef};
  }});
  const row=()=>db.prepare('SELECT status,result_ref,retry_count,updated_at FROM workflow_tasks').get();
- return {dbPath,pds,operation,taskId,officialRequestId,row,resultRef,calls,inputs,render,rendererFor:generate?()=>render:noModel};
+ return {dbPath,pds,operation,taskId,officialRequestId,row,resultRef,calls,inputs,render,validations,validateDefinition,rendererFor:generate?()=>render:noModel};
 }
 test('resident assembly.generate routes exact claimed read and publish and sends only claimed map, bindings and intent to the renderer',async t=>{
  const f=fixture(t,'assembly.generate');
@@ -184,4 +198,21 @@ test('v3 typed executor exposes only approved mixed geometry fields',async ()=>{
   return {puzzles:[]};
  }});
  assert.deepEqual(await render(sample),{puzzles:[]});
+});
+
+test('v4 waits for the C# validator to approve the model definition before publishing',async t=>{
+ const f=fixture(t,'assembly.generate',{defined:true});
+ assert.equal((await documentTick(f)).state,'completed');
+ assert.equal(f.inputs.length,1);
+ assert.equal(f.inputs[0].schemaVersion,'ngs.assembly-generate.v4');
+ assert.equal(f.validations.length,1);
+ assert.equal(f.calls.length,3);
+});
+test('v4 fails closed before publish on missing or negative C# proof or missing model definition',async t=>{
+ for(const [flag,code,stage] of [['omitValidator','ASSEMBLY_CSHARP_VALIDATOR_UNAVAILABLE','csharp'],
+  ['rejectDefinition','ASSEMBLY_CSHARP_VALIDATION_FAILED','csharp'],['invalidModel','ASSEMBLY_CLI_OUTPUT_INVALID','cli']]){
+  const f=fixture(t,'assembly.generate',{defined:true,[flag]:true});
+  assert.deepEqual(await documentTick(f),{state:'failed',taskId,code,stage,operation:f.operation});
+  assert.equal(f.calls.length,2);
+ }
 });

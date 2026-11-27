@@ -273,3 +273,11 @@ selected published prop. The same typed CLI call chooses the position and scale
 for each spirit and the usual placement/offsets for each well. The worker
 verifies original IDs, types, bindings, and reachable spirit regions before
 publishing; it never generates runtime rules or executable code.
+
+Generation v4 additionally authors one declarative ritual-water definition.
+Set `WORKFLOW_ASSEMBLY_VALIDATOR_DLL` to the trusted absolute validator DLL
+path and `WORKFLOW_ASSEMBLY_VALIDATOR_SHA256` to the deployed artifact pin
+for both document workers. The worker executes a fixed host dotnet command
+without a shell and sends only bounded JSON stdin. Missing configuration,
+wrong pin, invalid model data, or inconclusive validation fails the task
+without publishing v4 metadata; older requests do not invoke the validator.

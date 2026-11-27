@@ -54,14 +54,14 @@ export async function watchOnce({dbPath,pds,operation,signal,serverName,probe=pr
  return {ready:true,heartbeat};
 }
 
-export async function executeOnce({dbPath,officialRequestId,taskId,pds,operation,render,withPlanningSnapshot,signal,run=runDocumentFromPath,runProp=runPropDesignFromPath}){
+export async function executeOnce({dbPath,officialRequestId,taskId,pds,operation,render,validateDefinition,withPlanningSnapshot,signal,run=runDocumentFromPath,runProp=runPropDesignFromPath}){
  if(!await pds.capability(signal,operation))return {state:'not_claimable',code:'DOCUMENT_WORKER_PDS_UNAVAILABLE'};
- return await runner(operation,run,runProp)({dbPath,officialRequestId,taskId,pds,operation,render,withPlanningSnapshot,signal});
+ return await runner(operation,run,runProp)({dbPath,officialRequestId,taskId,pds,operation,render,validateDefinition,withPlanningSnapshot,signal});
 }
 
 
 /** At most one claimed job per tick; only a lost claim immediately reselects. */
-export async function documentTick({dbPath,pds,operation,rendererFor,withPlanningSnapshot,signal,admissionSignal,
+export async function documentTick({dbPath,pds,operation,rendererFor,validateDefinition,withPlanningSnapshot,signal,admissionSignal,
  next=nextWorkflowTaskFromPath,run=runDocumentFromPath,runProp=runPropDesignFromPath}){
  const stopping=()=>signal?.aborted||admissionSignal?.aborted;
  const skipped=new Set();
@@ -83,7 +83,7 @@ export async function documentTick({dbPath,pds,operation,rendererFor,withPlannin
    const operation=task.operation;
    if(!await pds.capability(signal,operation)){unavailable=true;continue;}
    if(stopping())return {state:'stopping'};
-   const result=await runner(operation,run,runProp)({dbPath,pds,...task,withPlanningSnapshot,signal,
+   const result=await runner(operation,run,runProp)({dbPath,pds,...task,validateDefinition,withPlanningSnapshot,signal,
     render:operation===PRESET||operation===assemblyTypes[1]?undefined:rendererFor(operation)});
    if(result.state!=='not_claimable')return {...result,operation};
    skipped.add(task.taskId);
