@@ -153,3 +153,8 @@ checks the assembly deletion capability (`/v1/storage/delete-target/assembly`) a
 claims one exact directory under `canonical-files/binari/cinematics/assemblies`,
 with the expected revision and publishing request verified against the official
 plan. It does not delete the referenced map, prop assets, or unrelated folders.
+
+Assembly metadata edits use the existing generic `file.update` workflow. The
+puzzle list can contain ritual wells and one-way spirit manifestations
+together. A manifestation binds one pinned spirit prop at one region position;
+it does not accept bowl portal conditions or require a new worker route.

@@ -6,7 +6,7 @@ import {mapCanonical as canonical,mapFields as exact,officialId,validMapGraph} f
 import {assertDatabasePath,protectSchema,documentTaskEligibleSql,workflowTaskRetrySetSql,markWorkflowTaskFailed} from './workflow-ready.mjs';
 
 import {executeTypedCodexDocument,REPRESENTATIVE_CODEX_PATH} from './representative-renderer.mjs';
-import {assemblyTypes,assemblyStage,assemblyPds,assemblyRef,validateAssembly,validPuzzles,assemblyPayloadSchemas} from './assembly-contract.mjs';
+import {assemblyTypes,assemblyStage,assemblyPds,assemblyRef,validateAssembly,validPuzzles,assemblyKind,wellPuzzleSchema} from './assembly-contract.mjs';
 export {assemblyTypes,assemblyStage,assemblyPds};
 export const assemblyCapability='workflow.assembly.v1';
 const sha=x=>createHash('sha256').update(x).digest('hex');
@@ -14,7 +14,7 @@ const rev=x=>Number.isSafeInteger(x)&&x>=1;
 const immutable=`task_id=? AND official_request_id=? AND worker_type='document' AND task_key=? AND task_type=?
  AND depends_on_task_id IS NULL AND result_ref IS NULL`;
 const generation=assemblyTypes[0];
-const {id,layout,attachments}=assemblyPayloadSchemas[1].properties.puzzles.items.properties;
+const {id,layout,attachments}=wellPuzzleSchema.properties;
 const outputSchema={type:'object',properties:{layout,attachments},required:['layout','attachments'],additionalProperties:false};
 const batchOutputSchema={type:'object',properties:{puzzles:{type:'array',minItems:1,maxItems:8,items:{
  type:'object',properties:{id,layout,attachments},required:['id','layout','attachments'],additionalProperties:false
@@ -78,7 +78,7 @@ export async function runAssemblyFromPath({dbPath,taskId,officialRequestId,opera
       !officialId(state.map.officialRequestId)||(p.mapId!==undefined&&(state.map.mapId!==p.mapId||state.title!==p.title))||
       (!generating&&canonical(state.puzzles)!==canonical(p.puzzles))||
       (generating&&(state.puzzles.length!==(batch?p.puzzles.length:1)||!state.puzzles.every((row,i)=>
-       validContext(context,state.title,row)&&(!batch||(row.id===p.puzzles[i].id&&row.type===p.puzzles[i].type))))))throw Error('ASSEMBLY_PREPARE_INVALID');
+       row.type===assemblyKind&&validContext(context,state.title,row)&&(!batch||(row.id===p.puzzles[i].id&&row.type===p.puzzles[i].type))))))throw Error('ASSEMBLY_PREPARE_INVALID');
    if(generating&&state.updatedAt===claim.claimStamp){
     stage='cli';
     signal?.throwIfAborted();

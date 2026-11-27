@@ -20,7 +20,7 @@ export function validFileUpdate(p){
  const t=p?.target,a=Object.hasOwn(targets,t?.root)?targets[t.root]:null;
  return mapFields(p,['schemaVersion','projectId','target','expected','content'])&&
   p.schemaVersion===fileUpdateSchema&&p.projectId==='binari'&&
-  mapFields(t,['root','path','kind'])&&t.kind==='metadata'&&a?.id(t.path)===true&&pin(p.expected)&&a.content(p.content)&&
+  mapFields(t,['root','path','kind'])&&t.kind==='metadata'&&a?.id(t.path)===true&&pin(p.expected)&&(t.root!==assemblyUpdateRoot||p.expected.revision<=Number.MAX_SAFE_INTEGER-2)&&a.content(p.content)&&
   new TextEncoder().encode(mapCanonical(p)).length<=60*1024;
 }
 export function validateFileUpdate(p){

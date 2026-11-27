@@ -160,21 +160,32 @@ test('file.update binds the complete metadata from the request and normally fail
  }
 });
 
-test('generic file.update pins a full assembly metadata revision, including puzzle portal conditions',async t=>{
+test('generic file.update pins a mixed assembly revision including portal conditions and spirit manifestation',async t=>{
  const {fileUpdateType,fileUpdateSchema,fileUpdatePds,assemblyUpdateRoot,fileUpdateRef,validFileUpdate}=await import('./file-update-envelope.mjs');
  const puzzle={id:'ritual-well-water',type:'binari.ritual-well-water-demo',
   layout:{altar:{regionId:'start',x:40,y:50},well:{regionId:'start',x:60,y:50}},
   attachments:{bowl:{x:0,y:1},lid:{x:2,y:3}},
   bindings:Object.fromEntries(['table','bowl','well','lid'].map(k=>[k,{propId:k,revision:1,sha256:'a'.repeat(64)}])),
   portalConditions:[{portalId:'walk-to-well',propRole:'bowl',requiredState:'carried-filled'}]};
+ const spirit={id:'spirit-reveal',type:'binari.ritual-spirit-manifestation',
+  layout:{spirit:{regionId:'start',x:10,y:90}},attachments:{},
+  bindings:{spirit:{propId:'spirit',revision:4,sha256:'b'.repeat(64)}},scale:{spirit:300}};
  const input={target:{root:assemblyUpdateRoot,path:sequenceId,kind:'metadata'},expected:{revision:2,officialRequestId:'request.official.'+'6'.repeat(64)},
-  content:{title:'Gated assembly',mapId:'request.official.'+'7'.repeat(64),puzzles:[puzzle]}};
+  content:{title:'Gated assembly',mapId:'request.official.'+'7'.repeat(64),puzzles:[puzzle,spirit]}};
  const envelope={schemaVersion:fileUpdateSchema,projectId:'binari',...input};
  assert.equal(validFileUpdate(envelope),true);
  for(const portalConditions of [[...puzzle.portalConditions,...puzzle.portalConditions],
    [{...puzzle.portalConditions[0],propRole:'lid'}],[{...puzzle.portalConditions[0],requiredState:'unknown'}],
    Array.from({length:17},(_,i)=>({...puzzle.portalConditions[0],portalId:'walk-'+i}))]){
   assert.equal(validFileUpdate({...envelope,content:{...input.content,puzzles:[{...puzzle,portalConditions}]}}),false);
+ }
+ const {scale:_,...defaultSpirit}=spirit;
+ const validSpirit=row=>validFileUpdate({...envelope,content:{...input.content,puzzles:[puzzle,row]}});
+ assert.equal(validSpirit(defaultSpirit),true);
+ for(const row of [{...spirit,scale:{spirit:301}},{...spirit,portalConditions:[]},
+   {...spirit,layout:{spirit:{...spirit.layout.spirit,x:9}}},{...spirit,attachments:{spirit:{x:0,y:0}}},
+   {...spirit,bindings:{spirit:{...spirit.bindings.spirit,revision:0}}},{...spirit,id:puzzle.id}]){
+  assert.equal(validSpirit(row),false);
  }
  const f=setup(t,input,fileUpdateType,fileUpdateSchema),calls=[];
  const pds=await withHttp(t,async(req,packet)=>{
