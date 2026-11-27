@@ -1,4 +1,4 @@
-import {retrySqliteBusy} from './sqlite-busy-retry.mjs';
+import {retrySqliteBusy,saveReservationClearSql} from './sqlite-busy-retry.mjs';
 /** One non-NPC neutral reference bound to a formal motion conversion task. */
 import {DatabaseSync} from 'node:sqlite';
 import {canonical,sha} from './vendor/planner-f24d23a/envelope.mjs';
@@ -57,7 +57,7 @@ function claim(db,officialRequestId,taskId){
 
 function complete(db,{row,claim},resultRef){
  const {taskId,officialRequestId,claimStamp}=claim;
- assert(db.prepare(`UPDATE workflow_tasks SET status='completed',result_ref=?,updated_at=?
+ assert(db.prepare(`UPDATE workflow_tasks SET status='completed',result_ref=?,updated_at=?${saveReservationClearSql(db)}
   WHERE task_id=? AND official_request_id=? AND status='running' AND updated_at=?
    AND worker_type='image' AND task_key=? AND task_type=? AND task_input=?
    AND result_ref IS NULL AND depends_on_task_id IS NULL

@@ -1,4 +1,4 @@
-import {retrySqliteBusy} from './sqlite-busy-retry.mjs';
+import {retrySqliteBusy,saveReservationClearSql} from './sqlite-busy-retry.mjs';
 /** Single still-image I2V stage. No motion preset or implicit alpha. */
 import {DatabaseSync} from 'node:sqlite';
 import {createHash} from 'node:crypto';
@@ -151,7 +151,7 @@ export async function executeI2V(db,t,signal,{ports,renderer,makeDir=()=>mkdtemp
   need(exact(ack,['ok','resultRef'])&&ack.ok===true&&ack.resultRef===resultRef,'I2V_PUBLICATION_UNCONFIRMED');
   stage='commit';
   await retrySqliteBusy(()=>{
-   const done=db.prepare(`UPDATE workflow_tasks SET status='completed',result_ref=?,updated_at=? WHERE task_id=?
+   const done=db.prepare(`UPDATE workflow_tasks SET status='completed',result_ref=?,updated_at=?${saveReservationClearSql(db)} WHERE task_id=?
     AND official_request_id=? AND worker_type=? AND task_type=? AND task_key=? AND task_input=? AND depends_on_task_id IS NULL
     AND status='running' AND updated_at=? AND result_ref IS NULL
     AND EXISTS(SELECT 1 FROM workflow_runs r WHERE r.official_request_id=workflow_tasks.official_request_id

@@ -1,4 +1,4 @@
-import {retrySqliteBusy} from './sqlite-busy-retry.mjs';
+import {retrySqliteBusy,saveReservationClearSql} from './sqlite-busy-retry.mjs';
 /** CPU-only postprocessing for the formal non-NPC motion preset workflow. */
 import {DatabaseSync} from 'node:sqlite';
 import {mkdir,mkdtemp,rm,writeFile} from 'node:fs/promises';
@@ -153,7 +153,7 @@ function checkProof(db,s){
 function complete(db,t,s,ref){
  return transaction(db,()=>{
   need(checkProof(db,s),'COMPLETE_PROOF');
-  const done=db.prepare(`UPDATE workflow_tasks SET status='completed',result_ref=?,updated_at=?
+  const done=db.prepare(`UPDATE workflow_tasks SET status='completed',result_ref=?,updated_at=?${saveReservationClearSql(db)}
    WHERE task_id=? AND official_request_id=? AND status='running' AND updated_at=? AND result_ref IS NULL
    AND task_type=? AND task_key=? AND worker_type=? AND task_input=? AND depends_on_task_id IS ?
    AND EXISTS (SELECT 1 FROM workflow_runs r WHERE r.official_request_id=workflow_tasks.official_request_id

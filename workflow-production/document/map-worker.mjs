@@ -1,4 +1,4 @@
-import {retrySqliteBusy,isSqliteBusyExhausted} from './sqlite-busy-retry.mjs';
+import {retrySqliteBusy,isSqliteBusyExhausted,saveReservationClearSql} from './sqlite-busy-retry.mjs';
 import {DatabaseSync} from 'node:sqlite';
 import {createHash} from 'node:crypto';
 import {readFile,access} from 'node:fs/promises';
@@ -163,7 +163,7 @@ export async function runMapFromPath({dbPath,taskId,officialRequestId,operation,
    return await retrySqliteBusy(()=>{
     db.exec('BEGIN IMMEDIATE');
     try{
-     const n=db.prepare(`UPDATE workflow_tasks SET status='completed',result_ref=?,updated_at=?${part?',map_part_json=?':''}
+     const n=db.prepare(`UPDATE workflow_tasks SET status='completed',result_ref=?,updated_at=?${part?',map_part_json=?':''}${saveReservationClearSql(db)}
       WHERE ${immutable} AND status='running' AND updated_at=? AND EXISTS (SELECT 1 FROM workflow_runs r WHERE
       r.official_request_id=workflow_tasks.official_request_id AND r.state='planned' AND r.reason IS NULL AND r.payload_sha256=?)`)
       .run(resultRef,Math.max(Date.now(),claim.claimStamp+1),...(part?[mapCanonical(part)]:[]),...scope,claim.claimStamp,claim.payloadSha256);

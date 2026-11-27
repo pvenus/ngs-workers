@@ -1,4 +1,4 @@
-import {retrySqliteBusy} from './sqlite-busy-retry.mjs';
+import {retrySqliteBusy,saveReservationClearSql} from './sqlite-busy-retry.mjs';
 import {fileUpdateType,fileUpdateSchema,fileUpdateTaskKey,fileUpdateRef,validFileUpdate} from './file-update-envelope.mjs';
 /** Metadata-only file worker. No frame reads/writes and no model or encoder imports. */
 import {DatabaseSync} from 'node:sqlite';
@@ -125,7 +125,7 @@ export async function runManifestMutationFromPath({dbPath,officialRequestId,task
    await retrySqliteBusy(()=>{
     tx(db,()=>{
      current();
-     require(db.prepare(`UPDATE workflow_tasks SET status='completed',result_ref=?,updated_at=?
+     require(db.prepare(`UPDATE workflow_tasks SET status='completed',result_ref=?,updated_at=?${saveReservationClearSql(db)}
       WHERE task_id=? AND official_request_id=? AND status='running' AND result_ref IS NULL AND updated_at=?`)
       .run(resultRef,Math.max(Date.now(),claim.claimStamp+1),taskId,officialRequestId,claim.claimStamp).changes===1);
     });
@@ -135,14 +135,14 @@ export async function runManifestMutationFromPath({dbPath,officialRequestId,task
    if(e instanceof PlaybackRevisionConflict)try{
     tx(db,()=>{
      current();
-     require(db.prepare(`UPDATE workflow_tasks SET status='failed',retry_count=?,updated_at=?
+     require(db.prepare(`UPDATE workflow_tasks SET status='failed',retry_count=?,updated_at=?${saveReservationClearSql(db)}
       WHERE task_id=? AND official_request_id=? AND status='running' AND result_ref IS NULL AND updated_at=?`)
       .run(workflowTaskMaxRetries,Math.max(Date.now(),claim.claimStamp+1),taskId,officialRequestId,claim.claimStamp).changes===1);
     });
     return {state:'failed',taskId,code:operation===fileUpdateType?'FILE_UPDATE_REVISION_CONFLICT':'CINEMATIC_PLAYBACK_REVISION_CONFLICT'};
    }catch{}
    if(operation===fileUpdateType){
-    const failed=db.prepare(`UPDATE workflow_tasks SET status='failed',updated_at=?
+    const failed=db.prepare(`UPDATE workflow_tasks SET status='failed',updated_at=?${saveReservationClearSql(db)}
      WHERE task_id=? AND official_request_id=? AND status='running' AND result_ref IS NULL AND updated_at=?`)
       .run(Math.max(Date.now(),claim.claimStamp+1),taskId,officialRequestId,claim.claimStamp).changes===1;
     return {state:failed?'failed':'not_claimable',taskId,code:'FILE_METADATA_UPDATE_FAILED'};

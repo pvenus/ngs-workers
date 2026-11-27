@@ -4,7 +4,7 @@ import {readFile} from 'node:fs/promises';
 import {join} from 'node:path';
 import {createHash} from 'node:crypto';
 import {markWorkflowTaskFailed} from './workflow-ready.mjs';
-import {retrySqliteBusy} from './sqlite-busy-retry.mjs';
+import {retrySqliteBusy,saveReservationClearSql} from './sqlite-busy-retry.mjs';
 import {markFailed,readStopDiagnostic} from './animation-cli.mjs';
 const source=await readFile(new URL('./animation-cli.mjs',import.meta.url),'utf8');
 const executeSrc=source.slice(source.indexOf('async function execute('),source.indexOf('if(process.argv[1]==='));
@@ -17,7 +17,7 @@ const failureArgs=results=>results.find(x=>x[0]==='failure-update')?.slice(2);
 async function fixture(opts={}){
  const ops=[],logs=[];const abort=new AbortController();
  let busy=opts.busy??0;
- const db={prepare(sql){return{run(...args){
+ const db={prepare(sql){if(sql.startsWith('PRAGMA table_info'))return {all:()=>[]};return{run(...args){
   const failure=sql.includes("status='failed'");
   ops.push([failure?'failure-update':'commit-update',sql,...args]);
   if(failure&&opts.updateThrow)throw Error('/private/path');
@@ -25,7 +25,7 @@ async function fixture(opts={}){
   if(!failure&&opts.commitThrow)throw Error('/private/path');
   return {changes:failure?(opts.updateChanges??1):(opts.commitChanges??1)};
  }}}};
- const f=Function('claim','tmpdir','mkdtemp','join','local','path','insist','sha','writeFile','readFile','runNative','markFailed','readStopDiagnostic','rm','console','retrySqliteBusy',executeSrc+';return execute;')(
+ const f=Function('claim','tmpdir','mkdtemp','join','local','path','insist','sha','writeFile','readFile','runNative','markFailed','readStopDiagnostic','rm','console','retrySqliteBusy','saveReservationClearSql',executeSrc+';return execute;')(
  ()=>opts.noclaim?null:{dto,intent:{}},()=>'/tmp',async()=>'/fixture',join,async(path)=>{
   ops.push([path]);
   if(path==='/animation/read'){
@@ -55,7 +55,7 @@ async function fixture(opts={}){
  },markFailed,async()=>{ops.push(['sidecar']);return opts.diag??null;},
  async()=>{ops.push(['rm']);if(opts.rmError)throw Error('/private/path');},
  {log:line=>logs.push(JSON.parse(line)),error:line=>logs.push(JSON.parse(line))},
- (write,id)=>retrySqliteBusy(write,id,{sleep:ms=>ops.push(['busy-wait',ms]),log:line=>logs.push(JSON.parse(line))}));
+ (write,id)=>retrySqliteBusy(write,id,{sleep:ms=>ops.push(['busy-wait',ms]),log:line=>logs.push(JSON.parse(line))}),saveReservationClearSql);
  await f(db,t,abort.signal);
  return {ops,logs,dec:logs.find(x=>x.state==='failed'||x.state==='requires_reconciliation')};
 }

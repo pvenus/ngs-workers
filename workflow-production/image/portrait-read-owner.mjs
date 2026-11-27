@@ -1,3 +1,4 @@
+import {saveReservationClearSql} from './sqlite-busy-retry.mjs';
 import {DatabaseSync} from 'node:sqlite';
 import {assertDatabasePath,protectSchema} from './workflow-ready.mjs';
 
@@ -23,7 +24,7 @@ export function detectLostPortraitReads(db,{knownTypes,ownerExited=exited}){
   FROM workflow_tasks t JOIN workflow_runs r USING(official_request_id)
   WHERE t.worker_type='image' AND t.status='running' AND t.result_ref IS NULL AND r.state='planned'
   AND portrait_read_owner_pid IS NOT NULL ORDER BY t.updated_at,t.task_id LIMIT 64`).all();
- const update=db.prepare(`UPDATE workflow_tasks SET status='failed',updated_at=?,portrait_read_owner_pid=NULL
+ const update=db.prepare(`UPDATE workflow_tasks SET status='failed',updated_at=?,portrait_read_owner_pid=NULL${saveReservationClearSql(db)}
   WHERE task_id=? AND official_request_id=? AND task_type=? AND worker_type='image' AND status='running'
    AND updated_at=? AND result_ref IS NULL AND portrait_read_owner_pid=?
    AND EXISTS(SELECT 1 FROM workflow_runs r WHERE r.official_request_id=workflow_tasks.official_request_id AND r.state='planned')`);

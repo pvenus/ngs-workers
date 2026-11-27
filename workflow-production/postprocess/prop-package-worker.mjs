@@ -1,4 +1,4 @@
-import {retrySqliteBusy} from './sqlite-busy-retry.mjs';
+import {retrySqliteBusy,saveReservationClearSql} from './sqlite-busy-retry.mjs';
 /** This resident lane can publish only a complete supported prop plan. */
 import {DatabaseSync} from 'node:sqlite';
 import {canonical,sha} from './vendor/planner-f24d23a/envelope.mjs';
@@ -107,7 +107,7 @@ export async function runPropPackageFromPath({dbPath,officialRequestId,taskId,pd
    await retrySqliteBusy(()=>{
     tx(db,()=>{
      current();
-     check(db.prepare(`UPDATE workflow_tasks SET status='completed',result_ref=?,updated_at=?
+     check(db.prepare(`UPDATE workflow_tasks SET status='completed',result_ref=?,updated_at=?${saveReservationClearSql(db)}
       WHERE task_id=? AND official_request_id=? AND status='running' AND updated_at=? AND result_ref IS NULL`)
       .run(expected,Math.max(Date.now(),stamp+1),taskId,officialRequestId,stamp).changes===1);
     });

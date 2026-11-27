@@ -1,4 +1,4 @@
-import {retrySqliteBusy} from './sqlite-busy-retry.mjs';
+import {retrySqliteBusy,saveReservationClearSql} from './sqlite-busy-retry.mjs';
 import {DatabaseSync} from 'node:sqlite';
 import {directions,buildPlan,portraitPixelTaskType,pixelImageStyle} from './vendor/planner-pixel-chain/planner.mjs';
 import {canonical} from './vendor/planner-f24d23a/envelope.mjs';
@@ -130,7 +130,7 @@ export async function runPostprocessFromPath({dbPath,taskId,officialRequestId,pd
     tx(db,()=>{
      const current=checked(db,taskId,officialRequestId,'running',stamp);
      expect(current&&canonical(current.row)===canonical(found.row)&&canonical(current.dep)===canonical(found.dep),'POSTPROCESS_FINAL_BINDING_CHANGED');
-     expect(db.prepare("UPDATE workflow_tasks SET status='completed',result_ref=?,updated_at=? WHERE task_id=? AND official_request_id=? AND status='running' AND updated_at=? AND result_ref IS NULL")
+     expect(db.prepare(`UPDATE workflow_tasks SET status='completed',result_ref=?,updated_at=?${saveReservationClearSql(db)} WHERE task_id=? AND official_request_id=? AND status='running' AND updated_at=? AND result_ref IS NULL`)
       .run(resultRef,Math.max(Date.now(),stamp+1),taskId,officialRequestId,stamp).changes===1,'POSTPROCESS_COMPLETE_CHANGED');
     });
    },taskId);

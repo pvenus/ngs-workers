@@ -1,3 +1,4 @@
+import {saveReservationClearSql} from './sqlite-busy-retry.mjs';
 /** One approved cinematic request, one native RGB inference, one claim-bound MP4 publication. */
 import {DatabaseSync} from 'node:sqlite';
 import {canonical,sha} from './vendor/planner-f24d23a/envelope.mjs';
@@ -129,7 +130,7 @@ export async function executeCinematic(db,t,signal,{ports,runI2V,encode}){
   stage='commit';
   tx(db,()=>{
    current();
-   require(db.prepare(`UPDATE workflow_tasks SET status='completed',result_ref=?,updated_at=?
+   require(db.prepare(`UPDATE workflow_tasks SET status='completed',result_ref=?,updated_at=?${saveReservationClearSql(db)}
     WHERE task_id=? AND official_request_id=? AND status='running' AND result_ref IS NULL AND updated_at=?`)
     .run(expected,Math.max(Date.now(),claim.claimStamp+1),t.taskId,t.officialRequestId,claim.claimStamp).changes===1,
     'CINEMATIC_COMPLETION_CHANGED');

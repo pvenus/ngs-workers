@@ -1,4 +1,4 @@
-import {retrySqliteBusy} from './sqlite-busy-retry.mjs';
+import {retrySqliteBusy,saveReservationClearSql} from './sqlite-busy-retry.mjs';
 /** Exact official prop design lane inside the existing resident document worker. */
 import {DatabaseSync} from 'node:sqlite';
 import {assertDatabasePath,protectSchema,documentTaskEligibleSql,workflowTaskEligibleSql,workflowTaskRetrySetSql,markWorkflowTaskFailed} from './workflow-ready.mjs';
@@ -45,7 +45,7 @@ function assertCurrent(db,selected){
 }
 function commit(db,selected,resultRef){
  const {operation,row,claim}=selected,spec=propDesignOperations[operation];
- const done=db.prepare(`UPDATE workflow_tasks AS t SET status='completed',result_ref=?,updated_at=?
+ const done=db.prepare(`UPDATE workflow_tasks AS t SET status='completed',result_ref=?,updated_at=?${saveReservationClearSql(db)}
    WHERE t.task_type=? AND t.task_key=? AND t.worker_type=? AND t.task_id=? AND t.official_request_id=?
    AND t.depends_on_task_id IS NULL AND t.result_ref IS NULL AND ${immutableTask}
    AND EXISTS (SELECT 1 FROM workflow_runs r WHERE r.official_request_id=t.official_request_id

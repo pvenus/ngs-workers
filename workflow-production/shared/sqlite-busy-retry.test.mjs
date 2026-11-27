@@ -53,3 +53,15 @@ test('a real SQLite reader blocking a different task commit is released during t
  assert.equal(attempts,2);assert.equal(waits,1);
  assert.equal(writer.prepare("SELECT status FROM jobs WHERE id='B'").get().status,'completed');
 });
+
+test('worker terminal transition clears an existing PDS save marker atomically', async()=>{
+ const {DatabaseSync}=await import('node:sqlite');
+ const {saveReservationClearSql}=await import('./sqlite-busy-retry.mjs');
+ const db=new DatabaseSync(':memory:');
+ try {
+  db.exec("CREATE TABLE workflow_tasks (status TEXT, save_started_at INTEGER CHECK(save_started_at IS NULL OR status='running')); INSERT INTO workflow_tasks VALUES('running',10)");
+  assert.throws(()=>db.exec("UPDATE workflow_tasks SET status='completed'"));
+  assert.equal(db.prepare(`UPDATE workflow_tasks SET status='completed'${saveReservationClearSql(db)}`).run().changes,1);
+  assert.equal(db.prepare('SELECT save_started_at FROM workflow_tasks').get().save_started_at,null);
+ } finally {db.close();}
+});

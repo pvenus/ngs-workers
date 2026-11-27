@@ -1,4 +1,4 @@
-import {retrySqliteBusy} from './sqlite-busy-retry.mjs';
+import {retrySqliteBusy,saveReservationClearSql} from './sqlite-busy-retry.mjs';
 /** Cinematic sequence lane: one Wan run; background finals additionally require a real 2x postprocess. */
 import {DatabaseSync} from 'node:sqlite';
 import {mkdtemp,rm} from 'node:fs/promises';
@@ -183,7 +183,7 @@ export async function executeCinematicSequence(db,t,signal,{ports,runI2V,runUpsc
  };
  const commit=expected=>tx(db,()=>{
   current();
-  require(db.prepare(`UPDATE workflow_tasks SET status='completed',result_ref=?,updated_at=?
+  require(db.prepare(`UPDATE workflow_tasks SET status='completed',result_ref=?,updated_at=?${saveReservationClearSql(db)}
    WHERE task_id=? AND official_request_id=? AND status='running' AND result_ref IS NULL AND updated_at=?`)
    .run(expected,Math.max(Date.now(),claim.claimStamp+1),t.taskId,t.officialRequestId,claim.claimStamp).changes===1,'CINEMATIC_SEQUENCE_COMPLETION_CHANGED');
  });

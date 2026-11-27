@@ -1,4 +1,4 @@
-import {retrySqliteBusy} from './sqlite-busy-retry.mjs';
+import {retrySqliteBusy,saveReservationClearSql} from './sqlite-busy-retry.mjs';
 /** Existing CPU postprocess lane for the last stage of a pinned background graph. */
 import {DatabaseSync} from 'node:sqlite';
 import {createHash} from 'node:crypto';
@@ -100,7 +100,7 @@ export async function runBackgroundPixel({dbPath,officialRequestId,taskId,pds,re
    need(exact(r,['state','resultRef'])&&r.state==='published'&&r.resultRef===resultRef,'BACKGROUND_PIXEL_WRITE_UNCONFIRMED');
   }
   await retrySqliteBusy(()=>{
-   tx(db,()=>{alive();need(db.prepare("UPDATE workflow_tasks SET status='completed',result_ref=?,updated_at=? WHERE task_id=? AND updated_at=? AND status='running' AND result_ref IS NULL")
+   tx(db,()=>{alive();need(db.prepare(`UPDATE workflow_tasks SET status='completed',result_ref=?,updated_at=?${saveReservationClearSql(db)} WHERE task_id=? AND updated_at=? AND status='running' AND result_ref IS NULL`)
     .run(resultRef,Math.max(Date.now(),claim.claimStamp+1),taskId,claim.claimStamp).changes===1);});
   },taskId);
   return {state:'completed',taskId,resultRef,phase:'publish'};

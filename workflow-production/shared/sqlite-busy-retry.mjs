@@ -26,3 +26,9 @@ export async function retrySqliteBusy(write,taskId,{sleep=delay,log=console.erro
   }
  }
 }
+
+/** Complete or fail an exact running claim without leaving a PDS saving stage.
+ * Older isolated ledgers have no additive reservation column.
+ */
+export const saveReservationClearSql=db=>db.prepare('PRAGMA table_info(workflow_tasks)').all()
+ .some(column=>column.name==='save_started_at')?',save_started_at=NULL':'';

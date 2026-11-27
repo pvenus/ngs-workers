@@ -1,4 +1,4 @@
-import {retrySqliteBusy} from './sqlite-busy-retry.mjs';
+import {retrySqliteBusy,saveReservationClearSql} from './sqlite-busy-retry.mjs';
 /** Official append-only prop motion lane, one local RGB I2V call. */
 import {DatabaseSync} from 'node:sqlite';
 import {mkdtemp,rm} from 'node:fs/promises';
@@ -123,7 +123,7 @@ export async function executePropAnimation(db,t,signal,{ports,renderer,prepareIn
   await retrySqliteBusy(()=>{
    tx(db,()=>{
     current();
-    require(db.prepare(`UPDATE workflow_tasks SET status='completed',result_ref=?,updated_at=?
+    require(db.prepare(`UPDATE workflow_tasks SET status='completed',result_ref=?,updated_at=?${saveReservationClearSql(db)}
      WHERE task_id=? AND official_request_id=? AND status='running' AND result_ref IS NULL AND updated_at=?`)
      .run(resultRef,Math.max(Date.now(),claim.claimStamp+1),t.taskId,t.officialRequestId,claim.claimStamp).changes===1,
      'PROP_I2V_COMPLETION_CHANGED');

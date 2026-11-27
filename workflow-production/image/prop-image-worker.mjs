@@ -1,4 +1,4 @@
-import {retrySqliteBusy} from './sqlite-busy-retry.mjs';
+import {retrySqliteBusy,saveReservationClearSql} from './sqlite-busy-retry.mjs';
 /** Shared official prop request runner, using the existing pinned image provider. */
 import {DatabaseSync} from 'node:sqlite';
 import {canonical,sha} from './vendor/planner-f24d23a/envelope.mjs';
@@ -41,7 +41,7 @@ function claim(db,officialRequestId,taskId){
  }catch(error){db.exec('ROLLBACK');throw error;}
 }
 function complete(db,{row,claim},resultRef){
- assert(db.prepare(`UPDATE workflow_tasks SET status='completed',result_ref=?,updated_at=?
+ assert(db.prepare(`UPDATE workflow_tasks SET status='completed',result_ref=?,updated_at=?${saveReservationClearSql(db)}
   WHERE task_id=? AND official_request_id=? AND status='running' AND updated_at=? AND worker_type='image'
    AND task_key=? AND task_type=? AND task_input=? AND result_ref IS NULL AND depends_on_task_id IS NULL
    AND EXISTS (SELECT 1 FROM workflow_runs r WHERE r.official_request_id=workflow_tasks.official_request_id

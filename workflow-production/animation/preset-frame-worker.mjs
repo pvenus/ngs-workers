@@ -1,4 +1,4 @@
-import {retrySqliteBusy} from './sqlite-busy-retry.mjs';
+import {retrySqliteBusy,saveReservationClearSql} from './sqlite-busy-retry.mjs';
 /** Separate claim-bound motion-preset lane. Legacy NPC animation never uses this path. */
 import {DatabaseSync} from 'node:sqlite';
 import {mkdtemp,rm,writeFile} from 'node:fs/promises';
@@ -161,7 +161,7 @@ function complete(db,t,s,ref){
    .get(claim.taskId,claim.officialRequestId,t.type,t.key,worker,requestType,requestSchema,project);
   need(r&&r.status==='running'&&r.result_ref===null&&r.updated_at===claim.claimStamp&&r.payload_sha256===claim.payloadSha256,
    'COMPLETE_CLAIM');
-  const done=db.prepare(`UPDATE workflow_tasks SET status='completed',result_ref=?,updated_at=?
+  const done=db.prepare(`UPDATE workflow_tasks SET status='completed',result_ref=?,updated_at=?${saveReservationClearSql(db)}
    WHERE task_id=? AND official_request_id=? AND status='running' AND updated_at=? AND result_ref IS NULL`)
    .run(ref,Math.max(Date.now(),claim.claimStamp+1),claim.taskId,claim.officialRequestId,claim.claimStamp);
   need(done.changes===1,'COMPLETE_UPDATE');

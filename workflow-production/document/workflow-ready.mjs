@@ -1,3 +1,4 @@
+import {saveReservationClearSql} from './sqlite-busy-retry.mjs';
 import {DatabaseSync} from 'node:sqlite';
 import {lstatSync,realpathSync} from 'node:fs';
 import {dirname,isAbsolute,resolve} from 'node:path';
@@ -83,7 +84,7 @@ export function markWorkflowTaskFailed(db,{taskId,officialRequestId,claimStamp,w
  if(typeof taskId!=='string'||!taskId||typeof officialRequestId!=='string'||!officialRequestId||
     typeof workerType!=='string'||!workerType||!Number.isSafeInteger(claimStamp)||claimStamp<1||
     claimStamp>=Number.MAX_SAFE_INTEGER)throw Error('WORKFLOW_FAILURE_CLAIM_REQUIRED');
- return db.prepare(`UPDATE workflow_tasks SET status='failed',updated_at=?
+ return db.prepare(`UPDATE workflow_tasks SET status='failed',updated_at=?${saveReservationClearSql(db)}
   WHERE task_id=? AND official_request_id=? AND worker_type=? AND status='running'
    AND updated_at=? AND result_ref IS NULL`)
   .run(Math.max(Date.now(),claimStamp+1),taskId,officialRequestId,workerType,claimStamp).changes===1;

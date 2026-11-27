@@ -1,4 +1,4 @@
-import {retrySqliteBusy} from './sqlite-busy-retry.mjs';
+import {retrySqliteBusy,saveReservationClearSql} from './sqlite-busy-retry.mjs';
 import {DatabaseSync} from 'node:sqlite';
 import {mkdtemp,readFile,writeFile,rm,open} from 'node:fs/promises';
 import {constants as fsConstants} from 'node:fs';
@@ -248,7 +248,7 @@ async function execute(db,t,signal,warm=null,{transport=local,native=runNative}=
   insist(Object.keys(ack).length===1&&ack.ok===true,'ANIMATION_PUBLICATION_UNCONFIRMED');
   stage='commit';
   await retrySqliteBusy(()=>{
-   const done=db.prepare("UPDATE workflow_tasks SET status='completed',updated_at=? WHERE task_id=? AND official_request_id=? AND status='running' AND updated_at=?")
+   const done=db.prepare(`UPDATE workflow_tasks SET status='completed',updated_at=?${saveReservationClearSql(db)} WHERE task_id=? AND official_request_id=? AND status='running' AND updated_at=?`)
      .run(Math.max(Date.now(),dto.claimStamp+1),dto.taskId,dto.officialRequestId,dto.claimStamp);
    insist(done.changes===1,'ANIMATION_DB_COMPLETION');
   },t.taskId);

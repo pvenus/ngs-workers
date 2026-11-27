@@ -1,4 +1,4 @@
-import {retrySqliteBusy,isSqliteBusyExhausted} from './sqlite-busy-retry.mjs';
+import {retrySqliteBusy,isSqliteBusyExhausted,saveReservationClearSql} from './sqlite-busy-retry.mjs';
 /** Formal static prop image stage: one exact approved design in, one durable RGB/RGBA PNG receipt out. */
 import {DatabaseSync} from 'node:sqlite';
 import {canonical,sha} from './vendor/prop-composite-v1/envelope.mjs';
@@ -92,7 +92,7 @@ function commit(db,selected,resultRef){
  try{
   assertCurrent(db,selected);
   const {claim}=selected;
-  need(db.prepare(`UPDATE workflow_tasks SET status='completed',result_ref=?,updated_at=?
+  need(db.prepare(`UPDATE workflow_tasks SET status='completed',result_ref=?,updated_at=?${saveReservationClearSql(db)}
    WHERE official_request_id=? AND task_id=? AND worker_type=? AND task_type=? AND task_key=?
    AND status='running' AND updated_at=? AND result_ref IS NULL`).run(resultRef,Math.max(Date.now(),claim.claimStamp+1),
     claim.officialRequestId,claim.taskId,worker,selected.request.operation,selected.key,claim.claimStamp).changes===1);
