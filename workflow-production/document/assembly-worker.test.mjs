@@ -15,7 +15,7 @@ const id=x=>'request.official.'+x.repeat(64);
 const officialRequestId=id('a'),mapId=id('b'),existingId=id('c');
 const taskId='workflow.task.'+hash(canonical([officialRequestId,assemblyStage]));
 const noModel=()=>assert.fail('Assembly must not initialize a model renderer');
-function fixture(t,operation,{wrongReceipt=false,wrongMap=false,replay=false,invalidModel=false,batch=false,scale,modelScale,portalConditions}={}){
+function fixture(t,operation,{wrongReceipt=false,wrongMap=false,replay=false,invalidModel=false,batch=false,mixed=false,wrongPin=false,overridePin=false,unreachable=false,scale,modelScale,portalConditions}={}){
  const dir=realpathSync(mkdtempSync(join(tmpdir(),'assembly-worker-test-'))),dbPath=join(dir,'planner.sqlite');
  const db=new DatabaseSync(dbPath);chmodSync(dbPath,0o600);
  t.after(()=>{db.close();rmSync(dir,{force:true,recursive:true});});
@@ -23,12 +23,17 @@ function fixture(t,operation,{wrongReceipt=false,wrongMap=false,replay=false,inv
  request_type TEXT,schema_version TEXT,payload TEXT,payload_sha256 TEXT,registered_at INTEGER);
  CREATE TABLE workflow_tasks(task_id TEXT PRIMARY KEY,official_request_id TEXT,task_input TEXT,task_type TEXT,
  task_key TEXT,worker_type TEXT,depends_on_task_id TEXT,result_ref TEXT,status TEXT,updated_at INTEGER,retry_count INTEGER)`);
+ if(mixed)batch=true;
  const generate=operation==='assembly.generate',assemblyId=generate?officialRequestId:existingId,revision=generate?1:3;
  const puzzle={id:'ritual-well-water',type:'binari.ritual-well-water-demo',
   layout:{altar:{regionId:'north',x:40,y:50},well:{regionId:'south',x:60,y:50}},
   attachments:{bowl:{x:0,y:1},lid:{x:2,y:3}},
-  ...(scale?{scale}:{}),...(portalConditions?{portalConditions}:{}),bindings:Object.fromEntries(['table','bowl','well','lid'].map(k=>[k,{propId:k,revision:1,sha256:'a'.repeat(64)}]))},puzzles=batch?[puzzle,{...puzzle,id:'other-ritual'}]:[puzzle];
- const payload=generate?{schemaVersion:batch?'ngs.assembly-generate.v2':'ngs.assembly-generate.v1',projectId:'binari',title:'조립',mapId,intent:'의식을 준비한다.',...(batch?{puzzles:puzzles.map(({id,type},i)=>({id,type,intent:'퍼즐 '+i}))}:{puzzleType:puzzle.type})}:
+  ...(scale?{scale}:{}),...(portalConditions?{portalConditions}:{}),bindings:Object.fromEntries(['table','bowl','well','lid'].map(k=>[k,{propId:k,revision:1,sha256:'a'.repeat(64)}]))};
+ const prop={propId:'spirit-mask',revision:3,sha256:'c'.repeat(64)};
+ const spirit={id:'reveal-spirit',type:'binari.ritual-spirit-manifestation',layout:{spirit:{regionId:'north',x:50,y:50}},
+  attachments:{},bindings:{spirit:wrongPin?{...prop,revision:4}:prop},scale:{spirit:100}};
+ const puzzles=mixed?[puzzle,spirit]:batch?[puzzle,{...puzzle,id:'other-ritual'}]:[puzzle];
+ const payload=generate?{schemaVersion:mixed?'ngs.assembly-generate.v3':batch?'ngs.assembly-generate.v2':'ngs.assembly-generate.v1',projectId:'binari',title:'조립',mapId,intent:'의식을 준비한다.',...(batch?{puzzles:puzzles.map(({id,type},i)=>({id,type,intent:'퍼즐 '+i,...(id===spirit.id?{prop}:{})}))}:{puzzleType:puzzle.type})}:
    {schemaVersion:'ngs.assembly-update.v1',projectId:'binari',assemblyId,expectedRevision:2,puzzles};
  const wire=canonical(payload),digest=hash(wire);
  db.prepare("INSERT INTO workflow_runs VALUES(?,'planned',NULL,'binari',?,?,?,?,1)").run(officialRequestId,operation,payload.schemaVersion,wire,digest);
@@ -36,7 +41,9 @@ function fixture(t,operation,{wrongReceipt=false,wrongMap=false,replay=false,inv
  const context={startRegionId:'north',regions:['north','south'].map(id=>({id,name:id,description:'길',
   backgroundId:'background.'+'a'.repeat(64),imageSha256:'b'.repeat(64)})),connections:[]};
  const generated={layout:{...puzzle.layout,altar:{...puzzle.layout.altar,x:42}},attachments:puzzle.attachments};
- const batchOutput=puzzles.map(({id},i)=>({id,...generated,layout:{...generated.layout,altar:{...generated.layout.altar,x:42+i}}}));
+ const batchOutput=puzzles.map(({id},i)=>id===spirit.id?
+  {id,layout:{spirit:{regionId:unreachable?'south':'north',x:16,y:88}},scale:{spirit:160},...(overridePin?{bindings:{spirit:{...prop,revision:9}}}:{})}:
+  {id,...generated,layout:{...generated.layout,altar:{...generated.layout.altar,x:42+i}}});
  const inputs=[];
  const render=async input=>{inputs.push(input);
   if(batch)return {puzzles:invalidModel?[batchOutput[0],batchOutput[0]]:[...batchOutput].reverse()};
@@ -148,4 +155,33 @@ test('legacy manual assembly update preserves existing portal conditions without
  const f=fixture(t,'assembly.update',{portalConditions});
  assert.equal((await executeOnce(f)).state,'completed');
  assert.deepEqual(f.inputs,[]);
+});
+
+test('v3 one claimed document call publishes mixed typed placements without changing pins, types or attachments',async t=>{
+ const f=fixture(t,'assembly.generate',{mixed:true});
+ assert.equal((await documentTick(f)).state,'completed');
+ assert.equal(f.inputs.length,1);
+ assert.equal(f.inputs[0].schemaVersion,'ngs.assembly-generate.v3');
+ assert.deepEqual(f.inputs[0].puzzles[1].prop,f.inputs[0].puzzles[1].bindings.spirit);
+ assert.equal(f.inputs[0].puzzles[1].intent,'퍼즐 1');
+ assert.equal(f.calls.length,3);
+});
+test('v3 rejects drifted PDS spirit pin or model binding overrides and unreachable placement',async t=>{
+ for(const [key,code,stage] of [['wrongPin','ASSEMBLY_PREPARE_INVALID','prepare'],['overridePin','ASSEMBLY_CLI_OUTPUT_INVALID','cli'],['unreachable','ASSEMBLY_CLI_OUTPUT_INVALID','cli']]){
+  const f=fixture(t,'assembly.generate',{mixed:true,[key]:true});
+  assert.deepEqual(await documentTick(f),{state:'failed',taskId,code,stage,operation:f.operation});
+  assert.equal(f.calls.length,2);
+  assert.equal(f.inputs.length,stage==='prepare'?0:1);
+ }
+});
+test('v3 typed executor exposes only approved mixed geometry fields',async ()=>{
+ const sample={schemaVersion:'ngs.assembly-generate.v3',title:'조립',intent:'공통',map:{},puzzles:[{id:'first'}]};
+ const render=createAssemblyRenderer({codexPath:process.execPath,execute:async ({prompt,outputSchema})=>{
+  assert.match(prompt,/spirit manifestation/);
+  assert.ok(prompt.endsWith(JSON.stringify(sample)));
+  assert.deepEqual(outputSchema.properties.puzzles.items.anyOf.map(v=>v.required),
+   [['id','layout','attachments'],['id','layout','scale']]);
+  return {puzzles:[]};
+ }});
+ assert.deepEqual(await render(sample),{puzzles:[]});
 });

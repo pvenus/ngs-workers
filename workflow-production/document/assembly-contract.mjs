@@ -1,6 +1,6 @@
 import {mapCanonical,mapFields,officialId} from './map-contract.mjs';
 export const assemblyTypes=['assembly.generate','assembly.update'];
-export const assemblySchemas=['ngs.assembly-generate.v1','ngs.assembly-update.v1','ngs.assembly-generate.v2'];
+export const assemblySchemas=['ngs.assembly-generate.v1','ngs.assembly-update.v1','ngs.assembly-generate.v2','ngs.assembly-generate.v3'];
 export const spiritAssemblyKind='binari.ritual-spirit-manifestation';
 export const assemblyKind='binari.ritual-well-water-demo',assemblyStage='assembly_metadata';
 export const assemblyPds='/v1/assemblies/ownership/workflow-assembly';
@@ -11,8 +11,9 @@ const region=v=>typeof v==='string'&&/^[a-z][a-z0-9-]{0,31}$/u.test(v);
 export const text=(v,max)=>typeof v==='string'&&v.isWellFormed()&&v===v.trim()&&v.length>=1&&v.length<=max&&!/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/u.test(v);
 const xy=(v,lo,hi)=>int(v.x,lo,hi)&&int(v.y,lo,hi);
 const notes=v=>v===''||text(v,1000);
-export const validAssemblyNotes=v=>Array.isArray(v)&&v.length>=1&&v.length<=8&&new Set(v.map(p=>p?.id)).size===v.length&&
- v.every(p=>mapFields(p,['id','type','intent'])&&ident(p.id)&&p.type===assemblyKind&&notes(p.intent));
+export const validAssemblyNotes=(v,allowSpirit=false)=>Array.isArray(v)&&v.length>=1&&v.length<=8&&new Set(v.map(p=>p?.id)).size===v.length&&
+ v.every(p=>ident(p?.id)&&notes(p.intent)&&(p.type===assemblyKind&&mapFields(p,['id','type','intent'])||
+ allowSpirit&&p.type===spiritAssemblyKind&&mapFields(p,['id','type','intent','prop'])&&pin(p.prop)));
 const station=v=>mapFields(v,['regionId','x','y'])&&region(v.regionId)&&xy(v,10,90);
 const offset=v=>mapFields(v,['x','y'])&&xy(v,-12,12);
 const pin=v=>mapFields(v,['propId','revision','sha256'])&&ident(v.propId)&&int(v.revision,1,Number.MAX_SAFE_INTEGER-1)&&
@@ -38,10 +39,10 @@ export const validPuzzles=(v,{wellOnly=false}={})=>Array.isArray(v)&&v.length<=3
  v.every(p=>validWellPuzzle(p)||!wellOnly&&validSpiritPuzzle(p));
 export function validateAssembly(v,type){
  const i=assemblyTypes.indexOf(type);
- const v2=i===0&&v?.schemaVersion===assemblySchemas[2], idx=v2?2:i;
- const fields=i===0?['title','mapId','intent',v2?'puzzles':'puzzleType']:['assemblyId','expectedRevision','puzzles'];
+ const batch=i===0&&assemblySchemas.slice(2).includes(v?.schemaVersion), idx=batch?assemblySchemas.indexOf(v.schemaVersion):i;
+ const fields=i===0?['title','mapId','intent',batch?'puzzles':'puzzleType']:['assemblyId','expectedRevision','puzzles'];
  if(i<0||!mapFields(v,['schemaVersion','projectId',...fields])||v.schemaVersion!==assemblySchemas[idx]||v.projectId!=='binari'||
-  !(i===0?text(v.title,100)&&officialId(v.mapId)&&text(v.intent,2000)&&(v2?validAssemblyNotes(v.puzzles):v.puzzleType===assemblyKind):
+  !(i===0?text(v.title,100)&&officialId(v.mapId)&&text(v.intent,2000)&&(batch?validAssemblyNotes(v.puzzles,idx===3):v.puzzleType===assemblyKind):
     officialId(v.assemblyId)&&int(v.expectedRevision,1,Number.MAX_SAFE_INTEGER-2)&&validPuzzles(v.puzzles,{wellOnly:true})))throw Error('NGS_ASSEMBLY_PAYLOAD_INVALID');
  return mapCanonical(v);
 }
@@ -61,7 +62,9 @@ export const spiritPuzzleSchema=obj({id:slug,type:{const:spiritAssemblyKind},lay
  bindings:obj({spirit:pinSchema}),scale:obj({spirit:integer(10,300)})},puzzleFields);
 export const validAssemblyContent=v=>mapFields(v,['title','mapId','puzzles'])&&text(v.title,100)&&officialId(v.mapId)&&validPuzzles(v.puzzles);
 export const assemblyContentSchema=obj({title:string(1,100),mapId:oid,puzzles:{type:'array',minItems:0,maxItems:32,items:{oneOf:[wellPuzzleSchema,spiritPuzzleSchema]}}});
+const wellNoteSchema=obj({id:slug,type:{const:assemblyKind},intent:string(0,1000)});
+const spiritNoteSchema=obj({id:slug,type:{const:spiritAssemblyKind},intent:string(0,1000),prop:pinSchema});
 export const assemblyPayloadSchemas=assemblySchemas.map((schemaVersion,i)=>obj({schemaVersion:{const:schemaVersion},projectId:{const:'binari'},
  ...(i!==1?{title:string(1,100),mapId:oid,intent:string(1,2000),
-  ...(i===0?{puzzleType:{const:assemblyKind}}:{puzzles:{type:'array',minItems:1,maxItems:8,items:obj({id:slug,type:{const:assemblyKind},intent:string(0,1000)})}})}:
+  ...(i===0?{puzzleType:{const:assemblyKind}}:{puzzles:{type:'array',minItems:1,maxItems:8,items:i===3?{oneOf:[wellNoteSchema,spiritNoteSchema]}:wellNoteSchema}})}:
  {assemblyId:oid,expectedRevision:integer(1,Number.MAX_SAFE_INTEGER-2),puzzles:{type:'array',minItems:0,maxItems:32,items:wellPuzzleSchema}})}));

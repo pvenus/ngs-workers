@@ -267,3 +267,9 @@ reuses the exact result rather than rerunning Codex.
 `assembly.update` uses the exact user-submitted puzzle edits and does not call
 Codex. Manual edits can carry per-role scales (10–300%); omitted scales use 100%.
 Both paths complete only after PDS returns the exact revision receipt.
+
+Generation v3 also accepts spirit manifestation entries with an explicitly
+selected published prop. The same typed CLI call chooses the position and scale
+for each spirit and the usual placement/offsets for each well. The worker
+verifies original IDs, types, bindings, and reachable spirit regions before
+publishing; it never generates runtime rules or executable code.

@@ -6,7 +6,7 @@ import {mapCanonical as canonical,mapFields as exact,officialId,validMapGraph} f
 import {assertDatabasePath,protectSchema,documentTaskEligibleSql,workflowTaskRetrySetSql,markWorkflowTaskFailed} from './workflow-ready.mjs';
 
 import {executeTypedCodexDocument,REPRESENTATIVE_CODEX_PATH} from './representative-renderer.mjs';
-import {assemblyTypes,assemblyStage,assemblyPds,assemblyRef,validateAssembly,validPuzzles,assemblyKind,wellPuzzleSchema} from './assembly-contract.mjs';
+import {assemblyTypes,assemblyStage,assemblyPds,assemblyRef,validateAssembly,validPuzzles,assemblyKind,wellPuzzleSchema,spiritAssemblyKind,spiritPuzzleSchema} from './assembly-contract.mjs';
 export {assemblyTypes,assemblyStage,assemblyPds};
 export const assemblyCapability='workflow.assembly.v1';
 const sha=x=>createHash('sha256').update(x).digest('hex');
@@ -19,18 +19,29 @@ const outputSchema={type:'object',properties:{layout,attachments},required:['lay
 const batchOutputSchema={type:'object',properties:{puzzles:{type:'array',minItems:1,maxItems:8,items:{
  type:'object',properties:{id,layout,attachments},required:['id','layout','attachments'],additionalProperties:false
 }}},required:['puzzles'],additionalProperties:false};
+const entry=properties=>({type:'object',properties,required:Object.keys(properties),additionalProperties:false});
+const mixedOutputSchema=entry({puzzles:{type:'array',minItems:1,maxItems:8,items:{anyOf:[
+ entry({id,layout,attachments}),entry({id,layout:spiritPuzzleSchema.properties.layout,scale:spiritPuzzleSchema.properties.scale}),
+]}}});
+const mixedSchema='ngs.assembly-generate.v3';
 export function createAssemblyRenderer({execute=executeTypedCodexDocument,codexPath=REPRESENTATIVE_CODEX_PATH}={}){
  return async (input,{signal}={})=>{
   await access(codexPath,constants.X_OK);
-  const guide=await readFile(new URL('./guides/assembly-placement.md',import.meta.url),'utf8');
+  const mixed=input.schemaVersion===mixedSchema;
+  const guide=await readFile(new URL(mixed?'./guides/assembly-mixed-placement.md':'./guides/assembly-placement.md',import.meta.url),'utf8');
   const batch=Array.isArray(input.puzzles);
   const task=batch?'\n\nFor this batch, return exactly one entry per input puzzle ID in a puzzles array. Consider the overall intent together with each puzzle’s own intent; plan all placements as one assembly. Do not omit, duplicate or invent a puzzle ID.':'';
-  return execute({codexPath,signal,prompt:guide+task+'\n\n'+JSON.stringify(input),outputSchema:batch?batchOutputSchema:outputSchema});
+  return execute({codexPath,signal,prompt:guide+task+'\n\n'+JSON.stringify(input),outputSchema:mixed?mixedOutputSchema:batch?batchOutputSchema:outputSchema});
  };
 }
 function validContext(context,title,puzzle){
- return exact(context,['regions','connections','startRegionId'])&&validMapGraph({...context,title})&&
-  ['altar','well'].every(role=>context.regions.some(r=>r.id===puzzle.layout[role].regionId));
+ if(!exact(context,['regions','connections','startRegionId'])||!validMapGraph({...context,title}))return false;
+ if(puzzle.type!==spiritAssemblyKind)
+  return ['altar','well'].every(role=>context.regions.some(r=>r.id===puzzle.layout[role].regionId));
+ const reachable=new Set([context.startRegionId]),queue=[context.startRegionId];
+ for(let i=0;i<queue.length;i++)for(const edge of context.connections)
+  if(edge.from===queue[i]&&!reachable.has(edge.to)){reachable.add(edge.to);queue.push(edge.to);}
+ return reachable.has(puzzle.layout.spirit.regionId);
 }
 export async function runAssemblyFromPath({dbPath,taskId,officialRequestId,operation,pds,render,signal}){
  if(!assemblyTypes.includes(operation)||!officialId(officialRequestId)||
@@ -69,6 +80,7 @@ export async function runAssemblyFromPath({dbPath,taskId,officialRequestId,opera
    const resultRef=assemblyRef(assemblyId,revision);
    const generating=operation===generation;
    const batch=generating&&Array.isArray(p.puzzles);
+   const mixed=generating&&p.schemaVersion===mixedSchema;
    const prepared=await pds.readAssembly(claim,signal),context=prepared?.context;
    let state=prepared?.state;
    if(!exact(prepared,generating?['state','context']:['state'])||!exact(state,['schemaVersion','projectId','assemblyId','revision','updatedAt','officialRequestId','title','map','puzzles'])||
@@ -78,25 +90,32 @@ export async function runAssemblyFromPath({dbPath,taskId,officialRequestId,opera
       !officialId(state.map.officialRequestId)||(p.mapId!==undefined&&(state.map.mapId!==p.mapId||state.title!==p.title))||
       (!generating&&canonical(state.puzzles)!==canonical(p.puzzles))||
       (generating&&(state.puzzles.length!==(batch?p.puzzles.length:1)||!state.puzzles.every((row,i)=>
-       row.type===assemblyKind&&validContext(context,state.title,row)&&(!batch||(row.id===p.puzzles[i].id&&row.type===p.puzzles[i].type))))))throw Error('ASSEMBLY_PREPARE_INVALID');
+       (row.type===assemblyKind||(mixed&&row.type===spiritAssemblyKind&&Object.hasOwn(row,'scale')&&
+        canonical(row.bindings.spirit)===canonical(p.puzzles[i].prop)))&&
+       validContext(context,state.title,row)&&(!batch||(row.id===p.puzzles[i].id&&row.type===p.puzzles[i].type))))))throw Error('ASSEMBLY_PREPARE_INVALID');
    if(generating&&state.updatedAt===claim.claimStamp){
     stage='cli';
     signal?.throwIfAborted();
     let placement;
-    const input={title:p.title,intent:p.intent,map:context,...(batch?
+    const input={title:p.title,intent:p.intent,map:context,...(mixed?{schemaVersion:mixedSchema}:{}),...(batch?
      {puzzles:p.puzzles.map((row,i)=>({...row,bindings:state.puzzles[i].bindings}))}:{bindings:state.puzzles[0].bindings})};
     try{placement=await render(input,{signal});}
     catch{throw Error('ASSEMBLY_CLI_FAILED');}
     let placements;
     if(batch){
      if(!exact(placement,['puzzles'])||!Array.isArray(placement.puzzles)||placement.puzzles.length!==state.puzzles.length||
-        !placement.puzzles.every(row=>exact(row,['id','layout','attachments'])))throw Error('ASSEMBLY_CLI_OUTPUT_INVALID');
+        !placement.puzzles.every(row=>exact(row,['id','layout','attachments'])||(mixed&&exact(row,['id','layout','scale']))))throw Error('ASSEMBLY_CLI_OUTPUT_INVALID');
      placements=new Map(placement.puzzles.map(row=>[row.id,row]));
      if(placements.size!==state.puzzles.length||!state.puzzles.every(row=>placements.has(row.id)))throw Error('ASSEMBLY_CLI_OUTPUT_INVALID');
     }else if(!exact(placement,['layout','attachments']))throw Error('ASSEMBLY_CLI_OUTPUT_INVALID');
     const puzzles=state.puzzles.map(row=>{
-     const {layout,attachments}=batch?placements.get(row.id):placement;
-     return {...row,layout,attachments};
+     const proposed=batch?placements.get(row.id):placement;
+     if(row.type===spiritAssemblyKind){
+      if(!exact(proposed,['id','layout','scale']))throw Error('ASSEMBLY_CLI_OUTPUT_INVALID');
+      return {...row,layout:proposed.layout,scale:proposed.scale};
+     }
+     if(!exact(proposed,batch?['id','layout','attachments']:['layout','attachments']))throw Error('ASSEMBLY_CLI_OUTPUT_INVALID');
+     return {...row,layout:proposed.layout,attachments:proposed.attachments};
     });
     if(!validPuzzles(puzzles)||!puzzles.every(row=>validContext(context,state.title,row)))throw Error('ASSEMBLY_CLI_OUTPUT_INVALID');
     state={...state,puzzles};
