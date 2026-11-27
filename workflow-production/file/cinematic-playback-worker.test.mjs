@@ -135,3 +135,27 @@ test('duplicate/empty selections and stale prop revisions cannot be claimed',asy
  const f=setup(t,{propId:'candle',source:{revision:0,sha256:'a'.repeat(64)},motionIds:['flare']},propMotionRemoveType,'ngs.prop-animation-remove.v1');
  assert.equal((await pollOnce({...f,pds})).state,'blocked');assert.equal(f.state().status,'pending');
 });
+
+test('file.update binds the complete metadata from the request and normally fails on missing response',async t=>{
+ const {fileUpdateType,fileUpdateSchema,fileUpdatePds,mapUpdateRoot,fileUpdateRef}=await import('./file-update-envelope.mjs');
+ const region={id:'start',name:'Start',description:'Entry',backgroundId:'background.'+'a'.repeat(64),imageSha256:'b'.repeat(64)};
+ const input={target:{root:mapUpdateRoot,path:sequenceId,kind:'metadata'},expected:{revision:2,officialRequestId:'request.official.'+'6'.repeat(64)},
+  content:{title:'A map',startRegionId:'start',startPoint:{x:500,y:827},regions:[region],connections:[],colliders:[]}};
+ for(const outcome of ['completed','failed','conflict']){
+  const f=setup(t,input,fileUpdateType,fileUpdateSchema),calls=[];
+  const pds=await withHttp(t,async(req,packet)=>{
+   assert.equal(req.url,fileUpdatePds);calls.push(req.method);
+   if(!packet)return {body:{enabled:true,schemaVersion:'workflow.file-update.v1'}};
+   assert.deepEqual(Object.keys(packet),['claim']);
+   assert.equal(packet.claim.payloadSha256,sha(canonical({schemaVersion:fileUpdateSchema,projectId:'binari',...input})));
+   if(outcome==='failed')return {destroy:true};
+   if(outcome==='conflict')return {status:409,body:{error:'FILE_UPDATE_REVISION_CONFLICT'}};
+   return {body:{ok:true,resultRef:fileUpdateRef(input)}};
+  });
+  const status=await pollOnce({...f,pds});
+  assert.equal(status.state,outcome==='conflict'?'failed':outcome);
+  assert.deepEqual(calls,['GET','POST']);
+  assert.equal(f.state().result_ref,outcome==='completed'?fileUpdateRef(input):null);
+  if(outcome==='conflict')assert.equal(f.state().retry_count,3);
+ }
+});

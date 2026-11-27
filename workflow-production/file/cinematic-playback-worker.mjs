@@ -1,3 +1,4 @@
+import {fileUpdateType,fileUpdateSchema,fileUpdateTaskKey,fileUpdateRef,validFileUpdate} from './file-update-envelope.mjs';
 /** Metadata-only file worker. No frame reads/writes and no model or encoder imports. */
 import {DatabaseSync} from 'node:sqlite';
 import {canonical,sha} from './vendor/planner-f24d23a/envelope.mjs';
@@ -26,6 +27,11 @@ const hash=v=>typeof v==='string'&&v.length===64&&/^[a-f0-9]{64}$/u.test(v);
 const checked=(v,valid)=>Array.isArray(v)&&v.length>=1&&v.length<=30&&
  Array.from(v).every(valid)&&new Set(v).size===v.length;
 const mutations=Object.freeze({
+ [fileUpdateType]:{
+  schema:fileUpdateSchema,key:fileUpdateTaskKey,keys:['target','expected','content'],
+  valid:(p,ownId)=>validFileUpdate(p)&&p.target.path!==ownId,
+  ref:(v,p)=>v===fileUpdateRef(p),
+ },
  [playbackType]:{
   schema:playbackSchema,key:playbackKey,keys:['sequenceId','expectedRevision','playback'],
   valid:(p,ownId)=>official(p.sequenceId)&&p.sequenceId!==ownId&&Number.isSafeInteger(p.expectedRevision)&&
@@ -86,8 +92,9 @@ function claimMutation(db,t,m){
 
 export async function runManifestMutationFromPath({dbPath,officialRequestId,taskId,pds,signal,operation=playbackType}){
  const m=Object.hasOwn(mutations,operation)?mutations[operation]:null;
- const write=(claim)=>operation===playbackType?pds.updateCinematicPlayback(claim):pds.archiveExactSelection(operation,claim);
- require(m&&(operation===playbackType?typeof pds?.updateCinematicPlayback==='function':typeof pds?.archiveExactSelection==='function'),'CINEMATIC_PLAYBACK_PORT_REQUIRED');
+ const write=(claim)=>operation===fileUpdateType?pds.updateExactMetadata(claim):
+  operation===playbackType?pds.updateCinematicPlayback(claim):pds.archiveExactSelection(operation,claim);
+ require(m&&(operation===fileUpdateType?typeof pds?.updateExactMetadata==='function':operation===playbackType?typeof pds?.updateCinematicPlayback==='function':typeof pds?.archiveExactSelection==='function'),'CINEMATIC_PLAYBACK_PORT_REQUIRED');
  if(signal?.aborted)return {state:'not_claimable',taskId};
  assertDatabasePath(dbPath);
  const db=new DatabaseSync(dbPath);
@@ -106,7 +113,7 @@ export async function runManifestMutationFromPath({dbPath,officialRequestId,task
    let ack;
    try{ack=await write(claim);}
    catch(e){
-    if(e instanceof PlaybackRevisionConflict)throw e;
+    if(operation===fileUpdateType||e instanceof PlaybackRevisionConflict)throw e;
     // Repeat once for a lost ACK, under the same active claim and intent.
     // The endpoint independently confirms the original immutable receipt.
     signal?.throwIfAborted();verifyCurrent();
@@ -129,8 +136,14 @@ export async function runManifestMutationFromPath({dbPath,officialRequestId,task
       WHERE task_id=? AND official_request_id=? AND status='running' AND result_ref IS NULL AND updated_at=?`)
       .run(workflowTaskMaxRetries,Math.max(Date.now(),claim.claimStamp+1),taskId,officialRequestId,claim.claimStamp).changes===1);
     });
-    return {state:'failed',taskId,code:'CINEMATIC_PLAYBACK_REVISION_CONFLICT'};
+    return {state:'failed',taskId,code:operation===fileUpdateType?'FILE_UPDATE_REVISION_CONFLICT':'CINEMATIC_PLAYBACK_REVISION_CONFLICT'};
    }catch{}
+   if(operation===fileUpdateType){
+    const failed=db.prepare(`UPDATE workflow_tasks SET status='failed',updated_at=?
+     WHERE task_id=? AND official_request_id=? AND status='running' AND result_ref IS NULL AND updated_at=?`)
+      .run(Math.max(Date.now(),claim.claimStamp+1),taskId,officialRequestId,claim.claimStamp).changes===1;
+    return {state:failed?'failed':'not_claimable',taskId,code:'FILE_METADATA_UPDATE_FAILED'};
+   }
    return {state:'requires_reconciliation',taskId,code:operation===playbackType?'CINEMATIC_PLAYBACK_RECONCILIATION_REQUIRED':'FILE_WORKER_ARCHIVE_RECONCILIATION_REQUIRED'};
   }
  }finally{db.close();}

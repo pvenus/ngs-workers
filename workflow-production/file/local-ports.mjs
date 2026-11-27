@@ -1,3 +1,4 @@
+import {fileUpdatePds} from './file-update-envelope.mjs';
 import {fileDeleteType,cinematicDeleteRoot,backgroundDeleteRoot,mapDeleteRoot,assemblyDeleteRoot} from './file-delete-envelope.mjs';
 import {request} from 'node:http';
 import {exactDeleteTarget,workflowDeleteFolder,singleTargetDeleteSchema,conceptDeleteRoot,npcDeleteRoot,audioDeleteRoot,propDeleteRoot,conceptDelete,npcDelete,audioDelete} from './file-delete.mjs';
@@ -33,7 +34,7 @@ export function requestLocalJson({port,path,method,body,deadline,signal}){
   const req=request({hostname:'127.0.0.1',port,path,method,agent:false,signal:AbortSignal.any(signals),
    headers:{Accept:'application/json',...(payload?{'Content-Type':'application/json','Content-Length':payload.length}:{})}},resp=>{
    const denial=method==='POST'?(path===deletePath?definitive:path===conceptCategoryPath?conceptDefinitive:path===storageDeletePath?storageDefinitive:null)?.get(resp.statusCode):null;
-   const playbackConflict=method==='POST'&&path===cinematicPlaybackPath&&resp.statusCode===409;
+   const playbackConflict=method==='POST'&&[cinematicPlaybackPath,fileUpdatePds].includes(path)&&resp.statusCode===409;
    if((resp.statusCode!==200&&!denial&&!playbackConflict)||!/^application\/json(?:\s*;|$)/i.test(String(resp.headers['content-type']??''))){resp.destroy();fail();return;}
    let len=0;const chunks=[];
    resp.on('data',part=>{len+=part.length;if(len>65536){req.destroy();fail();}else chunks.push(part);});
@@ -41,7 +42,7 @@ export function requestLocalJson({port,path,method,body,deadline,signal}){
    resp.on('end',()=>{try{
     const body=JSON.parse(new TextDecoder('utf-8',{fatal:true}).decode(Buffer.concat(chunks)));
     if(playbackConflict){
-     if(exact(body,['error'])&&body.error===playbackConflictCode)reject(new PlaybackRevisionConflict(playbackConflictCode));
+     if(exact(body,['error'])&&body.error===(path===fileUpdatePds?'FILE_UPDATE_REVISION_CONFLICT':playbackConflictCode))reject(new PlaybackRevisionConflict(body.error));
      else fail();
     }else if(!denial)resolve(body);
     else if(exact(body,['error'])&&denial.has(body.error))reject(new DeleteDefinitelyRejected(body.error));
@@ -86,6 +87,17 @@ export function localPorts({transport=requestLocalJson,singleTarget=false}={}){
    if(!exact(claim,['officialRequestId','taskId','projectId','payloadSha256','claimStamp'])||claim.projectId!=='binari'||
       !Number.isSafeInteger(claim.claimStamp)||claim.claimStamp<1)throw Error('CINEMATIC_PLAYBACK_PORT_CLAIM');
    return await transport({port:8030,path:cinematicPlaybackPath,method:'POST',body:{claim},deadline:40_000});
+  },
+  async fileUpdateReady(signal){
+   try{
+    const data=await transport({port:8030,path:fileUpdatePds,method:'GET',deadline:5000,signal});
+    return exact(data,['enabled','schemaVersion'])&&data.enabled===true&&data.schemaVersion==='workflow.file-update.v1';
+   }catch{return false;}
+  },
+  async updateExactMetadata(claim){
+   if(!exact(claim,['officialRequestId','taskId','projectId','payloadSha256','claimStamp'])||claim.projectId!=='binari'||
+      !Number.isSafeInteger(claim.claimStamp)||claim.claimStamp<1)throw Error('FILE_UPDATE_PORT_CLAIM');
+   return await transport({port:8030,path:fileUpdatePds,method:'POST',body:{claim},deadline:40_000});
   },
   async archiveCapability(operation,signal){
    if(!Object.hasOwn(archiveRoutes,operation))return false;

@@ -1,3 +1,4 @@
+import {fileUpdateType} from './file-update-envelope.mjs';
 import {fileDeleteTaskKey,fileDeleteType,propDeleteRoot,npcDeleteRoot,backgroundDeleteRoot,cinematicDeleteRoot,mapDeleteRoot,assemblyDeleteRoot} from './file-delete-envelope.mjs';
 import {nextWorkflowTaskFromPath,fileDeleteTargetRootFromPath} from './workflow-ready.mjs';
 import {conceptDelete,probeDeleteDatabase,runDeleteFromPath} from './worker.mjs';
@@ -5,7 +6,7 @@ import {npcDelete,audioDelete,audioDeleteKey,singleTargetDeleteSchema} from './f
 import {playbackType,manifestMutationScopes,runPlaybackFromPath} from './cinematic-playback-worker.mjs';
 
 const manifestTypes=new Set(manifestMutationScopes.map(s=>s.taskType));
-const mutationReady=(pds,operation,signal)=>operation===playbackType?pds.cinematicPlaybackReady?.(signal):pds.archiveCapability?.(operation,signal);
+const mutationReady=(pds,operation,signal)=>operation===fileUpdateType?pds.fileUpdateReady?.(signal):operation===playbackType?pds.cinematicPlaybackReady?.(signal):pds.archiveCapability?.(operation,signal);
 
 export function parseArgs(args){
  const singleTarget=args[0]==='--single-target';
