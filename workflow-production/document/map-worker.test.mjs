@@ -53,7 +53,7 @@ test('map collision edits accept old graphs, enforce bounded exact shape and pre
 });
 
 test('map.update publishes exact collider edits without running the model; validates result receipt',async t=>{
- const payload=update({...graph,colliders:[collider]}),f=fixture(t,'map.update',payload);
+ const payload=update({...graph,colliders:[collider,{...collider,id:"round",shape:"ellipse",rotation:51}]}),f=fixture(t,'map.update',payload);
  const resultRef='binari/cinematics/maps/'+mapId+'/3.json';
  const unexpected=()=>assert.fail('Map update must not run model or fetch images.');
  const run=await runMapFromPath({...f,render:unexpected,pds:{readMap:unexpected,readMapImage:unexpected,
