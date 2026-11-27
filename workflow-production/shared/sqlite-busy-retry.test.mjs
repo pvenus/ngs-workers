@@ -65,3 +65,21 @@ test('worker terminal transition clears an existing PDS save marker atomically',
   assert.equal(db.prepare('SELECT save_started_at FROM workflow_tasks').get().save_started_at,null);
  } finally {db.close();}
 });
+
+test('missing save response fails an unreserved attempt without stealing a PDS reservation', async()=>{
+ const {DatabaseSync}=await import('node:sqlite');
+ const {failUnreservedSave}=await import('./sqlite-busy-retry.mjs');
+ const db=new DatabaseSync(':memory:');
+ try {
+  db.exec(`CREATE TABLE workflow_tasks(task_id TEXT,official_request_id TEXT,worker_type TEXT,
+   status TEXT,updated_at INTEGER,result_ref TEXT,save_started_at INTEGER);
+   INSERT INTO workflow_tasks VALUES ('task','request','image','running',10,NULL,11),
+   ('other','request','image','running',10,NULL,NULL);`);
+  const claim={taskId:'task',officialRequestId:'request',claimStamp:10,workerType:'image'};
+  assert.equal(failUnreservedSave(db,claim),false);
+  assert.equal(failUnreservedSave(db,{...claim,taskId:'other',claimStamp:9}),false);
+  assert.equal(failUnreservedSave(db,{...claim,taskId:'other'}),true);
+  assert.equal(db.prepare("SELECT status FROM workflow_tasks WHERE task_id='task'").get().status,'running');
+  assert.equal(db.prepare("SELECT status FROM workflow_tasks WHERE task_id='other'").get().status,'failed');
+ } finally {db.close();}
+});

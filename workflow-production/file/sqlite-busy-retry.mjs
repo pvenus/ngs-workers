@@ -32,3 +32,13 @@ export async function retrySqliteBusy(write,taskId,{sleep=delay,log=console.erro
  */
 export const saveReservationClearSql=db=>db.prepare('PRAGMA table_info(workflow_tasks)').all()
  .some(column=>column.name==='save_started_at')?',save_started_at=NULL':'';
+
+/** A transport failed before PDS claimed saving: settle only the still exact,
+ * unreserved attempt. A live or abandoned reservation is owned by PDS. */
+export function failUnreservedSave(db,{taskId,officialRequestId,claimStamp,workerType}){
+ if(!saveReservationClearSql(db))return false;
+ return db.prepare(`UPDATE workflow_tasks SET status='failed',updated_at=?
+ WHERE task_id=? AND official_request_id=? AND worker_type=? AND updated_at=?
+ AND status='running' AND result_ref IS NULL AND save_started_at IS NULL`)
+ .run(Math.max(Date.now(),claimStamp+1),taskId,officialRequestId,workerType,claimStamp).changes===1;
+}

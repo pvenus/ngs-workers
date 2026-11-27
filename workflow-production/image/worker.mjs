@@ -1,4 +1,4 @@
-import {retrySqliteBusy,saveReservationClearSql} from './sqlite-busy-retry.mjs';
+import {retrySqliteBusy,saveReservationClearSql,failUnreservedSave} from './sqlite-busy-retry.mjs';
 import {planningFolderDiagnostic} from './planning-folders.mjs';
 import {hasPortraitReadOwner,finishPortraitRead} from './portrait-read-owner.mjs';
 /** One exact document task. Storage and rendering are supplied by trusted ports. */
@@ -313,7 +313,7 @@ async function runSelected({db,taskId,officialRequestId,pds,operation=PRESET,ren
    }
    const response=image?await pds.publishPortrait(command,selected.stamp,basis,signal):
     await pds.publishRepresentative(command,selected.stamp,basis);
-   if(!exact(response,['ok'])||response.ok!==true){stage='verify_publish_ack';return {...unresolved,...diagnostics()};}
+   if(!exact(response,['ok'])||response.ok!==true){stage='verify_publish_ack';if(image)throw Error('WORKFLOW_PORTRAIT_INVALID_SAVE_ACK');return {...unresolved,...diagnostics()};}
   }
   stage='record_completion';await retrySqliteBusy(()=>finish(db,selected,resultRef),taskId);phase('completed');
   return {state:'completed',taskId,resultRef};
@@ -329,6 +329,13 @@ async function runSelected({db,taskId,officialRequestId,pds,operation=PRESET,ren
    }catch(transitionError){
     failureTransition=databaseDiagnostic(transitionError)??'TRANSITION_ERROR_UNCLASSIFIED';
    }
+  }
+  if(image&&publishStarted&&stage!=='record_completion'){
+   try{
+    if(await settleFailure(()=>failUnreservedSave(db,{...readClaim,workerType:'image'}))){
+     phase('failed');return {state:'failed',taskId,code:'WORKFLOW_PORTRAIT_SAVE_NOT_CONFIRMED',...diagnostics(error)};
+    }
+   }catch{/* PDS expiry or operational diagnostics own unresolved database failures. */}
   }
   const fields=diagnostics(error);
   return {...unresolved,...fields,...(failureTransition?{diagnostic:{...fields.diagnostic,failureTransition}}:{})};
