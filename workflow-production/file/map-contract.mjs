@@ -42,6 +42,12 @@ export const validDecorationDesign=v=>mapFields(v,['mode','notes','candidates'])
  Array.isArray(v.candidates)&&(v.mode==='none'?v.candidates.length===0:1<=v.candidates.length&&v.candidates.length<=12)&&
  v.candidates.every(c=>mapFields(c,['prop','visibility'])&&mapPropPin(c.prop)&&visibility(c.visibility))&&
  new Set(v.candidates.map(c=>c.prop.propId)).size===v.candidates.length;
+const baseRegionFields=['id','name','description','backgroundId','imageSha256'];
+export const validMapPerspective=v=>v===null||(mapFields(v,['near','far'])&&
+ ['near','far'].every(k=>mapFields(v[k],['point','actorHeight','viewWidth'])&&mapPoint(v[k].point)&&
+ Number.isInteger(v[k].actorHeight)&&v[k].actorHeight>=10&&v[k].actorHeight<=650&&
+ Number.isInteger(v[k].viewWidth)&&v[k].viewWidth>=200&&v[k].viewWidth<=1000)&&
+ (v.near.point.x-v.far.point.x)**2+(v.near.point.y-v.far.point.y)**2>=100);
 export const mapBackgroundIds=graph=>[...new Set(graph.regions.map(r=>r.backgroundId).filter(Boolean))];
 export function validMapGraph(v,{partial=false}={}){
  const fields=['title','startRegionId','regions','connections'];
@@ -54,7 +60,7 @@ export function validMapGraph(v,{partial=false}={}){
  }
  const withColliders=v!==null&&typeof v==='object'&&Object.hasOwn(v,'colliders');
  if(!mapFields(v,withColliders?[...fields,'colliders']:fields)||!mapText(v.title,100)||!Array.isArray(v.regions)||
-    v.regions.length<1||v.regions.length>24||!v.regions.every(r=>mapFields(r,['id','name','description','backgroundId','imageSha256'])&&
+    v.regions.length<1||v.regions.length>24||!v.regions.every(r=>(mapFields(r,baseRegionFields)||(!partial&&mapFields(r,[...baseRegionFields,'perspective'])&&validMapPerspective(r.perspective)))&&
       regionId(r.id)&&mapText(r.name,100)&&mapText(r.description,1000)&&backgroundId(r.backgroundId)&&typeof r.imageSha256==='string'&&/^[a-f0-9]{64}$/.test(r.imageSha256)))return false;
  const ids=new Set(v.regions.map(r=>r.id));
  if(Object.hasOwn(v,'decorations')&&!validDecorations(v.decorations,ids))return false;
