@@ -148,7 +148,8 @@ function finish(db,selected,resultRef){
  const {row,stamp,command}=selected;
  db.exec('BEGIN IMMEDIATE');
  try{
-  const changed=db.prepare(`UPDATE workflow_tasks SET status='completed',updated_at=?,result_ref=?
+  const clearSaving=db.prepare('PRAGMA table_info(workflow_tasks)').all().some(c=>c.name==='save_started_at')?',save_started_at=NULL':'';
+  const changed=db.prepare(`UPDATE workflow_tasks SET status='completed',updated_at=?,result_ref=?${clearSaving}
      WHERE task_id=? AND official_request_id=? AND status='running' AND worker_type='document'
        AND task_type=? AND task_key=? AND task_input=? AND updated_at=?
        AND result_ref IS NULL AND depends_on_task_id IS ?
