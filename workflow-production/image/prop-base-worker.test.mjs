@@ -40,7 +40,7 @@ function fixture(t,operation='prop.generate',mode='valid'){
  const officialRequestId='request.official.'+sha(operation),schemaVersion='ngs.'+operation.replace('.','-')+'.v1';
  const reference=mode.startsWith('reference')?{propId:'original-prop',revision:1,sha256:'c'.repeat(64)}:null;
  const payload={schemaVersion,projectId:'binari',propId:'12.candle',designContextSha256:contextSha256,
-  intent:'raw request should not be model input',...(reference?{reference}:{}),...(operation==='prop.regenerate'?{source:{revision:3,sha256:'a'.repeat(64)}}:{})};
+  intent:'raw request should not be model input',...(mode==='spirit'?{presentationProfile:'spirit-v1'}:{}),...(reference?{reference}:{}),...(operation==='prop.regenerate'?{source:{revision:3,sha256:'a'.repeat(64)}}:{})};
  const payloadSha256=sha(canonical(payload));
  const artifact={schemaVersion:'ngs.prop-design-spec.v1',propId:payload.propId,designContextSha256:contextSha256,
   title:'촛불',appearancePrompt:'exact approved game prop, clear design',motion:'still',motionPrompt:null,
@@ -177,4 +177,15 @@ test('lost save response marks failed and the normal retry renders and saves aga
  assert.equal((await runPropBaseFromPath(f.options)).state,'completed');
  assert.equal(f.calls.filter(c=>c[0]==='render').length,2);
  assert.equal(f.state().retry_count,1);
+});
+
+test('official spirit profile reaches the isolated base image renderer',async t=>{
+ for(const type of ['prop.generate','prop.regenerate']){
+  const f=fixture(t,type,'spirit');
+  assert.equal((await imageTick(f.options)).state,'completed');
+  const q=f.calls.find(c=>c[0]==='render')[1];
+  assert.equal(q.presentationProfile,'spirit-v1');
+  assert.equal(q.background,'green-screen.v1');
+  assert.equal(q.intent,f.artifact.appearancePrompt);
+ }
 });

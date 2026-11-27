@@ -34,7 +34,7 @@ export function expectedInput(payload,operation){
  const spec=propDesignOperations[operation],wire=spec.validate(payload,projectId);
  requirePropDesign(wire===canonical(payload));
  return {propId:payload.propId,designContextSha256:payload.designContextSha256,intent:payload.intent,
-  motion:payload.motion??'still',...(spec.requestType===propRegenerateType?{source:payload.source}:{})};
+  motion:payload.motion??'still',...(payload.presentationProfile?{presentationProfile:payload.presentationProfile}:{}),...(spec.requestType===propRegenerateType?{source:payload.source}:{})};
 }
 export function verifiedDesignInput(doc,input){
  const need=(ok)=>requirePropDesign(ok,'PROP_DESIGN_CONTEXT_INVALID');
@@ -60,7 +60,7 @@ export function verifiedDesignInput(doc,input){
   canonical([...md.matchAll(/^## (.+)$/gm)].map(m=>m[1]))===canonical(requiredHeadings));
  need(sha(canonical(ctx.sources.map(s=>[s.role,s.categoryId,s.sha256])))===ctx.contextSha256);
  // Old artifact is a server-side comparator only, never prompt/file authority.
- return {propId:input.propId,intent:input.intent,motion:input.motion,designContextSha256:ctx.contextSha256,sources:ctx.sources};
+ return {propId:input.propId,intent:input.intent,motion:input.motion,...(input.presentationProfile?{presentationProfile:input.presentationProfile}:{}),designContextSha256:ctx.contextSha256,sources:ctx.sources};
 }
 const ints=(n,lo,hi)=>Number.isSafeInteger(n)&&n>=lo&&n<=hi;
 const boxKeys=['xPermille','yPermille','widthPermille','heightPermille'];

@@ -83,13 +83,15 @@ export function createPropImageRenderer(config){
  return async (input,{signal}={})=>{
   const green=input!=null&&Object.hasOwn(input,'background');
   const hasReference=input!=null&&Object.hasOwn(input,'reference');
+  const hasProfile=input!=null&&Object.hasOwn(input,'presentationProfile');
   const ref=input?.reference;
-  if(!exact(input,['projectId','propId','state','lane','intent','sources','contextSha256',...(green?['background']:[]),...(hasReference?['reference']:[])])||
+  if(!exact(input,['projectId','propId','state','lane','intent','sources','contextSha256',...(green?['background']:[]),...(hasReference?['reference']:[]),...(hasProfile?['presentationProfile']:[])])||
+     (hasProfile&&(!green||input.presentationProfile!=='spirit-v1'))||
      (hasReference&&(!green||!exact(ref,['assetId','sha256','base64'])||
       typeof ref.sha256!=='string'||!/^[a-f0-9]{64}$/u.test(ref.sha256)||ref.assetId!==ref.sha256+'.png'||
       typeof ref.base64!=='string'||!ref.base64.length||ref.base64.length>Math.ceil(8*1024*1024/3)*4))||
      (green&&(input.background!=='green-screen.v1'||input.state!=='base'||input.lane!=='detail')))throw fail('PROP_IMAGE_INPUT_INVALID');
-  const {sources,contextSha256,background,reference,...request}=input;
+  const {sources,contextSha256,background,reference,presentationProfile,...request}=input;
   preparePropImageInput({...request,schemaVersion:propImageRequestSchema,designContextSha256:contextSha256},
    {schemaVersion:propDesignContextSchema,projectId:input.projectId,sources,contextSha256},
    {formalBase:input.state==='base'&&input.lane==='detail'});

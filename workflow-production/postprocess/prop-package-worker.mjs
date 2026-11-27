@@ -3,7 +3,7 @@ import {DatabaseSync} from 'node:sqlite';
 import {canonical,sha} from './vendor/planner-f24d23a/envelope.mjs';
 import {assertDatabasePath,protectSchema,workflowTaskEligibleSql,workflowTaskRetrySetSql,markWorkflowTaskFailed} from './workflow-ready.mjs';
 import {exactProp,propValidator,propGenerateType,propRegenerateType,propAnimationType} from './vendor/prop-composite/prop-generate-envelope.mjs';
-import {buildPropGeneratePlan,checkPropPublishRows,exactPropTask,propKeys} from './vendor/prop-composite/prop-generate-plan.mjs';
+import {buildPropGeneratePlan,checkPropPublishRows,exactPropTask,propCompletionLimit,propKeys} from './vendor/prop-composite/prop-generate-plan.mjs';
 import {parsePropPackage,propPackageReceipt} from './vendor/prop-composite/prop-package-contract.mjs';
 
 const types=[propGenerateType,propRegenerateType];
@@ -28,7 +28,7 @@ function get(db,officialRequestId,taskId,{stamp,appendEnabled=false}={}){
  const tasks=buildPropGeneratePlan(run),single=tasks.at(-1);
  check(root.schema_version===payload.schemaVersion&&propValidator[root.request_type](payload,root.project_id)===root.payload&&
    sha(root.payload)===root.payload_sha256&&single.key===propKeys.publish&&exactPropTask(pick,single));
- const rows=db.prepare('SELECT * FROM workflow_tasks WHERE official_request_id=? ORDER BY task_key LIMIT 6').all(officialRequestId);
+ const rows=db.prepare('SELECT * FROM workflow_tasks WHERE official_request_id=? ORDER BY task_key LIMIT '+propCompletionLimit).all(officialRequestId);
  const refs=checkPropPublishRows(run,rows.map(row=>row.task_id===taskId&&stamp===undefined?
   {...row,status:'running',updated_at:Math.max(1,row.updated_at)}:row));
  if(!refs)return null;
@@ -49,8 +49,10 @@ export function nextPropPackageFromPath(dbPath,{appendEnabled=false}={}){
         (SELECT count(*) FROM workflow_tasks w WHERE w.official_request_id=t.official_request_id
          AND w.task_key IN (?,?,?) AND w.status='completed' AND w.result_ref IS NOT NULL)=3 ELSE
         (SELECT count(*) FROM workflow_tasks w WHERE w.official_request_id=t.official_request_id
-         AND w.task_key IN (?,?,?,?) AND w.status='completed' AND w.result_ref IS NOT NULL)=4 END
-    ORDER BY r.registered_at,r.official_request_id LIMIT 1`).get(...types,propKeys.publish,propKeys.motion,propKeys.animDetail,propKeys.animPixel,...parentKeys);
+         AND w.task_key IN (?,?,?,?) AND w.status='completed' AND w.result_ref IS NOT NULL)=4 AND (json_extract(r.payload,'$.presentationProfile') IS NULL OR EXISTS (
+         SELECT 1 FROM workflow_tasks w WHERE w.official_request_id=t.official_request_id AND w.task_key=?
+          AND w.status='completed' AND w.result_ref IS NOT NULL)) END
+    ORDER BY r.registered_at,r.official_request_id LIMIT 1`).get(...types,propKeys.publish,propKeys.motion,propKeys.animDetail,propKeys.animPixel,...parentKeys,propKeys.spirit);
   return row?{taskId:row.taskId,officialRequestId:row.officialRequestId}:null;
  }finally{db.close();}
 }
@@ -84,7 +86,7 @@ export async function runPropPackageFromPath({dbPath,officialRequestId,taskId,pd
    check(exactProp(prepared,['manifest']));
    const m=parsePropPackage(prepared.manifest);
    const source=found.payload.source;
-   const shaFor=k=>found.refs.find(x=>x.key===k).ref.slice(-64);
+   const shaFor=k=>found.refs.find(x=>x.key===k)?.ref.slice(-64);
    check(m.officialRequestId===officialRequestId&&m.requestSha256===claim.payloadSha256&&
     m.propId===found.payload.propId&&m.revision===(source?source.revision+1:1)&&m.parentSha256===(source?.sha256??null));
    if(found.root.request_type===propAnimationType){
@@ -93,7 +95,8 @@ export async function runPropPackageFromPath({dbPath,officialRequestId,taskId,pd
      clip.media.detail.sha256===shaFor(propKeys.animDetail)&&clip.media.pixel.sha256===shaFor(propKeys.animPixel));
    }else{
     check(m.designContextSha256===found.payload.designContextSha256&&m.animations.length===0&&
-     m.media.detail.sha256===shaFor(propKeys.detail)&&m.media.pixel.sha256===shaFor(propKeys.pixel));
+     m.media.detail.sha256===shaFor(propKeys.detail)&&m.media.pixel.sha256===shaFor(propKeys.pixel)&&
+     m.media.spirit?.sha256===shaFor(propKeys.spirit));
    }
    const expected=await propPackageReceipt(m);
    signal?.throwIfAborted();tx(db,current);

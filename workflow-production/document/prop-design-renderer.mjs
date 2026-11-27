@@ -14,7 +14,7 @@ const instructions=[
 
 export function createPropDesignRenderer({codexPath=REPRESENTATIVE_CODEX_PATH,timeoutMs,execute=executeTypedCodexDocument}={}){
  const render=async (data,{signal}={})=>execute({codexPath,timeoutMs,signal,
-  prompt:instructions+'\n\n'+JSON.stringify(data)+'\n',outputSchema:propDesignOutputSchema(data.motion)});
+  prompt:instructions+(data.presentationProfile==='spirit-v1'?'\nFor spirit-v1 use cinematic material rendering, directional highlights within the silhouette, deliberate shadow shapes and clear physical detail. Keep the single isolated prop without a scene, glow outside its silhouette or baked shadows.':'')+'\n\n'+JSON.stringify(data)+'\n',outputSchema:propDesignOutputSchema(data.motion)});
  render.ready=()=>{
   try{accessSync(codexPath,constants.X_OK);return true;}catch{return false;}
  };

@@ -128,7 +128,7 @@ export function propBaseRenderInput(packet,selected){
   'WORKFLOW_PROP_BASE_DESIGN_INVALID');
  const ctx=validatePropDesign(packet.context,{projectId,designContextSha256:i.designContextSha256});
  return {projectId,propId:i.propId,state:'base',lane:'detail',background:'green-screen.v1',intent:a.appearancePrompt,sources:ctx.sources,contextSha256:ctx.contextSha256,
-  ...(referenceImage?{reference:referenceImage}:{})};
+  ...(referenceImage?{reference:referenceImage}:{}),...(i.presentationProfile?{presentationProfile:i.presentationProfile}:{})};
 }
 function mediaArtifact(buffer){
  need(Buffer.isBuffer(buffer)&&buffer.length>=57&&buffer.length<=16*1024*1024&&buffer.subarray(0,8).equals(signature)&&

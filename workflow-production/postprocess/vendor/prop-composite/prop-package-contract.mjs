@@ -28,10 +28,10 @@ async function sha(bytes){
  return Array.from(digest,b=>b.toString(16).padStart(2,'0')).join('');
 }
 
-function parseMedia(m,role,motion){
+function parseMedia(m,role,motion,min=12){
  const max=role==='detail'?2048:512;
  insist(keys(m,['assetId','sha256','bytes','width','height','mediaType','frameDurationsMs'])&&hex(m.sha256)&&
-  m.assetId===m.sha256+'.png'&&ints(m.bytes,57,propPackageMediaLimit)&&ints(m.width,12,max)&&ints(m.height,12,max)&&
+  m.assetId===m.sha256+'.png'&&ints(m.bytes,57,propPackageMediaLimit)&&ints(m.width,min,max)&&ints(m.height,min,max)&&
   Array.isArray(m.frameDurationsMs),'PROP_PACKAGE_MEDIA');
  const d=m.frameDurationsMs;
  if(motion==='still')insist(m.mediaType==='image/png'&&d.length===0,'PROP_PACKAGE_MOTION_MISMATCH');
@@ -49,14 +49,19 @@ function rect(v,action,m){
  return {action,x,y,width,height};
 }
 
-function pair(value,motion){
- insist(keys(value,['detail','pixel']),'PROP_PACKAGE_MEDIA');
- const detail=parseMedia(value.detail,'detail',motion),pixel=parseMedia(value.pixel,'pixel',motion);
+function pair(value,motion,{allowSpirit=false,scaled=false}={}){
+ const spirit=allowSpirit&&Object.hasOwn(value??{},'spirit');
+ insist(keys(value,['detail','pixel',...(spirit?['spirit']:[])]),'PROP_PACKAGE_MEDIA');
+ const detail=parseMedia(value.detail,'detail',motion),pixel=parseMedia(value.pixel,'pixel',motion,spirit||scaled?2:12);
  insist(pixel.width<=detail.width&&pixel.height<=detail.height&&pixel.width*pixel.height<detail.width*detail.height&&
   Math.abs(pixel.width*detail.height-pixel.height*detail.width)<=Math.max(detail.width,detail.height),'PROP_PACKAGE_PIXEL_SCALE');
  insist(pixel.frameDurationsMs.length===detail.frameDurationsMs.length&&
   pixel.frameDurationsMs.every((d,i)=>d===detail.frameDurationsMs[i]),'PROP_PACKAGE_MEDIA_SYNC');
- return {detail,pixel};
+ if(!spirit)return {detail,pixel};
+ const smooth=parseMedia(value.spirit,'spirit','still',2);
+ insist(smooth.width===pixel.width&&smooth.height===pixel.height&&
+  pixel.width===Math.round(detail.width/5)&&pixel.height===Math.round(detail.height/5),'PROP_PACKAGE_SPIRIT_SCALE');
+ return {detail,pixel,spirit:smooth};
 }
 export function parsePropPackage(v){
  insist(keys(v,['schemaVersion','projectId','propId','revision','officialRequestId','requestSha256','designContextSha256',
@@ -64,7 +69,7 @@ export function parsePropPackage(v){
   ints(v.revision,1,maxRevision)&&official(v.officialRequestId)&&hex(v.requestSha256)&&hex(v.designContextSha256)&&title(v.title)&&
   (v.revision===1?v.parentSha256===null:hex(v.parentSha256))&&Array.isArray(v.animations)&&v.animations.length<=1024,
   'PROP_PACKAGE_INVALID');
- const media=pair(v.media,'still');
+ const media=pair(v.media,'still',{allowSpirit:true});
  insist(keys(v.interaction,['pixelOpen','detailTrigger']),'PROP_PACKAGE_HOTSPOT');
  const pixelOpen=rect(v.interaction.pixelOpen,'open',media.pixel),detailTrigger=rect(v.interaction.detailTrigger,'activate',media.detail);
  if(v.revision===1)insist(v.animations.length<=1,'PROP_PACKAGE_INITIAL_ANIMATION');
@@ -75,7 +80,7 @@ export function parsePropPackage(v){
   if(v.revision===1)insist(a.id==='initial'&&a.officialRequestId===v.officialRequestId&&a.requestSha256===v.requestSha256,
    'PROP_PACKAGE_INITIAL_ANIMATION');
   ids.add(a.id);requests.add(a.officialRequestId);
-  const clip=pair(a.media,'subtle');
+  const clip=pair(a.media,'subtle',{scaled:Object.hasOwn(media,'spirit')});
   for(const lane of ['detail','pixel'])insist(clip[lane].width===media[lane].width&&clip[lane].height===media[lane].height,
    'PROP_PACKAGE_ANIMATION_GEOMETRY');
   return {id:a.id,title:a.title,officialRequestId:a.officialRequestId,requestSha256:a.requestSha256,media:clip};
@@ -242,7 +247,7 @@ async function verifyDecodedAlpha(parts,width,height){
  insist(on>0&&off>0,'PROP_PACKAGE_ALPHA_CONTENT');
 }
 export async function verifyPropMedia(input,descriptor){
- const media=parseMedia(descriptor,'detail',descriptor?.mediaType==='image/apng'?'subtle':'still');
+ const media=parseMedia(descriptor,'detail',descriptor?.mediaType==='image/apng'?'subtle':'still',2);
  insist(input instanceof Uint8Array&&input.length===media.bytes&&input.length<=propPackageMediaLimit&&
   await sha(input)===media.sha256,'PROP_PACKAGE_MEDIA_HASH');
  for(const image of pngFrames(input,media))await verifyDecodedAlpha(image,media.width,media.height);
@@ -260,7 +265,7 @@ export async function resolvePropPlayback({projectId='binari',puzzleBinding,read
  insist(binding.animationId===null||selected,'PROP_PACKAGE_ANIMATION_MISSING');
  const materialize=async pair=>{
   const result={};
-  for(const lane of ['detail','pixel']){
+  for(const lane of Object.keys(pair)){
    const descriptor=pair[lane];
    const expected={projectId,...pin,assetId:descriptor.assetId,assetSha256:descriptor.sha256,byteLimit:descriptor.bytes};
    const raw=await readAsset(expected);

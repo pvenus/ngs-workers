@@ -13,30 +13,30 @@ import {nextPropDerivationFromPath,runPropDerivationFromPath} from './prop-deriv
 
 const officialRequestId='request.official.'+'3'.repeat(64);
 const dig=i=>String(i).repeat(64);
-function make(t,{regenerate=false,motion='still'}={}){
+function make(t,{regenerate=false,motion='still',spirit=false}={}){
  const root=realpathSync(mkdtempSync(join(tmpdir(),'prop-publish-')));
  const dbPath=join(root,'plan.sqlite');writeFileSync(dbPath,'',{mode:0o600});
  const db=new DatabaseSync(dbPath);t.after(()=>{db.close();rmSync(root,{recursive:true,force:true});});
  db.exec(`CREATE TABLE workflow_runs(official_request_id,project_id,request_type,schema_version,payload,payload_sha256,registered_at,state,updated_at,reason);
-  CREATE TABLE workflow_tasks(task_id,official_request_id,task_key,task_type,worker_type,task_input,result_ref,updated_at,depends_on_task_id,status,retry_count);`);
+  CREATE TABLE workflow_tasks(task_id,official_request_id,task_key,task_type,worker_type,task_input,result_ref,updated_at,depends_on_task_id,status,retry_count,depends_on_task_id_2,depends_on_task_id_3);`);
  const type=regenerate?'prop.regenerate':'prop.generate';
  const payload={schemaVersion:regenerate?'ngs.prop-regenerate.v1':'ngs.prop-generate.v1',projectId:'binari',
-   propId:'test-bell',designContextSha256:dig(1),intent:'독립 프랍',motion,...(regenerate?{source:{revision:4,sha256:dig(9)}}:{})};
+   propId:'test-bell',designContextSha256:dig(1),intent:'독립 프랍',motion,...(spirit?{presentationProfile:'spirit-v1'}:{}),...(regenerate?{source:{revision:4,sha256:dig(9)}}:{})};
  const source=canonical(payload),requestSha256=sha(source);
  db.prepare("INSERT INTO workflow_runs VALUES(?,?,?,?,?,?,1,'planned',1,NULL)")
   .run(officialRequestId,'binari',type,payload.schemaVersion,source,requestSha256);
  const plan=buildPropGeneratePlan({officialRequestId,requestType:type,payload});
  const by=Object.fromEntries(plan.map(x=>[x.key,x]));
- const hashes={[propKeys.design]:dig(1),[propKeys.base]:dig(2),[propKeys.detail]:dig(3),[propKeys.pixel]:dig(4)};
+ const hashes={[propKeys.design]:dig(1),[propKeys.base]:dig(2),[propKeys.detail]:dig(3),[propKeys.pixel]:dig(4),[propKeys.spirit]:dig(5)};
  for(const x of plan){
   const ref=hashes[x.key]?propRef(x.key,hashes[x.key]):null;
-  db.prepare('INSERT INTO workflow_tasks VALUES (?,?,?,?,?,?,?,2,?,?,0)')
-   .run(x.id,officialRequestId,x.key,x.type,x.workerType,canonical(x.input),ref,x.dependsOn,ref?'completed':'pending');
+  db.prepare('INSERT INTO workflow_tasks VALUES (?,?,?,?,?,?,?,2,?,?,0,?,?)')
+   .run(x.id,officialRequestId,x.key,x.type,x.workerType,canonical(x.input),ref,x.dependsOn,ref?'completed':'pending',x.additionalDependencies?.[0]??null,x.additionalDependencies?.[1]??null);
  }
  const m=(hash,width)=>({assetId:hash+'.png',sha256:hash,width,height:width,bytes:80,mediaType:'image/png',frameDurationsMs:[]});
  const manifest={schemaVersion:'ngs.prop-package.v1',projectId:'binari',propId:payload.propId,
   revision:regenerate?5:1,parentSha256:regenerate?dig(9):null,officialRequestId,requestSha256,
-  designContextSha256:payload.designContextSha256,title:'종',media:{detail:m(dig(3),512),pixel:m(dig(4),256)},
+  designContextSha256:payload.designContextSha256,title:'종',media:{detail:m(dig(3),512),pixel:m(dig(4),spirit?102:256),...(spirit?{spirit:m(dig(5),102)}:{})},
   interaction:{pixelOpen:{action:'open',x:1,y:2,width:30,height:40},detailTrigger:null},animations:[]};
  const taskId=by[propKeys.publish].id;
  const state=()=>db.prepare('SELECT status,result_ref,retry_count FROM workflow_tasks WHERE task_id=?').get(taskId);
@@ -100,4 +100,21 @@ test('strict transport capability; exact binary/stdout upload wire and mutation 
  assert.equal(calls.at(-1).opts.signal,undefined);
  await pds.preparePropPublication(claim,{signal});assert.equal(calls.at(-1).path,packagePath+'/prepare');
  await pds.publishPropPackage(claim,{one:1});assert.deepEqual(calls.at(-1).opts.body,{claim,manifest:{one:1}});
+});
+
+test('Spirit package readiness and publish bind third static receipt at one-fifth canvas',async t=>{
+ for(const regenerate of [false,true]){
+  const f=make(t,{regenerate,spirit:true});
+  const row=f.by[propKeys.spirit].id;
+  f.db.prepare("UPDATE workflow_tasks SET status='pending' WHERE task_id=?").run(row);
+  assert.equal(nextPropPackageFromPath(f.dbPath),null);
+  f.db.prepare("UPDATE workflow_tasks SET status='completed' WHERE task_id=?").run(row);
+  assert.deepEqual(nextPropPackageFromPath(f.dbPath),{taskId:f.taskId,officialRequestId});
+  const resultRef=await propPackageReceipt(f.manifest);
+  let posted=0;
+  const pds={preparePropPublication:()=>({manifest:f.manifest}),
+   publishPropPackage(_claim,m){posted++;assert.deepEqual(m,f.manifest);return {ok:true,resultRef};}};
+  assert.equal((await f.run(pds)).state,'completed');
+  assert.equal(posted,1);
+ }
 });

@@ -313,3 +313,24 @@ finally:
  shutil.rmtree(root)
 `,program]);
  });
+
+test('Spirit keeps smooth transparent material detail while pixel stays quantized on the same one-fifth canvas',{skip:!hasPillow},async t=>{
+ const f=fixture(t,'prop.generate',{motion:'still',presentationProfile:'spirit-v1'});
+ const bytes=raw(80,64,0,'RGBA'),hash=sha(bytes),png={...descriptor(bytes,80,64),assetId:hash+'.png',frameDurationsMs:[]};
+ f.complete(propKeys.detail,hash);
+ const emitted=new Map();
+ const pds={readPropDerivation:b=>({source:b.source,media:png,canvas:canvas(16,13)}),
+  fetchPropDerivationAsset:()=>bytes,
+  stagePropDerivation(b,{media,bytes:output}){
+   emitted.set(b.key,{media,output});
+   return {ok:true,resultRef:propRef(b.key,media.sha256)};
+  }};
+ for(const key of [propKeys.spirit,propKeys.pixel]){
+  assert.equal((await f.run(key,pds)).state,'completed');
+  const {media,output}=emitted.get(key);
+  assert.deepEqual([media.width,media.height],[16,13]);
+  const smooth=execFileSync(py,['-c',
+   "import io,sys;from PIL import Image; print(any(0<a<255 for a in Image.open(io.BytesIO(sys.stdin.buffer.read())).getchannel('A').getdata()))"],{input:output}).toString().trim();
+  assert.equal(smooth,key===propKeys.spirit?'True':'False');
+ }
+});

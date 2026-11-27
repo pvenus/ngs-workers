@@ -2,7 +2,7 @@ import {canonical,sha} from './envelope.mjs';
 import {propGenerateType,propRegenerateType,propAnimationType,propTypes,propHash} from './prop-generate-envelope.mjs';
 
 export const propKeys=Object.freeze({
- design:'prop_design',base:'prop_base',motion:'prop_motion',detail:'prop_detail',pixel:'prop_pixel',animDetail:'prop_animation_detail',animPixel:'prop_animation_pixel',publish:'prop_pack_publish',
+ design:'prop_design',base:'prop_base',motion:'prop_motion',detail:'prop_detail',pixel:'prop_pixel',spirit:'prop_spirit',animDetail:'prop_animation_detail',animPixel:'prop_animation_pixel',publish:'prop_pack_publish',
 });
 // This exact declarative registry is consumed by Planner, not injected by requesters.
 // Stage capability is registered even where trusted execution ports are not yet wired.
@@ -14,6 +14,7 @@ export const propStageRegistry=Object.freeze({
  [propKeys.animPixel]:Object.freeze({type:'prop.generate.motion-pixel',workerType:'postprocess',output:'animation-pixel-rgba'}),
  [propKeys.detail]:Object.freeze({type:'prop.generate.detail',workerType:'postprocess',output:'detail-rgba'}),
  [propKeys.pixel]:Object.freeze({type:'prop.generate.pixel',workerType:'postprocess',output:'pixel-rgba'}),
+ [propKeys.spirit]:Object.freeze({type:'prop.generate.spirit',workerType:'postprocess',output:'spirit-rgba'}),
  [propKeys.publish]:Object.freeze({type:'prop.generate.publish',workerType:'postprocess',output:'package'}),
 });
 const official=/^request\.official\.[a-f0-9]{64}$/u;
@@ -32,7 +33,8 @@ export function buildPropGeneratePlan(run){
  if(run.requestType===propAnimationType)return buildAppendPlan(run);
  const id=key=>propTaskId(oid,key),motion=payload.motion==='subtle', mode=motion?'subtle':'still';
  const regenerate=run.requestType===propRegenerateType;
- const scope={propId:payload.propId,designContextSha256:payload.designContextSha256,...(regenerate?{source:payload.source}:{})};
+ const profile=payload.presentationProfile;
+ const scope={...(profile?{presentationProfile:profile}:{}),propId:payload.propId,designContextSha256:payload.designContextSha256,...(regenerate?{source:payload.source}:{})};
  const tasks=[];
  const task=(key,parent,input)=>{
   const {type,workerType}=propStageRegistry[key];
@@ -43,6 +45,7 @@ export function buildPropGeneratePlan(run){
   ...(run.requestType===propGenerateType&&payload.reference?{reference:payload.reference}:{})});
  task(propKeys.detail,propKeys.base,{designTaskId:id(propKeys.design),baseTaskId:id(propKeys.base),sourceTaskId:id(propKeys.base)});
  task(propKeys.pixel,propKeys.detail,{designTaskId:id(propKeys.design),detailTaskId:id(propKeys.detail)});
+ if(profile)task(propKeys.spirit,propKeys.detail,{designTaskId:id(propKeys.design),detailTaskId:id(propKeys.detail)});
  if(motion){
   task(propKeys.motion,propKeys.base,{designTaskId:id(propKeys.design),baseTaskId:id(propKeys.base)});
   task(propKeys.animDetail,propKeys.motion,{designTaskId:id(propKeys.design),baseTaskId:id(propKeys.base),sourceTaskId:id(propKeys.motion)});
@@ -52,6 +55,7 @@ export function buildPropGeneratePlan(run){
  // Canonical publishing must verify ALL predecessors and their bytes; the
  // scalar indexed parent does not authorize publication by itself.
  task(propKeys.publish,motion?propKeys.animPixel:propKeys.pixel,{dependsOnTaskIds:keys.map(id)});
+ if(profile)tasks.at(-1).additionalDependencies=[...(motion?[id(propKeys.pixel)]:[]),id(propKeys.spirit)];
  return tasks;
 }
 
@@ -74,9 +78,10 @@ function buildAppendPlan({officialRequestId:oid,requestType,payload}){
 
 export function exactPropTask(row,task){
  return row?.task_id===task.id&&row.task_key===task.key&&row.task_type===task.type&&
-  row.worker_type===task.workerType&&row.depends_on_task_id===task.dependsOn&&row.task_input===canonical(task.input);
+  row.worker_type===task.workerType&&row.depends_on_task_id===task.dependsOn&&row.task_input===canonical(task.input)&&
+  [2,3,4,5].every((n,i)=>(row['depends_on_task_id_'+n]??null)===(task.additionalDependencies?.[i]??null));
 }
-export const propCompletionLimit=9; // eight permitted tasks, plus one sentinel for extra-row rejection
+export const propCompletionLimit=10; // nine permitted tasks, plus one sentinel for extra-row rejection
 export function checkPropPublishRows(run,rows,{published=false}={}){
  const tasks=buildPropGeneratePlan(run);
  if(rows.length!==tasks.length)return null;

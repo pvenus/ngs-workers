@@ -191,7 +191,7 @@ def process(root,spec,matte,corridor=False):
         check(spec['renderProfile']==CANDLE_CHROMA_PROFILE and spec.get('kind')=='detail' and
               media is None and len(spec.get('frameDurationsMs',()))>=2,'PROP_DERIVATION_RENDER_PROFILE')
     if media is not None:
-        check(spec['kind']=='pixel')
+        check(spec['kind'] in ('pixel','spirit'))
         payload=(root/'source.png').read_bytes()
         check(len(payload)==media['bytes'] and hashlib.sha256(payload).hexdigest()==media['sha256'],
               'PROP_DERIVATION_INPUT_CHANGED')
@@ -205,7 +205,13 @@ def process(root,spec,matte,corridor=False):
                       and (not durations or image.info['duration']==durations[i]))
                 images.append(cleared(image.copy()))
         canvas=spec['canvas']
-        out=pixelize(images,(canvas['width'],canvas['height']))
+        size=(canvas['width'],canvas['height'])
+        if spec['kind']=='spirit':
+            check(not durations and len(images)==1,'PROP_DERIVATION_KIND')
+            check(size==tuple((n+2)//5 for n in images[0].size),'PROP_DERIVATION_KIND')
+            out=[cleared(images[0].resize(size,Image.Resampling.LANCZOS))]
+        else:
+            out=pixelize(images,size)
         check((root/'source.png').read_bytes()==payload,'PROP_DERIVATION_INPUT_CHANGED')
         return encode(out,durations)
     paths=[root/'raw'/f'frame-{i:08d}.png' for i in range(len(spec['frames']))]

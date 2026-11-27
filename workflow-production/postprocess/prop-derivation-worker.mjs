@@ -1,18 +1,18 @@
 /** Exact formal prop derivative execution. No filesystem authority or global scan. */
 import {DatabaseSync} from 'node:sqlite';
 import {canonical,sha} from './vendor/planner-f24d23a/envelope.mjs';
-import {exactProp,propValidator,propAnimationType,propTypes} from './vendor/prop-composite/prop-generate-envelope.mjs';
+import {exactProp,propValidator,propAnimationType,propTypes,spiritPresentationProfile} from './vendor/prop-composite/prop-generate-envelope.mjs';
 import {buildPropGeneratePlan,exactPropTask,isPropRef,propKeys,propRef} from './vendor/prop-composite/prop-generate-plan.mjs';
 import {propRenderDiagnostic} from './prop-derivation-provider.mjs';
 import {verifyPropMedia,propPackageMediaLimit} from './vendor/prop-composite/prop-package-contract.mjs';
 import {assertDatabasePath,protectSchema,workflowTaskEligibleSql,workflowTaskRetrySetSql,markWorkflowTaskFailed} from './workflow-ready.mjs';
 
 const roles={
- [propKeys.detail]:'detail',[propKeys.pixel]:'pixel',
+ [propKeys.detail]:'detail',[propKeys.pixel]:'pixel',[propKeys.spirit]:'spirit',
  [propKeys.animDetail]:'detail',[propKeys.animPixel]:'pixel',
 };
 const check=(x,reason='PROP_DERIVATION_BINDING')=>{if(!x)throw Error(reason);};
-const dimensions=(v,max)=>exactProp(v,['width','height'])&&['width','height'].every(k=>Number.isSafeInteger(v[k])&&v[k]>=12&&v[k]<=max);
+const dimensions=(v,max,min=12)=>exactProp(v,['width','height'])&&['width','height'].every(k=>Number.isSafeInteger(v[k])&&v[k]>=min&&v[k]<=max);
 const sign=Buffer.from('89504e470d0a1a0a','hex');
 const MAX_INPUT=40*1024*1024, MAX_PIXELS=30_000_000;
 const lane=k=>k===propKeys.animDetail||k===propKeys.animPixel;
@@ -50,13 +50,13 @@ function selected(db,taskId,officialRequestId,status,stamp){
   check(exactPropTask(geometry,required)&&isPropRef(required.key,geometry.result_ref));
  }
  return {row,task,target,parent,source,geometry,role:roles[target.key],animated:lane(target.key),
-  renderProfile:target.key===propKeys.animDetail?(payload.renderProfile??null):null};
+  presentationProfile:payload.presentationProfile??null,renderProfile:target.key===propKeys.animDetail?(payload.renderProfile??null):null};
 }
-function imageDescriptor(row,animated){
+function imageDescriptor(row,animated,min=12){
  check(exactProp(row,['assetId','sha256','bytes','width','height','mediaType','frameDurationsMs'])&&
        hex(row.sha256)&&row.assetId===row.sha256+'.png'&&row.mediaType===(animated?'image/apng':'image/png')&&
        Number.isSafeInteger(row.bytes)&&row.bytes>=57&&row.bytes<=propPackageMediaLimit&&
-       dimensions({width:row.width,height:row.height},2048),'PROP_DERIVATION_SOURCE_DESCRIPTOR');
+       dimensions({width:row.width,height:row.height},2048,min),'PROP_DERIVATION_SOURCE_DESCRIPTOR');
  const d=row.frameDurationsMs;
  check(Array.isArray(d)&&d.length<=(animated?96:0)&&(!animated||d.length>=2),'PROP_DERIVATION_SOURCE_DESCRIPTOR');
  return row;
@@ -80,26 +80,28 @@ function frozenRef(value,expected){
 }
 
 export async function preparePropDerivation(pds,binding,{signal}={}){
- const {role,animated,renderProfile}=binding;
+ const {role,animated,renderProfile,presentationProfile}=binding;
+ const reduced=role==='pixel'||role==='spirit';
+ const scaled=(!animated&&reduced&&presentationProfile===spiritPresentationProfile);
  const dto=await pds.readPropDerivation(binding,{signal});
  const mediaInput=!animated||role==='pixel';
  const geometryProof=animated?'geometry':null;
  check(exactProp(dto,['source',mediaInput?'media':'manifest','canvas',...(geometryProof?[geometryProof]:[]),
   ...(renderProfile?['renderProfile']:[])])&&(!renderProfile||dto.renderProfile===renderProfile),'PROP_DERIVATION_RENDER_PROFILE');
  const source=frozenRef(dto.source,binding.source);
- const limit=role==='pixel'?512:2048;
- check(dimensions(dto.canvas,limit),'PROP_DERIVATION_CANVAS');
+ const limit=reduced?512:2048;
+ check(dimensions(dto.canvas,limit,reduced&&(scaled||animated)?2:12),'PROP_DERIVATION_CANVAS');
  let geometry=null;
  if(animated){
   geometry=dto.geometry;
   if(binding.geometry){
    check(exactProp(geometry,['taskId','resultRef','media']));
    frozenRef({taskId:geometry.taskId,resultRef:geometry.resultRef},binding.geometry);
-   check(imageDescriptor(geometry.media,false).sha256===geometry.resultRef.slice(-64));
+   check(imageDescriptor(geometry.media,false,reduced?2:12).sha256===geometry.resultRef.slice(-64));
   }else{
    check(exactProp(geometry,['revision','sha256','media'])&&binding.package&&
      geometry.revision===binding.package.revision&&geometry.sha256===binding.package.sha256);
-   imageDescriptor(geometry.media,false);
+   imageDescriptor(geometry.media,false,reduced?2:12);
   }
   check(dto.canvas.width===geometry.media.width&&dto.canvas.height===geometry.media.height,'PROP_DERIVATION_CANVAS');
   // A matching digest alone does not bind caller-supplied dimensions: read
@@ -109,20 +111,22 @@ export async function preparePropDerivation(pds,binding,{signal}={}){
   await verifyPropMedia(fixed,geometry.media);
  }
  if(mediaInput){
-  const descriptor=role==='pixel'?imageDescriptor(dto.media,animated):dto.media;
+  const descriptor=reduced?imageDescriptor(dto.media,animated):dto.media;
   if(role==='detail')check(exactProp(descriptor,['sha256','bytes','width','height','mediaType'])&&descriptor.mediaType==='image/png'&&
     hex(descriptor.sha256)&&Number.isSafeInteger(descriptor.bytes)&&descriptor.bytes>=57&&descriptor.bytes<=propPackageMediaLimit&&
     dimensions({width:descriptor.width,height:descriptor.height},2048),'PROP_DERIVATION_SOURCE_DESCRIPTOR');
   check(descriptor.sha256===source.resultRef.slice(-64),'PROP_DERIVATION_SOURCE_REF');
-  const frameDurationsMs=timing(role==='pixel'?descriptor.frameDurationsMs:[],animated);
+  const frameDurationsMs=timing(reduced?descriptor.frameDurationsMs:[],animated);
   check(dto.canvas.width*dto.canvas.height*(frameDurationsMs.length||1)<=MAX_PIXELS,'PROP_DERIVATION_OUTPUT_BUDGET');
-  if(role==='pixel')check(dto.canvas.width<=descriptor.width&&dto.canvas.height<=descriptor.height&&
+  if(scaled)check(dto.canvas.width===Math.round(descriptor.width/5)&&dto.canvas.height===Math.round(descriptor.height/5),
+    'PROP_DERIVATION_PIXEL_SCALE');
+  else if(reduced)check(dto.canvas.width<=descriptor.width&&dto.canvas.height<=descriptor.height&&
     dto.canvas.width*dto.canvas.height<descriptor.width*descriptor.height&&
     Math.abs(dto.canvas.width*descriptor.height-dto.canvas.height*descriptor.width)<=Math.max(descriptor.width,descriptor.height),
     'PROP_DERIVATION_PIXEL_SCALE');
   else check(dto.canvas.width===descriptor.width&&dto.canvas.height===descriptor.height,'PROP_DERIVATION_CANVAS');
   const raw=assetBytes(await pds.fetchPropDerivationAsset(binding,descriptor,{signal}),descriptor);
-  if(role==='pixel')await verifyPropMedia(raw,descriptor);
+  if(reduced)await verifyPropMedia(raw,descriptor);
   return {source,geometry,canvas:dto.canvas,frameDurationsMs,media:descriptor,buffers:[raw]};
  }
  const manifest=dto.manifest;
@@ -194,7 +198,7 @@ export async function runPropDerivationFromPath({dbPath,officialRequestId,taskId
    const ref=r=>Object.freeze({taskId:r.task_id,resultRef:r.result_ref});
    return {x,binding:Object.freeze({claim:Object.freeze({officialRequestId,taskId,projectId:x.row.project_id,
     payloadSha256:x.row.payload_sha256,claimStamp:stamp}),propId:x.target.input.propId,key:x.target.key,
-    role:x.role,animated:x.animated,renderProfile:x.renderProfile,source:ref(x.source),geometry:x.geometry?ref(x.geometry):null,
+    role:x.role,animated:x.animated,renderProfile:x.renderProfile,presentationProfile:x.presentationProfile,source:ref(x.source),geometry:x.geometry?ref(x.geometry):null,
     package:x.target.input.source?Object.freeze({...x.target.input.source}):null})};
   });
   if(!attempt)return {state:'not_claimable',taskId};

@@ -235,9 +235,12 @@ def neutral_reference_prompt(data):
 def prop_image_prompt(data):
     green = type(data) is dict and "background" in data
     has_reference = type(data) is dict and "reference" in data
+    has_profile = type(data) is dict and "presentationProfile" in data
     if (type(data) is not dict or set(data) !=
             ({"projectId", "propId", "state", "lane", "intent", "sources", "contextSha256"} |
-             ({"background"} if green else set()) | ({"reference"} if has_reference else set())) or
+             ({"background"} if green else set()) | ({"reference"} if has_reference else set()) |
+             ({"presentationProfile"} if has_profile else set())) or
+            (has_profile and (not green or data["presentationProfile"] != "spirit-v1")) or
             (has_reference and not green) or
             (green and (data["background"], data["state"], data["lane"]) != ("green-screen.v1", "base", "detail")) or
             data["projectId"] != "binari" or data["lane"] not in ("detail", "pixel") or
@@ -277,6 +280,10 @@ def prop_image_prompt(data):
     finish = ("Crisp literal pixel clusters, small limited palette and no antialiasing or blur."
               if data["lane"] == "pixel" else
               "Detailed 2D illustration with clear shape hierarchy, no baked scene lighting.")
+    if has_profile:
+        finish = ("Cinematic prop rendering: controlled on-object directional lighting, deliberate shadow shapes, "
+                  "rich material texture and tonal depth while preserving the exact isolated silhouette. "
+                  "No cast shadow, halo, bloom, atmosphere or visual effects outside the object.")
     # Sources are visual data in a fixed precedence, not tools/files/permissions.
     subject = ("Render exactly one isolated game prop from the approved base appearance description, on a transparent background. "
                if data["state"] == "base" and data["lane"] == "detail"

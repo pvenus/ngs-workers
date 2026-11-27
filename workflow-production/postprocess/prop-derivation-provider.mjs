@@ -111,7 +111,7 @@ export async function renderPropInScratch(job,binding,{root,signal,execute}){
  const {source,canvas,buffers,frames,media,frameDurationsMs,renderProfile}=job;
  const spec={kind:binding.role,canvas,frameDurationsMs,sourceHash:source.resultRef.slice(-64),
   ...(renderProfile?{renderProfile}:{})};
- if(binding.role==='pixel'){
+ if(binding.role==='pixel'||binding.role==='spirit'){
   spec.media=media;
   await writeFile(join(root,'source.png'),buffers[0],{mode:0o600,flag:'wx'});
  }else{

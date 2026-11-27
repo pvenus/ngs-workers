@@ -24,7 +24,7 @@ function evidence(){
  return {schemaVersion:'ngs.prop-image-design.v1',projectId:'binari',sources,
   contextSha256:sha(canonical(sources.map(s=>[s.role,s.categoryId,s.sha256])))};
 }
-function fixture(t,{kind='generate',motion,parent=null,wireEdit=d=>d,status='pending',age=0,retry=0}={}){
+function fixture(t,{kind='generate',motion,presentationProfile,parent=null,wireEdit=d=>d,status='pending',age=0,retry=0}={}){
  const dir=realpathSync(mkdtempSync(join(tmpdir(),'prop-doc-test-'))),dbPath=join(dir,'planner.sqlite');
  const db=new DatabaseSync(dbPath);chmodSync(dbPath,0o600);
  db.exec(`CREATE TABLE workflow_runs(official_request_id TEXT PRIMARY KEY,state TEXT,reason TEXT,project_id TEXT,
@@ -34,7 +34,7 @@ function fixture(t,{kind='generate',motion,parent=null,wireEdit=d=>d,status='pen
  const context=evidence(),officialRequestId='request.official.'+'f'.repeat(64),taskId=propDesignTaskId(officialRequestId);
  const reqType='prop.'+kind,operation=reqType+'.design';
  const payload={schemaVersion:'ngs.prop-'+kind+'.v1',projectId:'binari',propId:'brass-lamp',intent:'검은 놋쇠 등잔 하나',
-  designContextSha256:context.contextSha256,...(motion?{motion}:{}),...(kind==='regenerate'?{source:{revision:7,sha256:'a'.repeat(64)}}:{})};
+  designContextSha256:context.contextSha256,...(motion?{motion}:{}),...(presentationProfile?{presentationProfile}:{}),...(kind==='regenerate'?{source:{revision:7,sha256:'a'.repeat(64)}}:{})};
  const input=expectedInput(payload,operation),wire=canonical(payload);
  db.prepare("INSERT INTO workflow_runs VALUES(?,'planned',NULL,'binari',?,?,?,?,1)").run(officialRequestId,reqType,payload.schemaVersion,wire,sha(wire));
  db.prepare("INSERT INTO workflow_tasks VALUES(?,?,?,?,'prop_design','document',?,NULL,?,?,?)")
@@ -172,4 +172,21 @@ for line in sys.stdin:
  assert.deepEqual(out,model);
  const cancelled=new AbortController();cancelled.abort();
  await assert.rejects(renderer({motion:'still'},{signal:cancelled.signal}),/CODEX_CANCELLED/);
+});
+
+test('official spirit design profile reaches artistic instruction but not immutable artifact schema',async t=>{
+ const f=fixture(t,{presentationProfile:'spirit-v1'});
+ const rendering=createPropDesignRenderer({execute:async ({prompt})=>{
+  assert.match(prompt,/cinematic material rendering/);
+  assert.match(prompt,/"presentationProfile":"spirit-v1"/);
+  return model;
+ }});
+ const pds={
+  async readPropDesign(){return {input:f.input,context:f.context};},
+  async publishPropDesign(_claim,artifact){
+   assert.equal(Object.hasOwn(artifact,'presentationProfile'),false);
+   return {ok:true,resultRef:propDesignResultRef(artifact)};
+  },
+ };
+ assert.equal((await runPropDesignFromPath({...f,pds,render:rendering})).state,'completed');
 });

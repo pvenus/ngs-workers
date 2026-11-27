@@ -6,14 +6,17 @@ export const exactProp=(value,keys)=>value!==null&&typeof value==='object'&&!Arr
  Object.keys(value).length===keys.length&&keys.every(k=>Object.hasOwn(value,k));
 export const propHash=v=>typeof v==='string'&&v.length===64&&/^[0-9a-f]{64}$/u.test(v);
 const slug=v=>typeof v==='string'&&v.length>=2&&v.length<=80&&v.trim()===v&&/^[a-z0-9]+(?:[-._][a-z0-9]+)*$/u.test(v);
+export const spiritPresentationProfile='spirit-v1';
+const presentation=v=>Object.hasOwn(v??{},'presentationProfile');
 const fields=['schemaVersion','projectId','propId','intent','designContextSha256'];
 const referenceFields=['propId','revision','sha256'];
 export const validPropGenerateReference=(reference,target)=>exactProp(reference,referenceFields)&&
  slug(reference.propId)&&reference.propId!==target&&sourcePin({revision:reference.revision,sha256:reference.sha256});
 export function validatePropGenerate(v,project){
  const motion=Object.hasOwn(v??{},'motion'),reference=Object.hasOwn(v??{},'reference');
- if(!exactProp(v,[...fields,...(motion?['motion']:[]),...(reference?['reference']:[])])||v.schemaVersion!==propGenerateSchema||
+ if(!exactProp(v,[...fields,...(motion?['motion']:[]),...(reference?['reference']:[]),...(presentation(v)?['presentationProfile']:[])])||v.schemaVersion!==propGenerateSchema||
     reference&&!validPropGenerateReference(v.reference,v.propId)||
+    presentation(v)&&v.presentationProfile!==spiritPresentationProfile||
     project!=='binari'||v.projectId!==project||!slug(v.propId)||!propHash(v.designContextSha256)||
     Object.hasOwn(v,'motion')&&!['still','subtle'].includes(v.motion)||typeof v.intent!=='string'||
     !v.intent.isWellFormed()||!v.intent.length||v.intent.trim()!==v.intent||Buffer.byteLength(v.intent)>4000||
@@ -23,7 +26,7 @@ export function validatePropGenerate(v,project){
 const generateProperties={
  schemaVersion:{const:propGenerateSchema},projectId:{const:'binari'},propId:{type:'string',minLength:2,maxLength:80,pattern:'^[a-z0-9]+(?:[-._][a-z0-9]+)*$'},
  intent:{type:'string',minLength:1,maxLength:4000},designContextSha256:{type:'string',pattern:'^[a-f0-9]{64}$'},
- motion:{enum:['still','subtle']},
+ motion:{enum:['still','subtle']},presentationProfile:{const:spiritPresentationProfile},
 };
 export const propGeneratePayloadSchema={type:'object',properties:{...generateProperties,
  reference:{type:'object',properties:{propId:generateProperties.propId,
@@ -48,8 +51,8 @@ function validateMutation(v,project,keys,schema){
     !slug(v.propId)||!sourcePin(v.source))throw Error(propGenerateInvalid);
 }
 export function validatePropRegenerate(v,project){
- validateMutation(v,project,Object.hasOwn(v??{},'motion')?[...regenerateFields,'motion']:regenerateFields,propRegenerateSchema);
- if(Object.hasOwn(v,'motion')&&!['still','subtle'].includes(v.motion)||!clean(v.intent,4000)||!propHash(v.designContextSha256))throw Error(propGenerateInvalid);
+ validateMutation(v,project,[...regenerateFields,...(Object.hasOwn(v??{},'motion')?['motion']:[]),...(presentation(v)?['presentationProfile']:[])],propRegenerateSchema);
+ if(presentation(v)&&v.presentationProfile!==spiritPresentationProfile||Object.hasOwn(v,'motion')&&!['still','subtle'].includes(v.motion)||!clean(v.intent,4000)||!propHash(v.designContextSha256))throw Error(propGenerateInvalid);
  return stable(v);
 }
 export function validatePropAnimation(v,project){
