@@ -2,6 +2,7 @@
 export const fileDeleteType='file.delete',fileDeleteSchema='ngs.file-delete.v1',fileDeleteTaskKey='file_delete';
 export const propDeleteRoot='canonical-files/binari/props';
 export const npcDeleteRoot='canonical-files/binari/npcs';
+export const mapDeleteRoot='canonical-files/binari/cinematics/maps';
 export const backgroundDeleteRoot='canonical-files/binari/cinematics/backgrounds';
 const background=/^[a-f0-9]{64}\.(?:png|json)$/u;
 const source=/^request\.official\.[a-f0-9]{64}$/u;
@@ -39,6 +40,10 @@ export function validateFileDelete(value,projectId){
  if(common&&t.root===cinematicDeleteRoot&&exact(p,['sourceSha256'])&&typeof p.sourceSha256==='string'&&
     p.sourceSha256.length===64&&sha.test(p.sourceSha256)&&cinematicDeleteTarget(t.path,t.kind,p.sourceSha256))
   expected={sourceSha256:p.sourceSha256};
+ if(common&&t.kind==='directory'&&t.root===mapDeleteRoot&&source.test(t.path)&&
+    exact(p,['revision','officialRequestId'])&&Number.isSafeInteger(p.revision)&&p.revision>=1&&
+    typeof p.officialRequestId==='string'&&source.test(p.officialRequestId))
+  expected={officialRequestId:p.officialRequestId,revision:p.revision};
  if(!expected)throw Error('NGS_FILE_DELETE_PAYLOAD_INVALID');
  return JSON.stringify({expected,projectId,schemaVersion:fileDeleteSchema,target:{kind:t.kind,path:t.path,root:t.root}});
 }

@@ -141,3 +141,9 @@ scope rules, and storage-owned backup/fencing behavior. The file worker does
 not interpret category titles, prompts or physical paths as deletion targets.
 
 The resident worker also applies `cinematic.playback.update` via the PDS timeline revision check and `cinematic.sequences.remove` / `prop.animation.remove` against the exact selected IDs. These change playback/index metadata only and do not claim an image or animation model. They use dedicated PDS mutation endpoints, not the filesystem delete endpoint.
+
+Published map deletion is one scoped `file.delete` / `file_delete` task per
+map. It requires PDS map readiness (`/v1/storage/delete-target/map`) and sends
+the exact claim and one map-directory target through the common storage delete
+port. PDS and Filex enforce the frozen latest map revision and publisher;
+this worker does not directly access map files or source backgrounds.

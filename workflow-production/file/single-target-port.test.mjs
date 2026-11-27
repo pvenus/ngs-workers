@@ -283,3 +283,39 @@ test('cinematic child deletes claim before source aliases and each uses the gene
  for(let i=0;i<5;i++)assert.equal((await pollOnce({...f,pds})).state,'completed');
  assert.deepEqual(posts,[legacy+'.mp4',legacy+'.json',seq,sourceJson,sourcePng]);
 });
+
+test('map delete claims no work before its dedicated capability, then posts one exact map folder',async t=>{
+ const f=audioSetup(t),root='canonical-files/binari/cinematics/maps';
+ const target={root,path:'request.official.'+'b'.repeat(64),kind:'directory'};
+ const expected={revision:2,officialRequestId:'request.official.'+'c'.repeat(64)};
+ const schemaVersion='ngs.file-delete.v1',type='file.delete',key='file_delete';
+ const payload=canonical({target,expected,projectId:'binari',schemaVersion}),payloadSha256=sha(payload);
+ const taskId='workflow.task.'+sha(canonical([f.officialRequestId,key]));
+ f.db.prepare("DELETE FROM workflow_tasks").run();
+ f.db.prepare("UPDATE workflow_runs SET request_type=?,schema_version=?,payload=?,payload_sha256=? WHERE official_request_id=?")
+  .run(type,schemaVersion,payload,payloadSha256,f.officialRequestId);
+ f.db.prepare("INSERT INTO workflow_tasks (task_id,official_request_id,task_key,task_type,worker_type,task_input,updated_at,status) VALUES (?,?,?,?, 'file',?,2,'pending')")
+  .run(taskId,f.officialRequestId,key,type,canonical({target,expected}));
+ const task=()=>f.db.prepare('SELECT * FROM workflow_tasks WHERE task_id=?').get(taskId);
+ let enabled=false,posts=0;
+ const pds=localPorts({singleTarget:true,transport:async({method,path,body})=>{
+  if(method==='GET'){
+   assert.equal(path,storageDeletePath+'/map');
+   return {enabled,schemaVersion:singleTargetDeleteSchema,roots:enabled?[root]:[]};
+  }
+  assert.equal(path,storageDeletePath);
+  assert.deepEqual(body,{target,claim:{officialRequestId:f.officialRequestId,projectId:'binari',payloadSha256,claimStamp:task().updated_at,taskId}});
+  posts++;
+  return {ok:true,operationId:taskId,targetAbsent:true,recoveryId:'a'.repeat(64)};
+ }});
+ assert.equal((await pollOnce({...f,pds})).state,'unavailable');
+ assert.equal(task().status,'pending');assert.equal(posts,0);
+ enabled=true;
+ f.db.prepare('UPDATE workflow_tasks SET task_input=? WHERE task_id=?').run(canonical({target,expected:{...expected,revision:3}}),taskId);
+ assert.equal((await pollOnce({...f,pds})).state,'blocked');
+ assert.equal(posts,0);
+ f.db.prepare('UPDATE workflow_tasks SET task_input=? WHERE task_id=?').run(canonical({target,expected}),taskId);
+ assert.equal((await pollOnce({...f,pds})).state,'completed');
+ assert.equal(task().status,'completed');assert.equal(posts,1);
+ assert.equal((await pollOnce({...f,pds})).state,'idle');
+});
