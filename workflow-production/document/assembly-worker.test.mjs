@@ -24,7 +24,10 @@ function fixture(t,operation,{wrongReceipt=false,wrongMap=false}={}){
  CREATE TABLE workflow_tasks(task_id TEXT PRIMARY KEY,official_request_id TEXT,task_input TEXT,task_type TEXT,
  task_key TEXT,worker_type TEXT,depends_on_task_id TEXT,result_ref TEXT,status TEXT,updated_at INTEGER,retry_count INTEGER)`);
  const generate=operation==='assembly.generate',assemblyId=generate?officialRequestId:existingId,revision=generate?1:3;
- const puzzle={id:'ritual-well-water',type:'binari.ritual-well-water-demo'},puzzles=[puzzle];
+ const puzzle={id:'ritual-well-water',type:'binari.ritual-well-water-demo',
+  layout:{altar:{regionId:'north',x:40,y:50},well:{regionId:'south',x:60,y:50}},
+  attachments:{bowl:{x:0,y:1},lid:{x:2,y:3}},
+  bindings:Object.fromEntries(['table','bowl','well','lid'].map(k=>[k,{propId:k,revision:1,sha256:'a'.repeat(64)}]))},puzzles=[puzzle];
  const payload=generate?{schemaVersion:'ngs.assembly-generate.v1',projectId:'binari',title:'조립',mapId,puzzleType:puzzle.type,intent:'의식을 준비한다.'}:
    {schemaVersion:'ngs.assembly-update.v1',projectId:'binari',assemblyId,expectedRevision:2,puzzles};
  const wire=canonical(payload),digest=hash(wire);
