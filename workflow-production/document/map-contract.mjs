@@ -29,11 +29,14 @@ export const mapPropPin=v=>mapFields(v,['propId','revision','sha256'])&&typeof v
  /^[a-z0-9]+(?:[-._][a-z0-9]+)*$/.test(v.propId)&&Number.isSafeInteger(v.revision)&&v.revision>=1&&
  v.revision<Number.MAX_SAFE_INTEGER&&typeof v.sha256==='string'&&/^[a-f0-9]{64}$/.test(v.sha256);
 const decorationFields=['id','regionId','prop','anchor','scale','visibility'];
+export const propZMin=-1000,propZMax=1000;
+export const validPropZOrder=v=>Number.isInteger(v)&&v>=propZMin&&v<=propZMax;
+export const validRoleZOrder=(v,roles)=>v!==null&&typeof v==='object'&&!Array.isArray(v)&&Object.keys(v).length>0&&Object.keys(v).every(k=>roles.includes(k)&&validPropZOrder(v[k]));
 export const mapDecorationRotation=row=>row.rotation??0;
 export const validDecorations=(v,ids)=>Array.isArray(v)&&v.length<=48&&new Set(v.map(x=>x?.id)).size===v.length&&v.every(r=>
- mapFields(r,[...decorationFields,...['rotation','flipX','flipY'].filter(k=>r&&Object.hasOwn(r,k))])&&
+ mapFields(r,[...decorationFields,...['rotation','flipX','flipY','zOrder'].filter(k=>r&&Object.hasOwn(r,k))])&&
  (!Object.hasOwn(r,'rotation')||(Number.isInteger(r.rotation)&&r.rotation>=0&&r.rotation<360))&&
- ['flipX','flipY'].every(k=>!Object.hasOwn(r,k)||typeof r[k]==='boolean')&&regionId(r.id)&&ids.has(r.regionId)&&mapPropPin(r.prop)&&
+ (!Object.hasOwn(r,'zOrder')||validPropZOrder(r.zOrder))&&['flipX','flipY'].every(k=>!Object.hasOwn(r,k)||typeof r[k]==='boolean')&&regionId(r.id)&&ids.has(r.regionId)&&mapPropPin(r.prop)&&
  mapPoint(r.anchor)&&Number.isInteger(r.scale)&&10<=r.scale&&r.scale<=300&&visibility(r.visibility));
 export const validDecorationDesign=v=>mapFields(v,['mode','notes','candidates'])&&['none','suggest'].includes(v.mode)&&note(v.notes)&&
  Array.isArray(v.candidates)&&(v.mode==='none'?v.candidates.length===0:1<=v.candidates.length&&v.candidates.length<=12)&&

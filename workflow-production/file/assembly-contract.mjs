@@ -1,4 +1,4 @@
-import {mapCanonical,mapFields,officialId} from './map-contract.mjs';
+import {mapCanonical,mapFields,officialId,validRoleZOrder,propZMin,propZMax} from './map-contract.mjs';
 export const assemblyTypes=['assembly.generate','assembly.update'];
 export const assemblySchemas=['ngs.assembly-generate.v1','ngs.assembly-update.v1','ngs.assembly-generate.v2','ngs.assembly-generate.v3','ngs.assembly-generate.v4'];
 export const spiritAssemblyKind='binari.ritual-spirit-manifestation';
@@ -66,19 +66,21 @@ export function validPuzzleDefinition(v){
  }
  return active.bowl==='altar-filled';
 }
-const optionalPuzzleFields=['scale','portalConditions','definition'];
+const optionalPuzzleFields=['scale','portalConditions','definition','zOrder'];
 export const portalStates=['altar-empty','carried-empty','carried-filled','altar-filled'];
 const validConditions=v=>Array.isArray(v)&&v.length<=16&&new Set(v.map(c=>c?.portalId)).size===v.length&&
  v.every(c=>mapFields(c,['portalId','propRole','requiredState'])&&region(c.portalId)&&c.propRole==='bowl'&&portalStates.includes(c.requiredState));
 const validScale=v=>mapFields(v,roles)&&roles.every(k=>int(v[k],10,300));
 const validWellPuzzle=p=>
  mapFields(p,[...puzzleFields,...optionalPuzzleFields.filter(k=>Object.hasOwn(p??{},k))])&&
+ (!Object.hasOwn(p,'zOrder')||validRoleZOrder(p.zOrder,roles))&&
  (!Object.hasOwn(p,'definition')||validPuzzleDefinition(p.definition))&&
  (!Object.hasOwn(p,'scale')||validScale(p.scale))&&(!Object.hasOwn(p,'portalConditions')||validConditions(p.portalConditions))&&ident(p.id)&&p.type===assemblyKind&&
  mapFields(p.layout,['altar','well'])&&station(p.layout.altar)&&station(p.layout.well)&&
  mapFields(p.attachments,['bowl','lid'])&&offset(p.attachments.bowl)&&offset(p.attachments.lid)&&
  mapFields(p.bindings,roles)&&roles.every(k=>pin(p.bindings[k]))&&new Set(roles.map(k=>p.bindings[k].propId)).size===4;
-const validSpiritPuzzle=p=>mapFields(p,Object.hasOwn(p??{},'scale')?[...puzzleFields,'scale']:puzzleFields)&&
+const validSpiritPuzzle=p=>mapFields(p,[...puzzleFields,...['scale','zOrder'].filter(k=>Object.hasOwn(p??{},k))])&&
+ (!Object.hasOwn(p,'zOrder')||validRoleZOrder(p.zOrder,['spirit']))&&
  ident(p.id)&&p.type===spiritAssemblyKind&&mapFields(p.layout,['spirit'])&&station(p.layout.spirit)&&
  mapFields(p.attachments,[])&&mapFields(p.bindings,['spirit'])&&pin(p.bindings.spirit)&&
  (!Object.hasOwn(p,'scale')||mapFields(p.scale,['spirit'])&&int(p.scale.spirit,10,300));
@@ -112,12 +114,13 @@ export const puzzleDefinitionSchema=obj({
   requires:{type:'array',maxItems:32,items:ruleRef}})},
  goal:ruleRef,solution:{type:'array',minItems:4,maxItems:4,items:actionSchema},
 });
+const zSchema=keys=>({...obj(Object.fromEntries(keys.map(k=>[k,integer(propZMin,propZMax)])),[]),minProperties:1});
 export const wellPuzzleSchema=obj({id:slug,type:{const:assemblyKind},layout:obj({altar:pt,well:pt}),attachments:obj({bowl:ofs,lid:ofs}),
  bindings:obj(Object.fromEntries(roles.map(k=>[k,pinSchema]))),scale:obj(Object.fromEntries(roles.map(k=>[k,integer(10,300)]))),
- definition:puzzleDefinitionSchema,portalConditions:{type:'array',maxItems:16,items:obj({portalId:string(1,32,'^[a-z][a-z0-9-]{0,31}$'),propRole:{const:'bowl'},
+ zOrder:zSchema(roles),definition:puzzleDefinitionSchema,portalConditions:{type:'array',maxItems:16,items:obj({portalId:string(1,32,'^[a-z][a-z0-9-]{0,31}$'),propRole:{const:'bowl'},
  requiredState:{enum:portalStates}})}},puzzleFields);
 export const spiritPuzzleSchema=obj({id:slug,type:{const:spiritAssemblyKind},layout:obj({spirit:pt}),attachments:obj({}),
- bindings:obj({spirit:pinSchema}),scale:obj({spirit:integer(10,300)})},puzzleFields);
+ bindings:obj({spirit:pinSchema}),scale:obj({spirit:integer(10,300)}),zOrder:zSchema(['spirit'])},puzzleFields);
 export const validAssemblyContent=v=>mapFields(v,['title','mapId','puzzles'])&&text(v.title,100)&&officialId(v.mapId)&&validPuzzles(v.puzzles);
 export const assemblyContentSchema=obj({title:string(1,100),mapId:oid,puzzles:{type:'array',minItems:0,maxItems:32,items:{oneOf:[wellPuzzleSchema,spiritPuzzleSchema]}}});
 const wellNoteSchema=obj({id:slug,type:{const:assemblyKind},intent:string(0,1000)});
