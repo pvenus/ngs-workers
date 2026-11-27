@@ -3,14 +3,18 @@ import {createHash} from 'node:crypto';
 import {readFile,access} from 'node:fs/promises';
 import {constants} from 'node:fs';
 import {assertDatabasePath,protectSchema,documentTaskEligibleSql,workflowTaskRetrySetSql,markWorkflowTaskFailed} from './workflow-ready.mjs';
-import {mapTypes,mapStage,mapRoot,mapGenerateDesignSchema,mapDocumentStages,mapCanonical,mapFields,validMapRequest,validMapGraph,applyMapCoordinates,mapPoint,backgroundId,mapBackgroundIds} from './map-contract.mjs';
+import {mapTypes,mapStage,mapRoot,mapStagesFor,mapGenerateStages,mapDecorationStage,mapCanonical,mapFields,validMapRequest,validMapGraph,applyMapCoordinates,mapPoint,backgroundId,mapBackgroundIds} from './map-contract.mjs';
 import {executeTypedCodexDocument,REPRESENTATIVE_CODEX_PATH} from './representative-renderer.mjs';
 const sha=x=>createHash('sha256').update(x).digest('hex');
 const integer={type:'integer',minimum:0,maximum:1000};
 const object=properties=>({type:'object',properties,required:Object.keys(properties),additionalProperties:false});
 const str={type:'string'};
 const rectOutput=object({x:integer,y:integer,width:{...integer,minimum:1},height:{...integer,minimum:1}});
+const decoration=object({id:str,regionId:str,prop:object({propId:str,revision:{type:'integer',minimum:1},sha256:str}),
+ anchor:object({x:integer,y:integer}),scale:{type:'integer',minimum:10,maximum:300},
+ visibility:{type:'string',enum:['both','pixel','cinematic']}});
 const stageRenderer={
+ decorations:{guide:'map-decorations.md',schema:object({decorations:{type:'array',maxItems:48,items:decoration}})},
  start:{guide:'map-start.md',schema:object({startRegionId:str,startPoint:object({x:integer,y:integer})})},
  portals:{guide:'map-coordinates.md',schema:object({coordinates:{type:'array',items:object({id:str,hit:rectOutput,spawn:object({x:integer,y:integer})})}})},
  collisions:{guide:'map-collisions.md',schema:object({colliders:{type:'array',maxItems:96,items:object({
@@ -71,10 +75,11 @@ async function mapImages(claim,pds,whole,regions,signal){
  return {imageBytes,images};
 }
 export async function runMapFromPath({dbPath,taskId,officialRequestId,operation,pds,render,signal}){
- const key=[mapStage,...mapDocumentStages].find(k=>taskId===workflowId(officialRequestId,k));
+ const availableStages=[...mapGenerateStages,mapDecorationStage];
+ const key=[mapStage,...availableStages].find(k=>taskId===workflowId(officialRequestId,k));
  if(!mapTypes.includes(operation)||!key||(key!==mapStage&&operation!==mapTypes[0]))throw Error('MAP_TASK_INVALID');
- const stageIndex=mapDocumentStages.indexOf(key),split=stageIndex!==-1;
- const predecessor=stageIndex>0?workflowId(officialRequestId,mapDocumentStages[stageIndex-1]):'';
+ const stageIndex=availableStages.indexOf(key),split=stageIndex!==-1;
+ const predecessor=stageIndex>0?workflowId(officialRequestId,availableStages[stageIndex-1]):'';
  assertDatabasePath(dbPath);
  if(signal?.aborted)return {state:'stopping'};
  const db=new DatabaseSync(dbPath);
@@ -90,7 +95,7 @@ export async function runMapFromPath({dbPath,taskId,officialRequestId,operation,
     AND r.project_id='binari' AND r.request_type=t.task_type AND r.state='planned' AND r.reason IS NULL AND ${documentTaskEligibleSql(db)}`).get(...scope);
    if(!row){db.exec('COMMIT');return {state:'not_claimable',taskId};}
    p=JSON.parse(row.payload);
-   if(!validMapRequest(p,operation)||split!==(p.schemaVersion===mapGenerateDesignSchema)||p.schemaVersion!==row.schema_version||mapCanonical(p)!==row.payload||row.task_input!==row.payload||sha(row.payload)!==row.payload_sha256)
+   if(!validMapRequest(p,operation)||!mapStagesFor(p).includes(key)||p.schemaVersion!==row.schema_version||mapCanonical(p)!==row.payload||row.task_input!==row.payload||sha(row.payload)!==row.payload_sha256)
     throw Error('MAP_TASK_BINDING_INVALID');
    const claimStamp=Math.max(Date.now(),row.updated_at+1,row.registered_at);
    if(!Number.isSafeInteger(claimStamp))throw Error('MAP_TASK_BINDING_INVALID');
@@ -109,11 +114,27 @@ export async function runMapFromPath({dbPath,taskId,officialRequestId,operation,
       notes:p.design.startNotes},signal,imageBytes);
      if(!mapFields(part,['startRegionId','startPoint'])||part.startRegionId!==chosen.id||!mapPoint(part.startPoint))throw Error('MAP_START_CONFIRMATION_INVALID');
     }else{
-     const start=split?stageValue(db,officialRequestId,mapDocumentStages[0]):{startRegionId:chosen.id};
+     const start=split?stageValue(db,officialRequestId,mapGenerateStages[0]):{startRegionId:chosen.id};
      if(start?.startRegionId!==chosen.id||(split&&(!mapFields(start,['startRegionId','startPoint'])||!mapPoint(start.startPoint))))
       throw Error('MAP_START_CONFIRMATION_INVALID');
-     if(stageIndex===2){
-      graph={...applyMapCoordinates(graph,stageValue(db,officialRequestId,mapDocumentStages[1])),startPoint:start.startPoint};
+     if(stageIndex===3){
+      const collisions=stageValue(db,officialRequestId,availableStages[2]);
+      if(!mapFields(collisions,['colliders'])||!Array.isArray(collisions.colliders)||
+         (p.design.collisionMode==='none'&&collisions.colliders.length!==0)||
+         !collisions.colliders.every(c=>mapFields(c,['id','regionId','rect','shape','rotation'])))throw Error('MAP_COLLIDERS_INVALID');
+      graph={...applyMapCoordinates(graph,stageValue(db,officialRequestId,availableStages[1])),
+       startPoint:start.startPoint,colliders:collisions.colliders};
+      if(!validMapGraph(graph))throw Error('MAP_COLLIDERS_INVALID');
+      const {notes,candidates}=p.decorationDesign;
+      const result=await runMapStage(render,{stage:'decorations',intent:p.intent,notes,candidates,
+       startRegionId:start.startRegionId,initialPoint:start.startPoint,regions:graph.regions,
+       connections:graph.connections,colliders:graph.colliders,images},signal,imageBytes);
+      if(!mapFields(result,['decorations'])||!Array.isArray(result.decorations))throw Error('MAP_DECORATIONS_INVALID');
+      graph={...graph,decorations:result.decorations};
+      if(!validMapGraph(graph)||!result.decorations.every(d=>candidates.some(c=>
+       d.visibility===c.visibility&&mapCanonical(d.prop)===mapCanonical(c.prop))))throw Error('MAP_DECORATIONS_INVALID');
+     }else if(stageIndex===2){
+      graph={...applyMapCoordinates(graph,stageValue(db,officialRequestId,mapGenerateStages[1])),startPoint:start.startPoint};
       const result=await runMapStage(render,{stage:'collisions',startRegionId:start.startRegionId,initialPoint:start.startPoint,
        mode:p.design.collisionMode,notes:p.design.collisionNotes,regions:graph.regions,connections:graph.connections,images},signal,imageBytes);
       if(!mapFields(result,['colliders'])||!Array.isArray(result.colliders)||
@@ -121,6 +142,8 @@ export async function runMapFromPath({dbPath,taskId,officialRequestId,operation,
          !result.colliders.every(c=>mapFields(c,['id','regionId','rect','shape','rotation'])))throw Error('MAP_COLLIDERS_INVALID');
       graph={...graph,colliders:result.colliders};
       if(!validMapGraph(graph))throw Error('MAP_COLLIDERS_INVALID');
+      if(p.decorationDesign?.mode==='suggest')part=result;
+      else if(p.decorationDesign?.mode==='none')graph={...graph,decorations:[]};
      }else{
       const result=await runMapStage(render,{stage:'portals',intent:p.intent,notes:p.design?.portalNotes??'',
        startRegionId:start.startRegionId,regions:graph.regions,connections:graph.connections,images},signal,imageBytes);

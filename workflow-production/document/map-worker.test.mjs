@@ -5,7 +5,7 @@ import {createHash} from 'node:crypto';
 import {mkdtempSync,realpathSync,chmodSync,rmSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
-import {mapCanonical,mapGraphMatches,mapStage,mapDocumentStages,mapGenerateDesignSchema,validMapGraph,validMapRequest,validMapState} from './map-contract.mjs';
+import {mapCanonical,mapGraphMatches,mapStage,mapStagesFor,mapSchemas,validMapGraph,validMapRequest,validMapState} from './map-contract.mjs';
 import {runMapFromPath,createMapRenderer} from './map-worker.mjs';
 
 const sha=value=>createHash('sha256').update(value).digest('hex');
@@ -21,7 +21,7 @@ const update=graph=>({schemaVersion:'ngs.map-update.v1',projectId:'binari',graph
 const generate=graph=>({schemaVersion:'ngs.map-generate.v1',projectId:'binari',
  graph:{...graph,connections:graph.connections.map(e=>({...e,hit:null,spawn:null}))},intent:'Find the doorway.'});
 const design=(collisionMode='suggest')=>({startNotes:'North path',portalNotes:'Threshold',collisionNotes:'Avoid the gate',collisionMode});
-const generateV2=(v,mode)=>({...generate(v),schemaVersion:mapGenerateDesignSchema,design:design(mode)});
+const generateV2=(v,mode)=>({...generate(v),schemaVersion:mapSchemas[2],design:design(mode)});
 function fixture(t, operation, payload){
  const dir=realpathSync(mkdtempSync(join(tmpdir(),'map-worker-test-'))),dbPath=join(dir,'planner.sqlite');
  const db=new DatabaseSync(dbPath);chmodSync(dbPath,0o600);
@@ -30,7 +30,7 @@ function fixture(t, operation, payload){
  request_type TEXT,schema_version TEXT,payload TEXT,payload_sha256 TEXT,registered_at INTEGER);
  CREATE TABLE workflow_tasks(task_id TEXT PRIMARY KEY,official_request_id TEXT,task_input TEXT,task_type TEXT,
  task_key TEXT,worker_type TEXT,depends_on_task_id TEXT,result_ref TEXT,status TEXT,updated_at INTEGER,retry_count INTEGER,map_part_json TEXT)`);
- const keys=payload.schemaVersion===mapGenerateDesignSchema?mapDocumentStages:[mapStage];
+ const keys=mapStagesFor(payload);
  const ids=keys.map(key=>'workflow.task.'+sha(mapCanonical([officialRequestId,key]))),wire=mapCanonical(payload);
  db.prepare("INSERT INTO workflow_runs VALUES(?,'planned',NULL,'binari',?,?,?,?,1)").run(officialRequestId,operation,payload.schemaVersion,wire,sha(wire));
  for(const [i,key] of keys.entries())db.prepare("INSERT INTO workflow_tasks VALUES(?,?,?,?,?,'document',?,NULL,'pending',1,0,NULL)")
@@ -141,11 +141,54 @@ test('invalid stage data does not publish, and committed predecessor stages rema
   }
  }
 });
-test('three CLI calls use distinct guides and strict outputs',async()=>{
+test('map CLI stages use distinct guides and strict outputs',async()=>{
  const invocations=[];
  const renderer=createMapRenderer({codexPath:process.execPath,execute:async input=>{invocations.push(input);return {};}});
- for(const stage of ['start','portals','collisions'])
+ for(const stage of ['start','portals','collisions','decorations'])
   await renderer({stage,attachmentCount:1},{imageBytes:[bytes]});
- assert.deepEqual(invocations.map(x=>Object.keys(x.outputSchema.properties)[0]),['startRegionId','coordinates','colliders']);
- assert.equal(new Set(invocations.map(x=>x.prompt.split('\n')[0])).size,3);
+ assert.deepEqual(invocations.map(x=>Object.keys(x.outputSchema.properties)[0]),['startRegionId','coordinates','colliders','decorations']);
+ assert.equal(new Set(invocations.map(x=>x.prompt.split('\n')[0])).size,4);
+});
+
+const prop={propId:'ritual-bell',revision:4,sha256:'b'.repeat(64)};
+const validDecoration={id:'bell-by-door',regionId:'south',prop,anchor:{x:550,y:740},scale:62,visibility:'both'};
+const generateV3=mode=>({...generateV2(graph,'suggest'),schemaVersion:mapSchemas[3],
+ decorationDesign:{mode,notes:'Place one worn bell near the door.',candidates:mode==='none'?[]:[{prop,visibility:'both'}]}});
+test('v3 decor stage is separately claimed, uses approved pins and images, and publishes the complete map',async t=>{
+ for(const mode of ['suggest','none']){
+  const payload=generateV3(mode),f=fixture(t,'map.generate',payload),calls=[],resultRef='binari/cinematics/maps/'+officialRequestId+'/1.json';
+  const decorations=mode==='suggest'?[validDecoration]:[];
+  const input={...f,pds:{...fixtures(),async publishMap(_claim,value){
+   assert.equal(calls.at(-1),mode==='suggest'?'decorations':'collisions');
+   assert.deepEqual(value,{...graph,startPoint,colliders:[validCollider],decorations});
+   return {ok:true,resultRef};
+  }},render(model,{imageBytes}){
+   calls.push(model.stage);
+   if(model.stage!=='decorations')return stageResult(model,[validCollider]);
+   assert.deepEqual(model.candidates,payload.decorationDesign.candidates);
+   assert.deepEqual(model.colliders,[validCollider]);
+   assert.equal(model.notes,payload.decorationDesign.notes);
+   assert.equal(imageBytes.length,1);assert.equal(model.images.length,2);
+   return {decorations};
+  }};
+  assert.equal((await runMapFromPath({...input,taskId:f.ids.at(-1)})).state,'not_claimable');
+  for(const [i,taskId] of f.ids.entries()){
+   const outcome=await runMapFromPath({...input,taskId});
+   assert.equal(outcome.state,'completed',JSON.stringify(outcome));
+   if(i<f.ids.length-1)assert.match(outcome.resultRef,/^workflow\.map-stage\.[a-f0-9]{64}$/);
+   else assert.equal(outcome.resultRef,resultRef);
+  }
+  assert.equal(calls.length,mode==='suggest'?4:3);
+ }
+});
+test('v3 rejects unapproved decoration visibility or pin drift without publishing',async t=>{
+ for(const change of [{visibility:'pixel'},{prop:{...prop,revision:3}},{regionId:'unknown'}]){
+  const f=fixture(t,'map.generate',generateV3('suggest'));
+  for(const [i,taskId] of f.ids.entries()){
+   const result=await runMapFromPath({...f,taskId,pds:{...fixtures(),publishMap:()=>assert.fail('invalid decoration must not publish')},
+    render:model=>model.stage==='decorations'?{decorations:[{...validDecoration,...change}]}:stageResult(model,[validCollider])});
+   assert.equal(result.state,i===3?'failed':'completed');
+   if(i===3)assert.equal(result.code,'MAP_DECORATIONS_INVALID');
+  }
+ }
 });

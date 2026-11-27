@@ -1,5 +1,5 @@
 import {assemblyTypes,assemblyStage,runAssemblyFromPath} from './assembly-worker.mjs';
-import {mapTypes,mapStage,mapDocumentStages} from './map-contract.mjs';
+import {mapTypes,mapStage,mapGenerateStages,mapDecorationStage} from './map-contract.mjs';
 import {runMapFromPath} from './map-worker.mjs';
 const runner=(op,ordinary,prop)=>assemblyTypes.includes(op)?runAssemblyFromPath:mapTypes.includes(op)?runMapFromPath:isPropDesignOperation(op)?prop:ordinary;
 import {isPropDesignOperation,propDesignKey,propDesignOperations} from './prop-design-contract.mjs';
@@ -25,7 +25,7 @@ const supported=Object.freeze([
  {workerType:'document',taskType:ADD,taskKey:'planning_add',predecessorKey:null},
  ...assemblyTypes.map(taskType=>({workerType:'document',taskType,taskKey:assemblyStage,predecessorKey:null})),
  ...mapTypes.map(taskType=>({workerType:'document',taskType,taskKey:mapStage,predecessorKey:null})),
- ...mapDocumentStages.map((taskKey,i)=>({workerType:'document',taskType:mapTypes[0],taskKey,predecessorKey:i===0?null:mapDocumentStages[i-1]})),
+ ...[...mapGenerateStages,mapDecorationStage].map((taskKey,i)=>({workerType:'document',taskType:mapTypes[0],taskKey,predecessorKey:i===0?null:mapGenerateStages[i-1]})),
  ...Object.keys(propDesignOperations).map(taskType=>({workerType:'document',taskType,taskKey:propDesignKey,predecessorKey:null})),
 ]);
 export function parseArgs(args){

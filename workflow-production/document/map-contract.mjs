@@ -1,7 +1,11 @@
 // Map topology is independent of background render revisions. Coordinates are
 // integer thousandths of the natural canvas, with the origin at top left.
 export const mapTypes=['map.generate','map.update'];
-export const mapSchemas=['ngs.map-generate.v1','ngs.map-update.v1'];
+export const mapSchemas=['ngs.map-generate.v1','ngs.map-update.v1','ngs.map-generate.v2','ngs.map-generate.v3'];
+export const mapGenerateStages=['map_start','map_portals','map_collisions'];
+export const mapDecorationStage='map_decorations';
+export const mapStagesFor=p=>p.schemaVersion===mapSchemas[3]&&p.decorationDesign?.mode==='suggest'?
+ [...mapGenerateStages,mapDecorationStage]:mapSchemas.slice(2).includes(p.schemaVersion)?mapGenerateStages:[mapStage];
 export const mapStage='map_metadata',mapRoot='cinematics/maps';
 export const mapPds='/v1/maps/ownership/workflow-map',mapCapability='workflow.map-metadata.v1';
 export const officialId=v=>typeof v==='string'&&/^request\.official\.[a-f0-9]{64}$/.test(v);
@@ -19,25 +23,42 @@ const mapCollider=c=>(mapFields(c,['id','regionId','rect'])||
  (mapFields(c,['id','regionId','rect','shape','rotation'])&&['rect','ellipse'].includes(c.shape)&&
   Number.isInteger(c.rotation)&&c.rotation>=0&&c.rotation<360))&&mapRect(c.rect);
 export const regionId=v=>typeof v==='string'&&/^[a-z][a-z0-9-]{0,31}$/.test(v);
+const note=v=>v===''||mapText(v,1000);
+const visibility=v=>['both','pixel','cinematic'].includes(v);
+export const mapPropPin=v=>mapFields(v,['propId','revision','sha256'])&&typeof v.propId==='string'&&v.propId.length>=2&&v.propId.length<=80&&
+ /^[a-z0-9]+(?:[-._][a-z0-9]+)*$/.test(v.propId)&&Number.isSafeInteger(v.revision)&&v.revision>=1&&
+ v.revision<Number.MAX_SAFE_INTEGER&&typeof v.sha256==='string'&&/^[a-f0-9]{64}$/.test(v.sha256);
+export const validDecorations=(v,ids)=>Array.isArray(v)&&v.length<=48&&new Set(v.map(x=>x?.id)).size===v.length&&v.every(r=>
+ mapFields(r,['id','regionId','prop','anchor','scale','visibility'])&&regionId(r.id)&&ids.has(r.regionId)&&mapPropPin(r.prop)&&
+ mapPoint(r.anchor)&&Number.isInteger(r.scale)&&10<=r.scale&&r.scale<=300&&visibility(r.visibility));
+export const validDecorationDesign=v=>mapFields(v,['mode','notes','candidates'])&&['none','suggest'].includes(v.mode)&&note(v.notes)&&
+ Array.isArray(v.candidates)&&(v.mode==='none'?v.candidates.length===0:1<=v.candidates.length&&v.candidates.length<=12)&&
+ v.candidates.every(c=>mapFields(c,['prop','visibility'])&&mapPropPin(c.prop)&&visibility(c.visibility))&&
+ new Set(v.candidates.map(c=>c.prop.propId)).size===v.candidates.length;
 export const mapBackgroundIds=graph=>[...new Set(graph.regions.map(r=>r.backgroundId).filter(Boolean))];
 export function validMapGraph(v,{partial=false}={}){
  const fields=['title','startRegionId','regions','connections'];
- const hasColliders=v!=null&&Object.hasOwn(v,'colliders');
- if(hasColliders)fields.push('colliders');
- if(v!=null&&Object.hasOwn(v,'startPoint')){if(!mapPoint(v.startPoint))return false;fields.push('startPoint');}
- if(!mapFields(v,fields)||!mapText(v.title,100)||!Array.isArray(v.regions)||
+ const withStartPoint=v!==null&&typeof v==='object'&&Object.hasOwn(v,'startPoint');
+ if(withStartPoint&& (partial||!mapPoint(v.startPoint)))return false;
+ if(withStartPoint)fields.push('startPoint');
+ if(v!==null&&typeof v==='object'&&Object.hasOwn(v,'decorations')){
+  if(partial)return false;
+  fields.push('decorations');
+ }
+ const withColliders=v!==null&&typeof v==='object'&&Object.hasOwn(v,'colliders');
+ if(!mapFields(v,withColliders?[...fields,'colliders']:fields)||!mapText(v.title,100)||!Array.isArray(v.regions)||
     v.regions.length<1||v.regions.length>24||!v.regions.every(r=>mapFields(r,['id','name','description','backgroundId','imageSha256'])&&
       regionId(r.id)&&mapText(r.name,100)&&mapText(r.description,1000)&&backgroundId(r.backgroundId)&&typeof r.imageSha256==='string'&&/^[a-f0-9]{64}$/.test(r.imageSha256)))return false;
  const ids=new Set(v.regions.map(r=>r.id));
+ if(Object.hasOwn(v,'decorations')&&!validDecorations(v.decorations,ids))return false;
  if(ids.size!==v.regions.length||!ids.has(v.startRegionId)||!Array.isArray(v.connections)||v.connections.length>96)return false;
- if(hasColliders){
-  if(!Array.isArray(v.colliders)||v.colliders.length>96)return false;
+ if(withColliders){
   const colliderIds=new Set();
-  for(const collider of v.colliders){
-   if(!mapCollider(collider)||!regionId(collider.id)||colliderIds.has(collider.id)||
-      !ids.has(collider.regionId))return false;
-   colliderIds.add(collider.id);
-  }
+  if(!Array.isArray(v.colliders)||v.colliders.length>96||!v.colliders.every(c=>{
+   if(!mapCollider(c)||!regionId(c.id)||colliderIds.has(c.id)||
+      !ids.has(c.regionId))return false;
+   colliderIds.add(c.id);return true;
+  }))return false;
  }
  const unique=new Set();
  return v.connections.every(e=>{
@@ -47,16 +68,14 @@ export function validMapGraph(v,{partial=false}={}){
   unique.add(e.id);return true;
  });
 }
-export const mapGenerateDesignSchema='ngs.map-generate.v2';
-export const mapDocumentStages=['map_start','map_portals','map_collisions'];
-const note=v=>typeof v==='string'&&v===v.trim()&&v.length<=1000&&!/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/.test(v);
-export const validMapDesign=v=>mapFields(v,['startNotes','portalNotes','collisionNotes','collisionMode'])&&
- ['startNotes','portalNotes','collisionNotes'].every(k=>note(v[k]))&&['suggest','none'].includes(v.collisionMode);
 export function validMapRequest(v,type){
- const generate=type===mapTypes[0], i=generate?0:1, split=generate&&v?.schemaVersion===mapGenerateDesignSchema;
- return (generate||type===mapTypes[1])&&mapFields(v,generate?['schemaVersion','projectId','graph','intent',...(split?['design']:[])]:
- ['schemaVersion','projectId','graph','mapId','expectedRevision'])&&v.schemaVersion===(split?mapGenerateDesignSchema:mapSchemas[i])&&(!split||validMapDesign(v.design))&&v.projectId==='binari'&&
- validMapGraph(v.graph,{partial:generate})&&(generate?(!Object.hasOwn(v.graph,'startPoint')&&(v.graph.colliders?.length??0)===0&&v.graph.regions.length>=2&&v.graph.regions.length<=12&&v.graph.connections.length>0&&v.graph.connections.every(e=>e.hit===null&&e.spawn===null)&&mapText(v.intent,2000)):officialId(v.mapId)&&
+ const generate=type===mapTypes[0], v3=generate&&v?.schemaVersion===mapSchemas[3],
+  staged=generate&&mapSchemas.slice(2).includes(v?.schemaVersion),i=generate?(v3?3:staged?2:0):1;
+ return (generate||type===mapTypes[1])&&mapFields(v,generate?['schemaVersion','projectId','graph','intent',...(staged?['design']:[]),...(v3?['decorationDesign']:[])]:
+ ['schemaVersion','projectId','graph','mapId','expectedRevision'])&&v.schemaVersion===mapSchemas[i]&&v.projectId==='binari'&&
+ (!staged||(mapFields(v.design,['startNotes','portalNotes','collisionNotes','collisionMode'])&&
+  [v.design.startNotes,v.design.portalNotes,v.design.collisionNotes].every(note)&&['suggest','none'].includes(v.design.collisionMode)))&&
+ (!v3||validDecorationDesign(v.decorationDesign))&&validMapGraph(v.graph,{partial:generate})&&(generate?(v.graph.regions.length>=2&&v.graph.regions.length<=12&&v.graph.connections.length>0&&(v.graph.colliders?.length??0)===0&&v.graph.connections.every(e=>e.hit===null&&e.spawn===null)&&mapText(v.intent,2000)):officialId(v.mapId)&&
  Number.isSafeInteger(v.expectedRevision)&&v.expectedRevision>=1&&v.expectedRevision<Number.MAX_SAFE_INTEGER);
 }
 export function validMapState(v){
