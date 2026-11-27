@@ -159,3 +159,32 @@ test('file.update binds the complete metadata from the request and normally fail
   if(outcome==='conflict')assert.equal(f.state().retry_count,3);
  }
 });
+
+test('generic file.update pins a full assembly metadata revision, including puzzle portal conditions',async t=>{
+ const {fileUpdateType,fileUpdateSchema,fileUpdatePds,assemblyUpdateRoot,fileUpdateRef,validFileUpdate}=await import('./file-update-envelope.mjs');
+ const puzzle={id:'ritual-well-water',type:'binari.ritual-well-water-demo',
+  layout:{altar:{regionId:'start',x:40,y:50},well:{regionId:'start',x:60,y:50}},
+  attachments:{bowl:{x:0,y:1},lid:{x:2,y:3}},
+  bindings:Object.fromEntries(['table','bowl','well','lid'].map(k=>[k,{propId:k,revision:1,sha256:'a'.repeat(64)}])),
+  portalConditions:[{portalId:'walk-to-well',propRole:'bowl',requiredState:'carried-filled'}]};
+ const input={target:{root:assemblyUpdateRoot,path:sequenceId,kind:'metadata'},expected:{revision:2,officialRequestId:'request.official.'+'6'.repeat(64)},
+  content:{title:'Gated assembly',mapId:'request.official.'+'7'.repeat(64),puzzles:[puzzle]}};
+ const envelope={schemaVersion:fileUpdateSchema,projectId:'binari',...input};
+ assert.equal(validFileUpdate(envelope),true);
+ for(const portalConditions of [[...puzzle.portalConditions,...puzzle.portalConditions],
+   [{...puzzle.portalConditions[0],propRole:'lid'}],[{...puzzle.portalConditions[0],requiredState:'unknown'}],
+   Array.from({length:17},(_,i)=>({...puzzle.portalConditions[0],portalId:'walk-'+i}))]){
+  assert.equal(validFileUpdate({...envelope,content:{...input.content,puzzles:[{...puzzle,portalConditions}]}}),false);
+ }
+ const f=setup(t,input,fileUpdateType,fileUpdateSchema),calls=[];
+ const pds=await withHttp(t,async(req,packet)=>{
+  assert.equal(req.url,fileUpdatePds);calls.push(req.method);
+  if(!packet)return {body:{enabled:true,schemaVersion:'workflow.file-update.v1'}};
+  assert.deepEqual(Object.keys(packet),['claim']);
+  assert.equal(packet.claim.payloadSha256,sha(canonical(envelope)));
+  return {body:{ok:true,resultRef:fileUpdateRef(input)}};
+ });
+ assert.equal((await pollOnce({...f,pds})).state,'completed');
+ assert.deepEqual(calls,['GET','POST']);
+ assert.equal(f.state().result_ref,'binari/cinematics/assemblies/'+sequenceId+'/3.json');
+});
