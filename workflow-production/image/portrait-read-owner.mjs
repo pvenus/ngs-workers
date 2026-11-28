@@ -20,13 +20,15 @@ export function finishPortraitRead(db,{taskId,officialRequestId,claimStamp},{fai
 }
 export function detectLostPortraitReads(db,{knownTypes,ownerExited=exited}){
  if(!hasPortraitReadOwner(db))return [];
+ const noUiHandoff=db.prepare('PRAGMA table_info(workflow_tasks)').all().some(c=>c.name==='save_started_at')
+  ? "AND (t.task_type NOT IN ('ui.asset.generate','ui.asset.import') OR t.save_started_at IS NULL)" : '';
  const candidates=db.prepare(`SELECT task_id,official_request_id,task_type,t.updated_at AS stamp,portrait_read_owner_pid AS pid
   FROM workflow_tasks t JOIN workflow_runs r USING(official_request_id)
   WHERE t.worker_type='image' AND t.status='running' AND t.result_ref IS NULL AND r.state='planned'
-  AND portrait_read_owner_pid IS NOT NULL ORDER BY t.updated_at,t.task_id LIMIT 64`).all();
+  AND portrait_read_owner_pid IS NOT NULL ${noUiHandoff} ORDER BY t.updated_at,t.task_id LIMIT 64`).all();
  const update=db.prepare(`UPDATE workflow_tasks SET status='failed',updated_at=?,portrait_read_owner_pid=NULL${saveReservationClearSql(db)}
   WHERE task_id=? AND official_request_id=? AND task_type=? AND worker_type='image' AND status='running'
-   AND updated_at=? AND result_ref IS NULL AND portrait_read_owner_pid=?
+   AND updated_at=? AND result_ref IS NULL AND portrait_read_owner_pid=? ${noUiHandoff.replaceAll('t.','workflow_tasks.')}
    AND EXISTS(SELECT 1 FROM workflow_runs r WHERE r.official_request_id=workflow_tasks.official_request_id AND r.state='planned')`);
  const failures=[];
  for(const {task_id,official_request_id,task_type,stamp,pid} of candidates){

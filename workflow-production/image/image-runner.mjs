@@ -1,5 +1,5 @@
 import {oldestRunnable} from './workflow-ready.mjs';
-import {sourceType,backgroundSourceType,backgroundCineOperation,backgroundDraftOperation,nextCinematicSourceFromPath,runCinematicSourceFromPath} from './cinematic-source-worker.mjs';
+import {sourceType,backgroundSourceType,backgroundCineOperation,backgroundDraftOperation,nextCinematicSourceFromPath,runCinematicSourceFromPath,uiOperations,runUiAssetFromPath} from './cinematic-source-worker.mjs';
 import {propBaseOperations,nextPropBaseFromPath,runPropBaseFromPath} from './prop-base-worker.mjs';
 import {propImageOperation,nextPropImageFromPath,runPropImageFromPath} from './prop-image-worker.mjs';
 import {PORTRAIT,imageOperations,portraitCandidatesFromPath,probePresetDatabase,runPortraitFromPath} from './worker.mjs';
@@ -7,7 +7,7 @@ import {motionImageOperation,nextMotionImageFromPath,runMotionImageFromPath} fro
 
 export function parseImageArgs(args){
  let operation;
- if(args.at(-2)==='--operation'&&[...imageOperations,motionImageOperation,propImageOperation,sourceType,backgroundSourceType,backgroundCineOperation,backgroundDraftOperation,...Object.keys(propBaseOperations)].includes(args.at(-1))){
+ if(args.at(-2)==='--operation'&&[...imageOperations,motionImageOperation,propImageOperation,sourceType,backgroundSourceType,backgroundCineOperation,backgroundDraftOperation,...Object.keys(propBaseOperations),...uiOperations].includes(args.at(-1))){
   operation=args.at(-1);args=args.slice(0,-2);
  }
  if(args.length>=3&&args[1]==='--db'&&args[2].startsWith('/')){
@@ -34,12 +34,12 @@ export function selectImageTasks(dbPath){
  const motion=nextMotionImageFromPath(dbPath);
  const prop=nextPropImageFromPath(dbPath);
  const source=nextCinematicSourceFromPath(dbPath),background=nextCinematicSourceFromPath(dbPath,backgroundSourceType);
- const chain=[backgroundCineOperation,backgroundDraftOperation].map(operation=>{const row=nextCinematicSourceFromPath(dbPath,operation);return row&&{...row,operation};});
+ const chain=[backgroundCineOperation,backgroundDraftOperation,...uiOperations].map(operation=>{const row=nextCinematicSourceFromPath(dbPath,operation);return row&&{...row,operation};});
  return oldestRunnable(dbPath,[...portraitCandidatesFromPath(dbPath),
   motion&&{...motion,operation:motionImageOperation},prop&&{...prop,operation:propImageOperation},
   nextPropBaseFromPath(dbPath),...chain,source&&{...source,operation:sourceType},background&&{...background,operation:backgroundSourceType}]);
 }
-const executeImage=options=>[sourceType,backgroundSourceType,backgroundCineOperation,backgroundDraftOperation].includes(options.operation)?runCinematicSourceFromPath(options):Object.hasOwn(propBaseOperations,options.operation)?runPropBaseFromPath(options):options.operation===propImageOperation?runPropImageFromPath(options):options.operation===motionImageOperation?runMotionImageFromPath(options):runPortraitFromPath(options);
+const executeImage=options=>uiOperations.includes(options.operation)?runUiAssetFromPath(options):[sourceType,backgroundSourceType,backgroundCineOperation,backgroundDraftOperation].includes(options.operation)?runCinematicSourceFromPath(options):Object.hasOwn(propBaseOperations,options.operation)?runPropBaseFromPath(options):options.operation===propImageOperation?runPropImageFromPath(options):options.operation===motionImageOperation?runMotionImageFromPath(options):runPortraitFromPath(options);
 
 /** At most one claimed image task per tick; bypasses lost claims, never reclaims running rows. */
 export async function imageTick(options,{select=selectImageTasks,execute=executeImage,check=imageHealth}={}){

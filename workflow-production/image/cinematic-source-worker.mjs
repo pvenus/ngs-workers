@@ -17,7 +17,29 @@ export const backgroundCineOperation='background.pixel.workflow.cinematic';
 export const backgroundDraftOperation='background.pixel.workflow.draft';
 const backgroundChainType='background.pixel.workflow',backgroundChainSchema='ngs.background-pixel-workflow.v1';
 const chainKeys=['background_cinematic_source','background_pixel_generate','background_pixel_postprocess'];
+export const uiOperations=Object.freeze(['ui.asset.generate','ui.asset.import']);
+const uiDesignId='category.add.4573d0a2e2c659fc0bba561ba5774ac8';
+const uiGen='ui.asset.generate';
+const uiInputKeys=mode=>['kind','title',mode===uiGen?'prompt':'sha256'];
+const uiInput=(v,mode)=>exact(v,uiInputKeys(mode))&&['logo','button'].includes(v.kind)&&validText(v.title,120,480)&&
+ (mode===uiGen?validText(v.prompt,2000,4000):typeof v.sha256==='string'&&/^[a-f0-9]{64}$/u.test(v.sha256));
+const uiDesign=d=>exact(d,['categoryId','sha256','markdown'])&&d.categoryId===uiDesignId&&
+ typeof d.markdown==='string'&&d.markdown.startsWith('# UI 디자인\n')&&Buffer.byteLength(d.markdown)<=24000&&
+ validText(d.markdown.trim(),12000,24000)&&d.sha256===sha(d.markdown);
+export const validUiRenderInput=v=>{
+ if(!v||typeof v!=='object')return false;
+ const {design,...input}=v;
+ return uiInput(input,uiGen)&&uiDesign(design);
+};
+export function uiPng(raw){
+ require(Buffer.isBuffer(raw)&&raw.length>=57&&raw.length<=8*1024*1024&&
+   raw.subarray(0,16).equals(Buffer.from('89504e470d0a1a0a0000000d49484452','hex'))&&
+   raw[24]===8&&raw[25]===6&&raw[26]===0&&raw[27]===0&&raw[28]===0&&
+   [raw.readUInt32BE(16),raw.readUInt32BE(20)].every(n=>n>0&&n<=4096),'UI_ASSET_PNG_INVALID');
+ return raw;
+}
 const sourceProfiles=Object.freeze({
+ ...Object.fromEntries(uiOperations.map(type=>{const mode=type.split('.').at(-1);return [type,{type,schema:'ngs.ui-asset-'+mode+'.v1',key:'ui_asset_'+mode,ui:true}];})),
  [sourceType]:{type:sourceType,schema:sourceSchema,key:sourceKey,collection:'sources'},
  [backgroundCineOperation]:{type:backgroundChainType,schema:backgroundChainSchema,key:chainKeys[0],collection:'backgrounds',chain:1},
  [backgroundDraftOperation]:{type:backgroundChainType,schema:backgroundChainSchema,key:chainKeys[1],collection:'backgrounds',chain:2},
@@ -117,7 +139,8 @@ function candidate(db,t,stamp){
   .get(...args(t.profile),t.taskId,t.officialRequestId,...(running?[stamp]:[]));
  if(!row)return null;
  const p=JSON.parse(row.payload),background=t.profile.type===backgroundSourceType||Boolean(t.profile.chain);
- const fields=background?Object.keys(backgroundLims):inputKeys, valid=background?validBackground:validCinematicSource;
+ const fields=t.profile.ui?uiInputKeys(t.profile.type):background?Object.keys(backgroundLims):inputKeys;
+ const valid=t.profile.ui?v=>uiInput(v,t.profile.type):background?validBackground:validCinematicSource;
  require(exact(p,['schemaVersion','projectId',...fields])&&p.schemaVersion===t.profile.schema&&p.projectId===projectId&&
   canonical(p)===row.payload&&sha(row.payload)===row.payload_sha256);
  const input=Object.fromEntries(fields.map(k=>[k,p[k]]));
@@ -270,6 +293,60 @@ export async function runCinematicSourceFromPath({dbPath,officialRequestId,taskI
     }
    }
    return {state:'requires_reconciliation',taskId,code:'CINEMATIC_SOURCE_RECONCILIATION_REQUIRED',diagnostic};
+  }
+ }finally{db.close();}
+}
+
+// Share claims/dispatch with the existing ImageGen slots, but keep UI assets and
+// their PDS-owned completion out of cinematic publication and recovery code.
+export async function runUiAssetFromPath({dbPath,officialRequestId,taskId,pds,renderUiAsset,signal,operation}){
+ const profile=sourceProfiles[operation],generated=operation===uiGen;
+ require(profile?.ui&&typeof pds?.readUiAsset==='function'&&typeof pds?.publishUiAsset==='function'&&
+  (!generated||typeof renderUiAsset==='function'),'UI_ASSET_PORT_REQUIRED');
+ if(signal?.aborted)return {state:'not_claimable',taskId};
+ assertDatabasePath(dbPath);
+ const db=new DatabaseSync(dbPath);
+ try{
+  db.exec('PRAGMA foreign_keys=ON; PRAGMA busy_timeout=5000;');protectSchema(db);
+  const target={officialRequestId,taskId,profile},found=claimSource(db,target);
+  if(!found)return {state:'not_claimable',taskId};
+  const {input,claim}=found;
+  let stage='read',sent=false;
+  try{
+   const bound=await pds.readUiAsset(operation,claim,signal);
+   const {design,...fields}=bound??{};
+   require(uiInput(fields,operation)&&canonical(fields)===canonical(input)&&
+    (generated?uiDesign(design):design===undefined),'UI_ASSET_INPUT_MISMATCH');
+   let artifact;
+   if(generated){
+    stage='render';
+    const png=uiPng(await renderUiAsset({...input,design},{signal}));
+    artifact={sha256:sha(png),base64:png.toString('base64'),designSha256:design.sha256};
+   }
+   signal?.throwIfAborted();
+   stage='publish';
+   sent=true;
+   const ref=projectId+'/ui/assets/'+officialRequestId+'/manifest.json';
+   const response=await pds.publishUiAsset(operation,claim,artifact);
+   require(validAck(response,ref),'UI_ASSET_PUBLISH_UNCONFIRMED');
+   return {state:'completed',taskId,resultRef:ref};
+  }catch(error){
+   // If a transport disconnect happens before PDS reserves this claim, fail
+   // it atomically so a late request cannot publish. After reservation only
+   // PDS/its save reaper can settle it. Do not rerender for an ambiguous ACK.
+   try{
+    const changed=await settleFailure(()=>{
+     if(!sent)return found.ownerTracked?finishPortraitRead(db,claim,{failed:true}):markWorkflowTaskFailed(db,{...claim,workerType});
+     const hasSave=db.prepare('PRAGMA table_info(workflow_tasks)').all().some(c=>c.name==='save_started_at');
+     if(!hasSave)return false;
+     return db.prepare(`UPDATE workflow_tasks SET status='failed',updated_at=?${found.ownerTracked?',portrait_read_owner_pid=NULL':''}
+       WHERE task_id=? AND official_request_id=? AND status='running' AND updated_at=? AND result_ref IS NULL AND save_started_at IS NULL`)
+      .run(Math.max(Date.now(),claim.claimStamp+1),taskId,officialRequestId,claim.claimStamp).changes===1;
+    });
+    const status=db.prepare('SELECT status FROM workflow_tasks WHERE task_id=? AND official_request_id=?').get(taskId,officialRequestId)?.status;
+    if(changed||status==='failed')return {state:'failed',taskId,code:sent?'UI_ASSET_STORAGE_FAILED':'UI_ASSET_FAILED_BEFORE_PUBLISH',diagnostic:{stage}};
+   }catch{/* leave owned save for PDS expiry */}
+   return {state:'requires_reconciliation',taskId,code:'UI_ASSET_HANDOFF_UNCONFIRMED',diagnostic:{stage}};
   }
  }finally{db.close();}
 }

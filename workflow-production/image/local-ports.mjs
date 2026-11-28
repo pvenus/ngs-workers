@@ -19,7 +19,9 @@ const chainPath=Object.freeze({
  'background.pixel.workflow.cinematic':backgroundSourcePath+'-cinematic-source',
  'background.pixel.workflow.draft':backgroundSourcePath+'-pixel-draft'
 });
-const routes={...Object.fromEntries(Object.entries(chainPath).map(([op,path])=>[op,{path,schema:'workflow.background-pixel-write.v1'}])),
+const uiPath='/v1/ui/ownership/workflow-asset/';
+const uiRoutes=Object.freeze(Object.fromEntries(['generate','import'].map(mode=>['ui.asset.'+mode,{path:uiPath+mode,schema:'workflow.ui-asset-'+mode+'.v1'}])));
+const routes={...uiRoutes,...Object.fromEntries(Object.entries(chainPath).map(([op,path])=>[op,{path,schema:'workflow.background-pixel-write.v1'}])),
  'background.source.generate':{path:backgroundSourcePath,schema:'workflow.background-source-write.v1'},
  'cinematic.source.generate':{path:cinematicSourcePath,schema:'workflow.cinematic-source-write.v1'},
  'prop.generate.base':{path:propBasePath,schema:'workflow.prop-stage.v1'},
@@ -101,6 +103,12 @@ export function localPorts({transport=requestLocalJson}={}){
   async publishPortrait(command,claimStamp,basis,signal){
    return await transport({port:8030,path:routes[command.operation].path,method:'POST',
     body:{claim:claimOf(command,claimStamp),basis,artifact:JSON.parse(command.artifact)},deadline:120000,signal});
+  },
+  readUiAsset(operation,claim,signal){
+   return transport({port:8030,path:uiRoutes[operation].path+'/read',method:'POST',body:{claim},deadline:15000,signal});
+  },
+  publishUiAsset(operation,claim,artifact){
+   return transport({port:8030,path:uiRoutes[operation].path,method:'POST',body:artifact?{claim,artifact}:{claim},deadline:120000});
   },
   async readCinematicSource(claim,signal){
    return await transport({port:8030,path:cinematicSourcePath+'/read',method:'POST',body:{claim},deadline:5000,signal});

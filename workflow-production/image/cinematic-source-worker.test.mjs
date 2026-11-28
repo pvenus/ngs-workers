@@ -34,12 +34,15 @@ function fixture(t,request=input,background=false){
  const db=new DatabaseSync(dbPath);
  t.after(()=>{db.close();rmSync(dir,{recursive:true,force:true});});
  db.exec(`CREATE TABLE workflow_runs(official_request_id,project_id,request_type,schema_version,payload,payload_sha256,registered_at,state,updated_at,reason);
-  CREATE TABLE workflow_tasks(task_id,official_request_id,task_key,task_type,worker_type,task_input,result_ref,updated_at,depends_on_task_id,status,retry_count,portrait_read_owner_pid INTEGER);`);
- const type=background?backgroundSourceType:sourceType,schema=background?'ngs.background-source-generate.v1':sourceSchema,key=background?'background_source_generate':sourceKey;
+  CREATE TABLE workflow_tasks(task_id,official_request_id,task_key,task_type,worker_type,task_input,result_ref,updated_at,depends_on_task_id,status,retry_count,portrait_read_owner_pid INTEGER,save_started_at INTEGER);`);
+ const mode=typeof background==='string'?background:null;
+ const type=mode?'ui.asset.'+mode:background?backgroundSourceType:sourceType,
+  schema=mode?'ngs.ui-asset-'+mode+'.v1':background?'ngs.background-source-generate.v1':sourceSchema,
+  key=mode?'ui_asset_'+mode:background?'background_source_generate':sourceKey;
  const id='workflow.task.'+sha(canonical([officialRequestId,key]));
  const payload=canonical({schemaVersion:schema,projectId:'binari',...request});
  db.prepare("INSERT INTO workflow_runs VALUES(?,?,?,?,?,?,1,'planned',1,NULL)").run(officialRequestId,'binari',type,schema,payload,sha(payload));
- db.prepare("INSERT INTO workflow_tasks VALUES(?,?,?,?,?,?,NULL,2,NULL,'pending',0,NULL)").run(id,officialRequestId,key,type,'image',canonical(request));
+ db.prepare("INSERT INTO workflow_tasks VALUES(?,?,?,?,?,?,NULL,2,NULL,'pending',0,NULL,NULL)").run(id,officialRequestId,key,type,'image',canonical(request));
  const state=()=>db.prepare('SELECT status,result_ref,updated_at,retry_count,portrait_read_owner_pid FROM workflow_tasks').get();
  return {db,dbPath,state,payload};
 }
@@ -199,4 +202,71 @@ test('resident background lane combines typed scene, common design and backgroun
  const out=await imageTick({...f,mode:'run',pds,renderCinematicSource},{check:safeCheck});
  assert.equal(out.state,'completed');assert.deepEqual(order,['inputs','concept','render','publish']);
  assert.equal(f.state().result_ref,resultRef);
+});
+
+const uiPngFixture=Buffer.concat([Buffer.from('89504e470d0a1a0a','hex'),
+ chunk('IHDR',Buffer.concat([u32(8),u32(3),Buffer.from([8,6,0,0,0])])),
+ chunk('IDAT',deflateSync(Buffer.alloc(3*(8*4+1)))),chunk('IEND',Buffer.alloc(0))]);
+const uiDesignMarkdown='# UI 디자인\n\n한지와 먹글씨';
+const uiDesign={categoryId:'category.add.4573d0a2e2c659fc0bba561ba5774ac8',markdown:uiDesignMarkdown,sha256:sha(uiDesignMarkdown)};
+test('UI work uses existing image slot; manual never renders and generated uses only bound design; PDS alone completes',async t=>{
+ for(const mode of ['generate','import']){
+  const input={kind:'button',title:'들어가기',...(mode==='generate'?{prompt:'wide 3:1'}:{sha256:sha(uiPngFixture)})};
+  const f=fixture(t,input,mode),events=[];
+  const ref='binari/ui/assets/'+officialRequestId+'/manifest.json';
+  const pds={
+   capability:async(_signal,type)=>{assert.equal(type,'ui.asset.'+mode);return true;},
+   readUiAsset:async(op,claim)=>{events.push('read');assert.equal(claim.claimStamp,f.state().updated_at);assert.equal(op,'ui.asset.'+mode);return {...input,...(mode==='generate'?{design:uiDesign}:{})};},
+   publishUiAsset:async(_op,claim,artifact)=>{
+    events.push('publish');
+    assert.equal(f.state().status,'running');
+    if(mode==='generate')assert.deepEqual(artifact,{sha256:sha(uiPngFixture),base64:uiPngFixture.toString('base64'),designSha256:uiDesign.sha256});
+    else assert.equal(artifact,undefined);
+    f.db.prepare("UPDATE workflow_tasks SET status='completed', result_ref=?,updated_at=?").run(ref,claim.claimStamp+1);
+    return {ok:true,resultRef:ref};
+   }};
+  const result=await imageTick({...f,mode:'run',pds,renderUiAsset:async args=>{
+   events.push('render');assert.deepEqual(args,{...input,design:uiDesign});return uiPngFixture;
+  }},{check:safeCheck});
+  assert.equal(result.state,'completed');assert.equal(f.state().result_ref,ref);
+  assert.deepEqual(events,mode==='generate'?['read','render','publish']:['read','publish']);
+ }
+});
+test('UI ambiguous handoff never lets the image worker own a reserved save',async t=>{
+ const input={kind:'logo',title:'비나리',sha256:sha(uiPngFixture)};
+ const f=fixture(t,input,'import');
+ const pds={capability:async()=>true,readUiAsset:async()=>input,publishUiAsset:async()=>{
+  f.db.exec("UPDATE workflow_tasks SET save_started_at=updated_at");
+  throw Error('connection lost');
+ }};
+ const result=await imageTick({...f,mode:'run',pds},{check:safeCheck});
+ assert.equal(result.state,'requires_reconciliation');
+ assert.equal(f.state().status,'running');
+});
+test('UI native transparent descriptor uses dedicated artwork proportions without slice/stretch',()=>{
+ const helper=fileURLToPath(new URL('./portrait-native.py',import.meta.url));
+ const script=String.raw`
+import runpy,sys,json,hashlib
+from types import SimpleNamespace
+run=runpy.run_path(sys.argv[1])["run"]
+def digest(x): return hashlib.sha256(json.dumps(x,sort_keys=True).encode()).hexdigest()
+class Runner:
+ def generate(self,claim):
+  args=claim["providerRequest"]["arguments"]
+  assert args["transparent_background"] is True and "wide 3:1" in args["prompt"]
+  assert "Do not stretch" in args["prompt"] and "nine-slice" in args["prompt"]
+  assert "한지와 먹글씨" in args["prompt"] and "들어가기" in args["prompt"]
+  raw=b'bridge-test-PNG-placeholder'
+  return raw,{**claim,"sha256":hashlib.sha256(raw).hexdigest(),"actualToolOutput":True}
+ def execution_evidence(self): return {"outcome":"joined"}
+def prohibited(*a): raise AssertionError("UI must not invoke a scene, a reference, or portrait silhouette validation")
+pairs=SimpleNamespace(descriptor=lambda prompt,manifest:{"arguments":{"prompt":prompt,"transparent_background":True}})
+def factory(*a): raise AssertionError("wording must not use NPC portrait factory")
+factory.ui_asset=lambda *_:(Runner(),SimpleNamespace(settled=True))
+run.__globals__["bind"]=lambda *_:(factory,prohibited,prohibited,pairs,None,digest,prohibited)
+r=run(SimpleNamespace(stopped=SimpleNamespace(is_set=lambda:False)),{"mode":"render-ui-asset","data":json.load(sys.stdin)},"config","pin")
+assert r["code"]==0
+`;
+ const r=spawnSync('python3',['-c',script,helper],{input:JSON.stringify({kind:'button',title:'들어가기',prompt:'wide 3:1',design:uiDesign}),encoding:'utf8'});
+ assert.equal(r.status,0,r.stderr);
 });
