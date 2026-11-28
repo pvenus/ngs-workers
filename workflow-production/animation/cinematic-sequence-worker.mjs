@@ -14,6 +14,9 @@ import {validCutscenePrompt} from './cutscene-i2v.mjs';
 import {WAN_I2V_FPS,WAN_I2V_LENGTH,WAN_I2V_SHORT_LENGTH,WAN_I2V_CINEMATIC_FRAMING,WAN_I2V_CINEMATIC_SIZE} from './i2v-wan-graph.mjs';
 
 export const sequenceType='cinematic.sequence.generate',sequenceSchema='ngs.cinematic-sequence-generate.v1';
+const namedSchema='ngs.cinematic-sequence-generate.v2';
+const nativePlayback=()=>({durationFrames:45,speedCurve:[{frame:0,rate:1}],cameraCurve:[{frame:0,zoom:1,x:.5,y:.5}]});
+const validTitle=t=>typeof t==='string'&&t.isWellFormed()&&t===t.trim()&&[...t].length>=1&&[...t].length<=120&&Buffer.byteLength(t)<=480&&!/[\x00-\x1F\x7F]/u.test(t);
 export const sequenceKey='cinematic_sequence_render',sequenceTaskType='cinematic.sequence.generate.render';
 const upscaleType='cinematic.sequence.upscale',upscaleSchema='ngs.cinematic-sequence-upscale.v1',upscaleKey='cinematic_sequence_upscale';
 const upscaleInputKeys=['sequenceId','sourceSha256','expectedRevision','playback'];
@@ -46,11 +49,11 @@ const links=`(t.depends_on_task_id IS NULL OR EXISTS (SELECT 1 FROM workflow_tas
  WHERE p.task_id=t.depends_on_task_id AND p.official_request_id=t.official_request_id AND p.status='completed' AND p.result_ref IS NOT NULL))`;
 const scope=`r.state='planned' AND r.reason IS NULL AND r.project_id=?
  AND t.worker_type=? AND t.result_ref IS NULL AND ${links}`+
- ` AND ((r.request_type=? AND r.schema_version=? AND t.task_type=? AND t.task_key=? AND t.depends_on_task_id IS NULL)
+ ` AND ((r.request_type=? AND r.schema_version IN (?,?) AND t.task_type=? AND t.task_key=? AND t.depends_on_task_id IS NULL)
   OR (r.request_type=? AND r.schema_version=? AND t.task_type=? AND t.task_key IN (?,?) AND t.depends_on_task_id IS NULL)
   OR (r.request_type=? AND r.schema_version=? AND t.task_key IN (${stagedKeys.map(()=>'?').join(',')}))
   OR (r.request_type=? AND r.schema_version=? AND t.task_type=? AND t.task_key=? AND t.depends_on_task_id IS NULL))`;
-const args=[projectId,workerType,sequenceType,sequenceSchema,sequenceTaskType,sequenceKey,
+const args=[projectId,workerType,sequenceType,sequenceSchema,namedSchema,sequenceTaskType,sequenceKey,
  backgroundType,backgroundSchema,backgroundType,...Object.values(backgroundKeys),backgroundType,backgroundStageSchema,...stagedKeys,upscaleType,upscaleSchema,upscaleType,upscaleKey];
 const taskIdFor=(id,key)=>'workflow.task.'+sha(canonical([id,key]));
 const refFor=id=>projectId+'/cinematics/sequences/'+id+'/manifest.json';
@@ -89,7 +92,7 @@ function candidate(db,t,stamp){
     db.prepare('SELECT count(*) AS n FROM workflow_tasks WHERE official_request_id=?').get(t.officialRequestId).n===1);
   return {row,input,resultId:t.officialRequestId,derive:true};
  }
- require(p?.projectId===projectId&&validCutscenePrompt(p.motionPrompt)&&validSequencePlayback(p.playback)&&
+ require(p?.projectId===projectId&&validCutscenePrompt(p.motionPrompt)&&(p.schemaVersion===namedSchema?validTitle(p.title):validSequencePlayback(p.playback))&&
   canonical(p)===row.payload&&sha(row.payload)===row.payload_sha256);
  const only=db.prepare('SELECT * FROM workflow_tasks WHERE official_request_id=? LIMIT 8').all(t.officialRequestId);
  if(row.request_type===backgroundType){
@@ -119,8 +122,10 @@ function candidate(db,t,stamp){
   }
   require(selected);return selected;
  }
- require(exact(p,['schemaVersion','projectId',...inputKeys])&&p.schemaVersion===sequenceSchema&&hash(p.sourceSha256));
- const input=Object.fromEntries(inputKeys.map(k=>[k,p[k]]));
+ const named=p.schemaVersion===namedSchema;
+ require(exact(p,['schemaVersion','projectId',...(named?['sourceSha256','motionPrompt','title']:inputKeys)])&&
+   p.schemaVersion===(named?namedSchema:sequenceSchema)&&p.schemaVersion===row.schema_version&&hash(p.sourceSha256));
+ const input={sourceSha256:p.sourceSha256,motionPrompt:p.motionPrompt,playback:named?nativePlayback():p.playback,...(named?{title:p.title}:{})};
  require(canonical(input)===row.task_input&&only.length===1&&only[0].task_id===taskIdFor(t.officialRequestId,sequenceKey));
  return {input,row,resultId:t.officialRequestId};
 }
@@ -187,7 +192,7 @@ function nativeManifest(output,id,input,upscale,frameCount=WAN_I2V_LENGTH){
   return {index,sha256:sha(buffer),bytes:buffer.length};
  });
  return {schemaVersion:'ngs.cinematic-sequence-result.v1',projectId,officialRequestId:id,sourceSha256:input.sourceSha256,
-  width:output.width,height:output.height,masterFps:WAN_I2V_FPS,frameCount:frames.length,frames,playback:input.playback,...(upscale?{upscale}:{})};
+  width:output.width,height:output.height,masterFps:WAN_I2V_FPS,frameCount:frames.length,frames,playback:input.playback,...(input.title===undefined?{}:{title:input.title}),...(upscale?{upscale}:{})};
 }
 
 /** The resident owns both models. Only a verified final passes to publication. */
@@ -214,7 +219,7 @@ export async function executeCinematicSequence(db,t,signal,{ports,runI2V,runUpsc
  let dir,result,stage='read',unknownStop=false,written=false;
  try{
   const r=await ports.read(claim,signal);
-  if(!derive)require(exact(r,inputKeys)&&canonical(r)===canonical(input),'CINEMATIC_SEQUENCE_SOURCE_BINDING');
+  if(!derive)require(exact(r,[...inputKeys,...(input.title===undefined?[]:['title'])])&&canonical(r)===canonical(input),'CINEMATIC_SEQUENCE_SOURCE_BINDING');
   let output,manifest;
   if(derive){
    const source=r?.original;
@@ -244,7 +249,7 @@ export async function executeCinematicSequence(db,t,signal,{ports,runI2V,runUpsc
    catch(e){unknownStop=e?.rendererJoined!==true;throw e;}
    stage='validate_upscale';
    require(output?.width===source.width*2&&output?.height===source.height*2,'CINEMATIC_UPSCALE_OUTPUT_GEOMETRY');
-   manifest=nativeManifest(output,resultId,input,{model:backgroundUpscaleModel,scale:2,sourceWidth:source.width,sourceHeight:source.height,sourceSequenceId:input.sequenceId});
+   manifest=nativeManifest(output,resultId,{...input,...(source.title===undefined?{}:{title:source.title})},{model:backgroundUpscaleModel,scale:2,sourceWidth:source.width,sourceHeight:source.height,sourceSequenceId:input.sequenceId});
   }else{
   const pinned=async()=>{
    const source=await ports.asset(claim,signal);png(source,maxImageBytes);

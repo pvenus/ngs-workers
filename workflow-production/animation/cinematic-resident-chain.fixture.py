@@ -40,6 +40,9 @@ class CinematicChain(unittest.TestCase):
     def test_sequence_publishes_all_native_png_bytes_and_playback_without_encoding(self):
         self.exercise('sequence')
 
+    def test_titled_sequence_uses_unedited_native_frames(self):
+        self.exercise('named')
+
     def test_upscale_runs_from_formal_request_to_distinct_filex_derivative(self):
         from unittest.mock import patch
         with patch.dict(os.environ,{'WORKFLOW_CINEMATIC_SEQUENCE_UPSCALE':'1'}):
@@ -60,7 +63,7 @@ new PlannerStore(process.argv[1],{cinematicEnabled:true,readCinematicPublication
         self.assertEqual(init.returncode,0,init.stderr)
         db.chmod(0o600); identity=db.stat()
         impl,schema,at,marker_name=WorkflowCinematic,READY_SCHEMA,'workflow_cinematic','cinematic-animation-ready.json'
-        if kind in ('sequence','upscale'):
+        if kind in ('sequence','named','upscale'):
             from project_data_service.workflow_cinematic_sequence import WorkflowCinematicSequence,READY_SCHEMA as sequence_schema
             impl,schema,at,marker_name=WorkflowCinematicSequence,sequence_schema,'workflow_cinematic_sequence','cinematic-sequence-animation-ready.json'
         marker=f.root/marker_name
@@ -83,7 +86,7 @@ new PlannerStore(process.argv[1],{cinematicEnabled:true,readCinematicPublication
         proof=json.loads(child.stdout); rn=proof['officialRequestId']
         self.assertEqual((sources/(source+'.png')).read_bytes(),still)
         self.assertFalse(list((f.data/'props').iterdir()))
-        if kind in ('sequence','upscale'):
+        if kind in ('sequence','named','upscale'):
             path=root/'sequences'/rn
             manifest=json.loads((path/'manifest.json').read_bytes())
             self.assertEqual(manifest['frameCount'],45)

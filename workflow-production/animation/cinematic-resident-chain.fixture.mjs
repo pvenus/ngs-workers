@@ -10,7 +10,8 @@ import {cinematicSequencePorts,chooseCinematicSequence,executeCinematicSequence}
 import {createAnimationModelSwitch} from './i2v-model-switch.mjs';
 const [services,dbPath,inboxDir,origin,sourceSha256,kind='mp4']=process.argv.slice(2);
 const derive=kind==='upscale';
-const sequence=kind==='sequence'||derive;
+const named=kind==='named'||derive;
+const sequence=kind==='sequence'||named;
 assert.ok(sequence||kind==='mp4');
 assert.match(origin,/^http:\/\/127\.0\.0\.1:\d{1,5}$/);
 assert.match(sourceSha256,/^[a-f0-9]{64}$/);
@@ -56,11 +57,11 @@ function rgbFrame(index,w=sequence?512:128,h=sequence?256:128){
 }
 
 try{
- const playback={durationFrames:75,speedCurve:[{frame:0,rate:0},{frame:64,rate:1.35}],
+ const playback=named?{durationFrames:45,speedCurve:[{frame:0,rate:1}],cameraCurve:[{frame:0,zoom:1,x:.5,y:.5}]}:{durationFrames:75,speedCurve:[{frame:0,rate:0},{frame:64,rate:1.35}],
   cameraCurve:[{frame:0,zoom:1,x:0.5,y:0.5},{frame:72,zoom:1.2,x:0.55,y:0.65}]};
  const hashes=[];
- const payload={schemaVersion:sequence?'ngs.cinematic-sequence-generate.v1':'ngs.cinematic-generate.v1',projectId:'binari',
-  sourceSha256,motionPrompt:'A slow reveal from the ritual room.',...(sequence?{playback}:{})};
+ const payload={schemaVersion:named?'ngs.cinematic-sequence-generate.v2':sequence?'ngs.cinematic-sequence-generate.v1':'ngs.cinematic-generate.v1',projectId:'binari',
+  sourceSha256,motionPrompt:'A slow reveal from the ritual room.',...(named?{title:'처마 너머 먼 산'}:sequence?{playback}:{})};
  const accepted=await rs.call('request_submit',{sourceId:'local',requestType:sequence?'cinematic.sequence.generate':'cinematic.generate',
   idempotencyKey:'fixture-cinematic',payload});
  const {officialRequestId}=accepted;
@@ -85,6 +86,7 @@ try{
  const completed=await pollOnce(planner,rs);assert.equal(completed.completed,1);
  const proof=await readCinematicPublication({officialRequestId});
  assert.equal(proof.manifest.sourceSha256,sourceSha256);
+ if(named)assert.equal(proof.manifest.title,'처마 너머 먼 산');
  assert.equal(proof.resultRef,worker.resultRef);
  let upscale;
  if(derive){
@@ -111,6 +113,7 @@ try{
   const completion=await pollOnce(planner,rs);assert.equal(completion.completed,1);
   const derived=await readCinematicPublication({officialRequestId:task.officialRequestId,family:requestType});
   assert.equal(derived.manifest.upscale.sourceSequenceId,officialRequestId);
+  assert.equal(derived.manifest.title,original.title);
   assert.deepEqual([derived.manifest.width,derived.manifest.height],[1024,512]);
   assert.notEqual(worker.resultRef,proof.resultRef);
   assert.deepEqual((await readCinematicPublication({officialRequestId})).manifest,original);
