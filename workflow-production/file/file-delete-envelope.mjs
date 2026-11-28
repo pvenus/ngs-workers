@@ -13,7 +13,7 @@ const sequencePath=/^sequences\/request\.official\.[a-f0-9]{64}$/u;
 const resultPath=/^results\/request\.official\.[a-f0-9]{64}\.(mp4|json)$/u;
 export function cinematicDeleteTarget(path,kind,sourceSha256){
  if(typeof path!=='string'||path.trim()!==path)return false;
- if(kind==='directory')return sequencePath.test(path);
+ if(kind==='directory')return sequencePath.test(path)||path==='scenes/'+sourceSha256;
  if(kind!=='file')return false;
  const source=sourcePath.exec(path);
  return source?source[1]===sourceSha256:resultPath.test(path);
