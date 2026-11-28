@@ -114,7 +114,7 @@ export function sourceGeometry(png,{background=false}={}){
   png.subarray(0,8).equals(signature)&&png.readUInt32BE(8)===13&&png.toString('ascii',12,16)==='IHDR';
  require(format,'CINEMATIC_SOURCE_PNG_INVALID');
  const width=png.readUInt32BE(16),height=png.readUInt32BE(20);
- if(width!==1536||height!==(background?1024:768))throw Object.assign(Error('CINEMATIC_SOURCE_PNG_GEOMETRY_INVALID'),{width,height});
+ if(background?(width!==1536||height!==1024):(width<1||height<1||width>4096||height>4096||width*height>8388608))throw Object.assign(Error('CINEMATIC_SOURCE_PNG_GEOMETRY_INVALID'),{width,height});
  require(png[24]===8&&[2,6].includes(png[25]),'CINEMATIC_SOURCE_PNG_INVALID');
  return {width,height};
 }

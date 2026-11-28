@@ -13,6 +13,8 @@ import {createPropDerivationRenderer} from './prop-derivation-provider.mjs';
 import {nextPropDerivationFromPath,runPropDerivationFromPath} from './prop-derivation-worker.mjs';
 import {nextPropPackageFromPath,runPropPackageFromPath} from './prop-package-worker.mjs';
 
+import {cinematicCropPorts,createCinematicCropRenderer,nextCinematicCrop,runCinematicCrop} from './cinematic-crop-worker.mjs';
+
 export function parseArgs(args){
  const flags=['--run','--db','--config','--model-pins','--worker-source','--sam-source'];
  if(args.length!==11||args[0]!==flags[0]||!flags.slice(1).every((f,i)=>args[1+2*i]===f&&args[2+2*i]?.startsWith('/')))
@@ -27,7 +29,9 @@ async function main(){
  const pds=postprocessPorts(),presetPds=presetPostprocessPorts();
  const propPds=propStagePorts();
  const bgPds=backgroundPixelPorts();
- let render,renderProp,renderBG;
+ const cropPds=cinematicCropPorts();
+ let render,renderProp,renderBG,renderCrop;
+ void createCinematicCropRenderer(options).then(value=>{renderCrop=value;}).catch(()=>{});
  void createBackgroundPixelRenderer(options).then(value=>{renderBG=value;}).catch(()=>{});
  // Existing NPC alpha/pixel setup never blocks or becomes a dependency of the
  // new CPU-only lane. This promise validates paths only; no GPU is loaded.
@@ -48,7 +52,8 @@ async function main(){
      render?Promise.all([pds.capability(),pds.capabilityPortrait()]):[false,false],motionCheck,renderProp?propPds.capabilities(stop.signal):null
     ]);
     const bgReady=Boolean(renderBG)&&await bgPds.ready(stop.signal);
-    ready=frames||portraits||motion||Boolean(props)||bgReady;
+    const cropReady=Boolean(renderCrop)&&await cropPds.ready(stop.signal);
+    ready=frames||portraits||motion||Boolean(props)||bgReady||cropReady;
     if(ready&&!heartbeatStarted){heartbeatStarted=true;void pulse();}
     if(!ready)heartbeatStarted=false;
     const available=!stop.signal.aborted;
@@ -60,9 +65,11 @@ async function main(){
     const prop=available&&!target&&!preset&&props&&nextPropDerivationFromPath(options.dbPath,propMode);
     const pack=available&&!target&&!preset&&!prop&&props&&nextPropPackageFromPath(options.dbPath,propMode);
     const bg=available&&bgReady&&!target&&!preset&&nextBackgroundPixel(options.dbPath);
+    const crop=available&&cropReady&&!target&&!preset&&!bg&&nextCinematicCrop(options.dbPath);
     result=target?await runPostprocessFromPath({...options,...target,pds,render,signal:stop.signal}):
      preset?await runPresetPostprocessFromPath({...options,...preset,pds:presetPds,signal:stop.signal}):
      bg?await runBackgroundPixel({...options,...bg,pds:bgPds,render:renderBG,signal:stop.signal}):
+     crop?await runCinematicCrop({...options,...crop,pds:cropPds,render:renderCrop,signal:stop.signal}):
            prop?await runPropDerivationFromPath({...options,...prop,pds:propPds,render:renderProp,signal:stop.signal,...propMode}):
      pack?await runPropPackageFromPath({...options,...pack,pds:propPds,signal:stop.signal,...propMode}):
      {state:ready?'idle':'not_ready'};

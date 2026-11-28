@@ -130,20 +130,21 @@ sys.stdout.buffer.write(base64.b64decode(result["base64"]))
  assert.deepEqual(p.stdout,png);
 });
 
-test('3:2 ImageGen result is not cropped or published as a new cinematic source',async t=>{
- const f=fixture(t);
+test('3:2 ImageGen result is retained byte for byte as a cinematic source',async t=>{
+ const f=fixture(t),ref='binari/cinematics/sources/'+sha(backgroundPng)+'.json';
  const pds={capability:async()=>true,readCinematicSource:async()=>input,readCinematicConcept:async()=>concept(),
-  publishCinematicSource:async()=>assert.fail('wrong aspect must not publish')};
+  publishCinematicSource:async(_,artifact)=>{
+   assert.equal(artifact.height,1024);assert.deepEqual(Buffer.from(artifact.base64,'base64'),backgroundPng);
+   return {ok:true,resultRef:ref};
+  }};
  const result=await imageTick({...f,mode:'run',pds,renderCinematicSource:async()=>backgroundPng},{check:safeCheck});
- assert.equal(result.state,'failed');
- assert.deepEqual(result.diagnostic,{stage:'validate-png',reason:'CINEMATIC_SOURCE_PNG_GEOMETRY_INVALID',width:1536,height:1024});
- assert.equal(f.state().result_ref,null);
+ assert.equal(result.state,'completed');assert.equal(f.state().result_ref,ref);
 });
 
 test('bad original geometry records exact dimensions without publishing; lost publish ACK stays unresolved',async t=>{
  for(const bad of [true,false]){
   const f=fixture(t),raw=Buffer.from(png);
-  if(bad)raw.writeUInt32BE(1824,16);
+  if(bad)raw.writeUInt32BE(4192,16);
   let sends=0;
   const pds={capability:async()=>true,readCinematicSource:async()=>input,readCinematicConcept:async()=>concept(),
    publishCinematicSource:async()=>{sends++;throw Error('unconfirmed');}};
@@ -152,7 +153,7 @@ test('bad original geometry records exact dimensions without publishing; lost pu
   assert.equal(sends,bad?0:2);
   assert.equal(r.state,bad?'failed':'requires_reconciliation');
   assert.equal(f.state().status,bad?'failed':'running');
-  if(bad)assert.deepEqual(r.diagnostic,{stage:'validate-png',reason:'CINEMATIC_SOURCE_PNG_GEOMETRY_INVALID',width:1824,height:768});
+  if(bad)assert.deepEqual(r.diagnostic,{stage:'validate-png',reason:'CINEMATIC_SOURCE_PNG_GEOMETRY_INVALID',width:4192,height:768});
   else assert.equal(r.diagnostic.stage,'publish');
  }
 });
