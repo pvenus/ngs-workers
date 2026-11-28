@@ -109,14 +109,14 @@ export const validBackgroundRenderInput=v=>exact(v,['title','prompt','design','c
    f.sha256===sha(f.text)&&JSON.parse(f.text).schemaVersion===commonSchemas[i];}catch{return false;}
  });
 const signature=Buffer.from('89504e470d0a1a0a','hex');
-export function sourceGeometry(png){
+export function sourceGeometry(png,{background=false}={}){
  const format=Buffer.isBuffer(png)&&png.length>=57&&png.length<=8*1024*1024&&
   png.subarray(0,8).equals(signature)&&png.readUInt32BE(8)===13&&png.toString('ascii',12,16)==='IHDR';
  require(format,'CINEMATIC_SOURCE_PNG_INVALID');
  const width=png.readUInt32BE(16),height=png.readUInt32BE(20);
- if(width!==1536||height!==1024)throw Object.assign(Error('CINEMATIC_SOURCE_PNG_GEOMETRY_INVALID'),{width,height});
+ if(width!==1536||height!==(background?1024:768))throw Object.assign(Error('CINEMATIC_SOURCE_PNG_GEOMETRY_INVALID'),{width,height});
  require(png[24]===8&&[2,6].includes(png[25]),'CINEMATIC_SOURCE_PNG_INVALID');
- return {width:1536,height:1024};
+ return {width,height};
 }
 export const nextCinematicSourceFromPath=(dbPath,operation=sourceType)=>nextWorkflowTaskFromPath(dbPath,
  {workerType,taskType:sourceProfiles[operation].type,taskKey:sourceProfiles[operation].key,predecessorKey:sourceProfiles[operation].chain===2?chainKeys[0]:null});
@@ -238,7 +238,7 @@ export async function runCinematicSourceFromPath({dbPath,officialRequestId,taskI
    let reference;
    if(profile.chain===2){
     require(typeof base64==='string'&&base64.length<=Math.ceil(8*1024*1024/3)*4);
-    const bytes=Buffer.from(base64,'base64');sourceGeometry(bytes);
+    const bytes=Buffer.from(base64,'base64');sourceGeometry(bytes,{background:true});
     require(sha(bytes)===sourceSha256);
     reference={assetId:sourceSha256+'.png',sha256:sourceSha256,base64};
    }else require(sourceSha256===undefined&&base64===undefined);
@@ -249,7 +249,7 @@ export async function runCinematicSourceFromPath({dbPath,officialRequestId,taskI
    stage='render';
    const png=await renderCinematicSource({...background?{title:input.title,prompt:Object.entries(backgroundLabels).flatMap(([key,label])=>input[key]?[label+': '+input[key]]:[]).join('\n')}:input,...selected,...(profile.chain===1?{cinematic:selectCinematicDesign(snapshot)}:{}),...(reference?{reference}:{})},{signal});
    stage='validate-png';
-   const geometry=sourceGeometry(png),sha256=sha(png),resultRef=refFor(sha256,profile);
+   const geometry=sourceGeometry(png,{background}),sha256=sha(png),resultRef=refFor(sha256,profile);
    const artifact={sha256,bytes:png.length,...geometry,base64:png.toString('base64')};
    signal?.throwIfAborted();verifyCurrent();
    stage='release-prewrite-owner';

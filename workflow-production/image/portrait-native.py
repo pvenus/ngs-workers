@@ -5,6 +5,8 @@ import json
 import os
 import re
 import stat
+import struct
+import subprocess
 import sys
 import tempfile
 from pathlib import Path
@@ -387,9 +389,11 @@ def cinematic_source_prompt(data):
             not 1 <= len(design["markdown"].encode()) <= 24000 or
             hashlib.sha256(design["markdown"].encode()).hexdigest() != design["sha256"]):
         raise ValueError("CINEMATIC_SOURCE_DESIGN_INVALID")
-    return ("Render one opaque, landscape 1536×1024 PNG as the establishing frame of a game cinematic. "
-            "The actual canvas must be 1536 pixels wide and 1024 pixels high, even if a shot mentions another aspect ratio. "
-            "Use such aspect notes as framing guidance only; never change the canvas or add letterboxing. "
+    return ("Render one opaque widescreen 2:1, 1536×768 PNG as the establishing frame of a game cinematic. "
+            "Use this 2:1 framing even if the shot brief or a style example mentions another ratio. "
+            "If the generator has a fixed 1536×1024 canvas, compose every essential element inside its central "
+            "1536×768 area, leaving the outer 128 pixels at top and bottom as expendable painted scenery. "
+            "Never bake letterboxing into the image. "
             "Compose one continuous scene to the canvas edges, with the environment/background fully painted. "
             "No borders, split-panel layout, typography, subtitle, logo or watermark. "
             "Use the published design to determine the drawing and rendering style; use the individual shot "
@@ -402,6 +406,34 @@ def cinematic_source_prompt(data):
             "\n\n[2 Exact shot request]\n" +
             json.dumps({k:data[k] for k in ("title","prompt")},ensure_ascii=False,sort_keys=True))
 
+
+
+def cinematic_wide_png(raw, root):
+    header = b"\x89PNG\r\n\x1a\n\x00\x00\x00\x0dIHDR"
+    if len(raw) < 57 or not raw.startswith(header):
+        raise ValueError("CINEMATIC_SOURCE_PNG_INVALID")
+    if raw[24] != 8 or raw[25] not in (2, 6):
+        raise ValueError("CINEMATIC_SOURCE_PNG_INVALID")
+    width, height = struct.unpack_from(">II", raw, 16)
+    if (width, height) == (1536, 768):
+        return raw  # Preserve the attested bytes when the tool produces the requested canvas.
+    if (width, height) != (1536, 1024):
+        raise ValueError("CINEMATIC_SOURCE_PNG_GEOMETRY_INVALID")
+    # The native image MCP has no explicit size argument. macOS sips crops
+    # the fixed landscape canvas without resampling and never touches shared files.
+    source, target = root / "wide-input.png", root / "wide-output.png"
+    source.write_bytes(raw)
+    try:
+        subprocess.run(["/usr/bin/sips", "-c", "768", "1536", str(source), "--out", str(target)],
+                       check=True, capture_output=True, timeout=20)
+        final = target.read_bytes()
+        if (len(final) < 57 or len(final) > _IMAGE_LIMIT or not final.startswith(header)
+                or struct.unpack_from(">II", final, 16) != (1536, 768)
+                or final[24] != 8 or final[25] not in (2, 6)):
+            raise ValueError("CINEMATIC_SOURCE_WIDE_CROP_INVALID")
+        return final
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise ValueError("CINEMATIC_SOURCE_WIDE_CROP_INVALID") from exc
 
 
 def background_source_prompt(data):
@@ -604,6 +636,12 @@ def run(session, call, path, expected):
                 proof.get("sha256") != actual or any(proof.get(k) != claim[k] for k in
                     ("index", "providerClaim", "requestHash", "providerRequestHash"))):
             return {"code": 26}
+        if mode == "render-cinematic-source":
+            try:
+                raw = cinematic_wide_png(raw, root)
+            except ValueError as exc:
+                diagnostic(worker="image", stage="cinematic-wide", outcome="invalid", evidenceCode=str(exc))
+                return {"code": 24}
         if manifest is None and not (cinematic or green_prop) and mode != "render-ui-asset":
             try:
                 validate_transparency(raw, descriptor["outputContract"], "portrait")

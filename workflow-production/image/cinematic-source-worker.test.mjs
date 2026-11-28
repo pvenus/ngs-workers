@@ -23,10 +23,10 @@ const u32=n=>{const b=Buffer.alloc(4);b.writeUInt32BE(n);return b;};
 const chunk=(tag,raw)=>{
  const b=Buffer.concat([Buffer.from(tag),raw]);return Buffer.concat([u32(raw.length),b,u32(crc32(b))]);
 };
-const png=Buffer.concat([Buffer.from('89504e470d0a1a0a','hex'),
- chunk('IHDR',Buffer.concat([u32(1536),u32(1024),Buffer.from([8,2,0,0,0])])),
- chunk('IDAT',deflateSync(Buffer.alloc(1024*(1536*3+1)))),
- chunk('IEND',Buffer.alloc(0))]);
+const image=(h, rows=Buffer.alloc(h*(1536*3+1)))=>Buffer.concat([Buffer.from('89504e470d0a1a0a','hex'),
+ chunk('IHDR',Buffer.concat([u32(1536),u32(h),Buffer.from([8,2,0,0,0])])),
+ chunk('IDAT',deflateSync(rows)),chunk('IEND',Buffer.alloc(0))]);
+const png=image(768),backgroundPng=image(1024);
 const resultRef='binari/cinematics/sources/'+sha(png)+'.json';
 function fixture(t,request=input,background=false){
  const dir=realpathSync(mkdtempSync(join(tmpdir(),'cinematic-source-stage-')));
@@ -55,7 +55,7 @@ test('resident claims an image-only job and retries exact PNG bytes only after l
  readCinematicConcept:async()=>{order.push('design');return concept();},
  publishCinematicSource:async(claim,artifact)=>{
   order.push('publish');assert.equal(f.state().portrait_read_owner_pid,null);assert.equal(claim.claimStamp,f.state().updated_at);
-  assert.deepEqual(artifact,{sha256:sha(png),bytes:png.length,width:1536,height:1024,base64:png.toString('base64')});
+  assert.deepEqual(artifact,{sha256:sha(png),bytes:png.length,width:1536,height:768,base64:png.toString('base64')});
   if(order.length===4)throw Error('lost');return {ok:true,resultRef};
  }};
  const renderCinematicSource=async direction=>{order.push('render');assert.equal(f.state().portrait_read_owner_pid,process.pid);assert.deepEqual(direction,{...input,design});return png;};
@@ -107,25 +107,35 @@ class Runner:
  def generate(self,claim):
   d=claim["providerRequest"]; assert d["arguments"]["transparent_background"] is False
   prompt=d["arguments"]["prompt"]
-  assert "1536×1024" in prompt and "빈 마루" in prompt
+  assert "2:1, 1536×768" in prompt and "central" in prompt and "빈 마루" in prompt
   assert prompt.index("마른 붓의 굵은 먹선과 큰 여백") < prompt.index("[2 Exact shot request]")
   assert json.loads(prompt.split("[2 Exact shot request]\n",1)[1])["prompt"] == "저녁의 마당, 바람에 흔들리는 한 점의 불빛."
   assert "exclude-this-other-section" not in prompt
-  raw=b'not-a-generated-image-in-this-bridge-test'
+  raw=bytes.fromhex(fixture)
   return raw,{**claim,"sha256":hashlib.sha256(raw).hexdigest(),"actualToolOutput":True}
  def execution_evidence(self): return {"outcome":"joined"}
 def prohibited(*a): raise AssertionError("must not invoke portrait/alpha")
 from types import SimpleNamespace
 import base64
 run.__globals__["bind"]=lambda *_:(prohibited,lambda *_:(Runner(),SimpleNamespace(settled=True)),prohibited,None,None,digest,prohibited)
+data = json.load(sys.stdin)
+fixture = data.pop("fixture")
 result=run(SimpleNamespace(stopped=SimpleNamespace(is_set=lambda:False)),
-           {"mode":"render-cinematic-source","data":json.load(sys.stdin)},"config","pin")
+           {"mode":"render-cinematic-source","data":data},"config","pin")
 assert result["code"]==0
 sys.stdout.buffer.write(base64.b64decode(result["base64"]))
 `;
- const p=spawnSync('/usr/bin/python3',['-B','-c',script,helper],{input:JSON.stringify({...input,design}),encoding:'utf8'});
- assert.equal(p.status,0,p.stderr);
- assert.equal(p.stdout,'not-a-generated-image-in-this-bridge-test');
+ const p=spawnSync('/usr/bin/python3',['-B','-c',script,helper],{input:JSON.stringify({...input,design,fixture:png.toString('hex')})});
+ assert.equal(p.status,0,p.stderr.toString());
+ assert.deepEqual(p.stdout,png);
+});
+
+test('fixed-size native landscape crops to 2:1 without resampling', {skip:process.platform!=='darwin'},()=>{
+ const helper=fileURLToPath(new URL('./portrait-native.py',import.meta.url));
+ const script="import runpy,sys,tempfile,pathlib; f=runpy.run_path(sys.argv[1])['cinematic_wide_png']; d=tempfile.TemporaryDirectory(); sys.stdout.buffer.write(f(sys.stdin.buffer.read(),pathlib.Path(d.name)))";
+ const p=spawnSync('/usr/bin/python3',['-B','-c',script,helper],{input:backgroundPng});
+ assert.equal(p.status,0,p.stderr.toString());
+ assert.deepEqual([p.stdout.readUInt32BE(16),p.stdout.readUInt32BE(20)],[1536,768]);
 });
 
 test('bad original geometry records exact dimensions without publishing; lost publish ACK stays unresolved',async t=>{
@@ -140,7 +150,7 @@ test('bad original geometry records exact dimensions without publishing; lost pu
   assert.equal(sends,bad?0:2);
   assert.equal(r.state,bad?'failed':'requires_reconciliation');
   assert.equal(f.state().status,bad?'failed':'running');
-  if(bad)assert.deepEqual(r.diagnostic,{stage:'validate-png',reason:'CINEMATIC_SOURCE_PNG_GEOMETRY_INVALID',width:1824,height:1024});
+  if(bad)assert.deepEqual(r.diagnostic,{stage:'validate-png',reason:'CINEMATIC_SOURCE_PNG_GEOMETRY_INVALID',width:1824,height:768});
   else assert.equal(r.diagnostic.stage,'publish');
  }
 });
@@ -190,15 +200,15 @@ test('resident background lane combines typed scene, common design and backgroun
  snapshot.document.sections.push({id:backgroundDesignId,title:'배경 디자인 설계',fields:[{id:'content',value:'# 배경 디자인 설계\n\n빈 동선을 확보한다.'}]},
   {id:'expression',fields:[{id:'visualStyle',value:{schemaVersion:'ngs.character-style-contract.v1',visualStyle:'선명한 실루엣'}},
    {id:'visualProhibitions',value:{schemaVersion:'ngs.character-style-constraints.v1',visualProhibitions:'글자 없음'}}]});
- const resultRef='binari/cinematics/backgrounds/'+sha(png)+'.json';
+ const resultRef='binari/cinematics/backgrounds/'+sha(backgroundPng)+'.json';
  const pds={capability:async(_signal,operation)=>operation===backgroundSourceType,
   readBackgroundSource:async()=>{order.push('inputs');return input;},
   readCinematicConcept:async()=>{order.push('concept');return snapshot;},
-  publishBackgroundSource:async(_,artifact)=>{order.push('publish');assert.equal(artifact.sha256,sha(png));return {ok:true,resultRef};}};
+  publishBackgroundSource:async(_,artifact)=>{order.push('publish');assert.equal(artifact.sha256,sha(backgroundPng));return {ok:true,resultRef};}};
  const renderCinematicSource=async data=>{order.push('render');assert.ok(validBackgroundRenderInput(data));
   assert.match(data.prompt,/시간대: 저녁[\s\S]*필수 요청 사항: 기둥을 분리[\s\S]*추가 요청 사항: 낮은 시점/);
   assert.equal(data.design.categoryId,backgroundDesignId);
-  assert.deepEqual(data.common.map(x=>x.id),['visualStyle','visualProhibitions']);return png;};
+  assert.deepEqual(data.common.map(x=>x.id),['visualStyle','visualProhibitions']);return backgroundPng;};
  const out=await imageTick({...f,mode:'run',pds,renderCinematicSource},{check:safeCheck});
  assert.equal(out.state,'completed');assert.deepEqual(order,['inputs','concept','render','publish']);
  assert.equal(f.state().result_ref,resultRef);

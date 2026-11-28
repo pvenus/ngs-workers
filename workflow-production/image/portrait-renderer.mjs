@@ -150,7 +150,7 @@ export function createCinematicSourceRenderer(config){
    throw fail('BACKGROUND_CINEMATIC_DESIGN_INVALID');
   if(!background&&!validCinematicSourceRenderInput(input))throw fail('CINEMATIC_SOURCE_INPUT_INVALID');
   const raw=await call(pinned,background?'render-background-source':'render-cinematic-source',Buffer.from(JSON.stringify(input)),signal);
-  sourceGeometry(raw);
+  sourceGeometry(raw,{background});
   return raw;
  };
 }
