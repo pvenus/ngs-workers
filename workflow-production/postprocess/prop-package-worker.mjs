@@ -3,12 +3,12 @@ import {retrySqliteBusy,saveReservationClearSql} from './sqlite-busy-retry.mjs';
 import {DatabaseSync} from 'node:sqlite';
 import {canonical,sha} from './vendor/planner-f24d23a/envelope.mjs';
 import {assertDatabasePath,protectSchema,workflowTaskEligibleSql,workflowTaskRetrySetSql,markWorkflowTaskFailed} from './workflow-ready.mjs';
-import {exactProp,propValidator,propGenerateType,propRegenerateType,propAnimationType} from './vendor/prop-composite/prop-generate-envelope.mjs';
+import {exactProp,propValidator,propGenerateType,propRegenerateType,propAnimationType,propScaleType} from './vendor/prop-composite/prop-generate-envelope.mjs';
 import {buildPropGeneratePlan,checkPropPublishRows,exactPropTask,propCompletionLimit,propKeys} from './vendor/prop-composite/prop-generate-plan.mjs';
 import {parsePropPackage,propPackageReceipt} from './vendor/prop-composite/prop-package-contract.mjs';
 
 const types=[propGenerateType,propRegenerateType];
-const stillSql="r.request_type IN (?,?) AND CASE WHEN json_valid(r.payload) THEN coalesce(json_extract(r.payload,'$.motion'),'still')='still' ELSE 0 END";
+const stillSql="((r.request_type IN (?,?) AND CASE WHEN json_valid(r.payload) THEN coalesce(json_extract(r.payload,'$.motion'),'still')='still' ELSE 0 END) OR r.request_type='prop.scale.generate')";
 const modeSql=appendEnabled=>appendEnabled
  ?`((${stillSql}) OR r.request_type='${propAnimationType}')`
  :stillSql;
@@ -46,7 +46,7 @@ export function nextPropPackageFromPath(dbPath,{appendEnabled=false}={}){
     FROM workflow_tasks t JOIN workflow_runs r USING(official_request_id)
     WHERE r.state='planned' AND r.reason IS NULL AND r.project_id='binari' AND ${modeSql(appendEnabled)}
       AND ${workflowTaskEligibleSql(db, 't')} AND t.result_ref IS NULL AND t.worker_type='postprocess' AND t.task_key=?
-      AND CASE WHEN r.request_type='${propAnimationType}' THEN
+      AND CASE WHEN r.request_type='${propScaleType}' THEN 1 WHEN r.request_type='${propAnimationType}' THEN
         (SELECT count(*) FROM workflow_tasks w WHERE w.official_request_id=t.official_request_id
          AND w.task_key IN (?,?,?) AND w.status='completed' AND w.result_ref IS NOT NULL)=3 ELSE
         (SELECT count(*) FROM workflow_tasks w WHERE w.official_request_id=t.official_request_id
@@ -94,10 +94,14 @@ export async function runPropPackageFromPath({dbPath,officialRequestId,taskId,pd
     const clip=m.animations.at(-1);
     check(clip?.id===found.payload.motionId&&clip.officialRequestId===officialRequestId&&clip.requestSha256===claim.payloadSha256&&
      clip.media.detail.sha256===shaFor(propKeys.animDetail)&&clip.media.pixel.sha256===shaFor(propKeys.animPixel));
+   }else if(found.root.request_type===propScaleType){
+    check(found.payload.scalePercents.every(n=>m.scaleVariants?.some(v=>v.scalePercent===n)));
    }else{
     check(m.designContextSha256===found.payload.designContextSha256&&m.animations.length===0&&
      m.media.detail.sha256===shaFor(propKeys.detail)&&m.media.pixel.sha256===shaFor(propKeys.pixel)&&
      m.media.spirit?.sha256===shaFor(propKeys.spirit));
+    if(found.payload.scalePercents)check(canonical(m.scaleVariants.map(v=>v.scalePercent))===canonical([...found.payload.scalePercents].sort((a,b)=>a-b))&&
+      m.scaleSourcePixel?.sha256===shaFor(propKeys.pixelDetail));
    }
    const expected=await propPackageReceipt(m);
    signal?.throwIfAborted();tx(db,current);

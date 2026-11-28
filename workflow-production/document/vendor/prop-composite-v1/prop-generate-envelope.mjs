@@ -9,13 +9,18 @@ const slug=v=>typeof v==='string'&&v.length>=2&&v.length<=80&&v.trim()===v&&/^[a
 export const spiritPresentationProfile='spirit-v1',pixelSourcePresentationProfile='spirit-v2';
 export const propPresentationProfiles=Object.freeze([spiritPresentationProfile,pixelSourcePresentationProfile]);
 const presentation=v=>Object.hasOwn(v??{},'presentationProfile');
+export const propScaleType='prop.scale.generate',propScaleSchema='ngs.prop-scale-generate.v1';
+export const scalePercents=Object.freeze([5,10,20,30,40,50,60,70,80,90,100]);
+export const validPropScalePercents=v=>Array.isArray(v)&&v.length>0&&v.length<=11&&new Set(v).size===v.length&&Array.from(v).every(n=>scalePercents.includes(n));
+const scaleSchema={type:'array',items:{enum:scalePercents},uniqueItems:true,minItems:1,maxItems:11};
 const fields=['schemaVersion','projectId','propId','intent','designContextSha256'];
 const referenceFields=['propId','revision','sha256'];
 export const validPropGenerateReference=(reference,target)=>exactProp(reference,referenceFields)&&
  slug(reference.propId)&&reference.propId!==target&&sourcePin({revision:reference.revision,sha256:reference.sha256});
 export function validatePropGenerate(v,project){
  const motion=Object.hasOwn(v??{},'motion'),reference=Object.hasOwn(v??{},'reference');
- if(!exactProp(v,[...fields,...(motion?['motion']:[]),...(reference?['reference']:[]),...(presentation(v)?['presentationProfile']:[])])||v.schemaVersion!==propGenerateSchema||
+ if(!exactProp(v,[...fields,...(motion?['motion']:[]),...(reference?['reference']:[]),...(presentation(v)?['presentationProfile']:[]),...(Object.hasOwn(v??{},'scalePercents')?['scalePercents']:[])])||v.schemaVersion!==propGenerateSchema||
+    Object.hasOwn(v,'scalePercents')&&(!validPropScalePercents(v.scalePercents)||v.presentationProfile!==pixelSourcePresentationProfile)||
     reference&&!validPropGenerateReference(v.reference,v.propId)||
     presentation(v)&&!propPresentationProfiles.includes(v.presentationProfile)||
     project!=='binari'||v.projectId!==project||!slug(v.propId)||!propHash(v.designContextSha256)||
@@ -29,17 +34,18 @@ const generateProperties={
  intent:{type:'string',minLength:1,maxLength:4000},designContextSha256:{type:'string',pattern:'^[a-f0-9]{64}$'},
  motion:{enum:['still','subtle']},presentationProfile:{enum:propPresentationProfiles},
 };
-export const propGeneratePayloadSchema={type:'object',properties:{...generateProperties,
+export const propGeneratePayloadSchema={type:'object',properties:{...generateProperties,scalePercents:scaleSchema,
  reference:{type:'object',properties:{propId:generateProperties.propId,
   revision:{type:'integer',minimum:1,maximum:Number.MAX_SAFE_INTEGER-1},
   sha256:{type:'string',pattern:'^[a-f0-9]{64}$'}},required:referenceFields,additionalProperties:false},
-},required:fields,additionalProperties:false};
+},required:fields,additionalProperties:false,if:{required:['scalePercents']},
+ then:{required:['presentationProfile'],properties:{presentationProfile:{const:pixelSourcePresentationProfile}}}};
 
 export const propRegenerateType='prop.regenerate',propRegenerateSchema='ngs.prop-regenerate.v1';
 export const propAnimationType='prop.animation.generate',propAnimationSchema='ngs.prop-animation-generate.v1';
 export const candleChromaProfile='candle-chroma-headroom-v1',candleChromaPropId='candle-brass-petal-unlit-clean';
 export const propMutationUnavailable='PROP_MUTATION_RUNTIME_UNAVAILABLE';
-export const propTypes=Object.freeze([propGenerateType,propRegenerateType,propAnimationType]);
+export const propTypes=Object.freeze([propGenerateType,propRegenerateType,propAnimationType,propScaleType]);
 const sourcePin=v=>exactProp(v,['revision','sha256'])&&Number.isSafeInteger(v.revision)&&
  v.revision>=1&&v.revision<Number.MAX_SAFE_INTEGER&&propHash(v.sha256);
 const clean=(v,max)=>typeof v==='string'&&v.isWellFormed()&&v.length>0&&v.trim()===v&&Buffer.byteLength(v)<=max&&
@@ -71,4 +77,12 @@ export const propAnimationPayloadSchema={type:'object',properties:{schemaVersion
  propId:propGeneratePayloadSchema.properties.propId,source:sourceSchema,motionId:propGeneratePayloadSchema.properties.propId,
  prompt:{type:'string',minLength:1,maxLength:2000},renderProfile:{const:candleChromaProfile}},required:animationFields,
  additionalProperties:false,if:{required:['renderProfile']},then:{properties:{propId:{const:candleChromaPropId}}}};
-export const propValidator=Object.freeze({[propGenerateType]:validatePropGenerate,[propRegenerateType]:validatePropRegenerate,[propAnimationType]:validatePropAnimation});
+const scaleFields=['schemaVersion','projectId','propId','source','scalePercents'];
+export function validatePropScale(v,project){
+ validateMutation(v,project,scaleFields,propScaleSchema);
+ if(!validPropScalePercents(v.scalePercents))throw Error(propGenerateInvalid);
+ return stable(v);
+}
+export const propScalePayloadSchema={type:'object',properties:{schemaVersion:{const:propScaleSchema},projectId:{const:'binari'},
+ propId:generateProperties.propId,source:sourceSchema,scalePercents:scaleSchema},required:scaleFields,additionalProperties:false};
+export const propValidator=Object.freeze({[propGenerateType]:validatePropGenerate,[propRegenerateType]:validatePropRegenerate,[propAnimationType]:validatePropAnimation,[propScaleType]:validatePropScale});

@@ -65,11 +65,26 @@ function pair(value,motion,{allowSpirit=false,scaled=false}={}){
 }
 export function parsePropPackage(v){
  insist(keys(v,['schemaVersion','projectId','propId','revision','officialRequestId','requestSha256','designContextSha256',
-  'title','parentSha256','media','interaction','animations'])&&v.schemaVersion===propPackageSchema&&v.projectId==='binari'&&id(v.propId)&&
+  'title','parentSha256','media','interaction','animations',...(Object.hasOwn(v??{},'scaleVariants')?['scaleVariants']:[]),...(Object.hasOwn(v??{},'scaleSourcePixel')?['scaleSourcePixel']:[])])&&v.schemaVersion===propPackageSchema&&v.projectId==='binari'&&id(v.propId)&&
   ints(v.revision,1,maxRevision)&&official(v.officialRequestId)&&hex(v.requestSha256)&&hex(v.designContextSha256)&&title(v.title)&&
   (v.revision===1?v.parentSha256===null:hex(v.parentSha256))&&Array.isArray(v.animations)&&v.animations.length<=1024,
   'PROP_PACKAGE_INVALID');
  const media=pair(v.media,'still',{allowSpirit:true});
+ const scaleSourcePixel=Object.hasOwn(v,'scaleSourcePixel')?parseMedia(v.scaleSourcePixel,'detail','still',1):null;
+ let scaleVariants=null;
+ if(Object.hasOwn(v,'scaleVariants')){
+  insist(Array.isArray(v.scaleVariants)&&v.scaleVariants.length>=1&&v.scaleVariants.length<=11,'PROP_PACKAGE_SCALE_VARIANTS');
+  let last=0;
+  scaleVariants=v.scaleVariants.map(r=>{
+   insist(keys(r,['scalePercent','pixel','spirit'])&&[5,10,20,30,40,50,60,70,80,90,100].includes(r.scalePercent)&&
+    r.scalePercent>last,'PROP_PACKAGE_SCALE_VARIANTS');
+   last=r.scalePercent;
+   const pixel=parseMedia(r.pixel,'detail','still',1),spirit=parseMedia(r.spirit,'detail','still',1);
+   for(const d of ['width','height'])for(const x of [pixel,spirit])
+    insist(x[d]===Math.max(1,Math.round(media.detail[d]*last/100)),'PROP_PACKAGE_SCALE_VARIANTS');
+   return {scalePercent:last,pixel,spirit};
+  });
+ }
  insist(keys(v.interaction,['pixelOpen','detailTrigger']),'PROP_PACKAGE_HOTSPOT');
  const pixelOpen=rect(v.interaction.pixelOpen,'open',media.pixel),detailTrigger=rect(v.interaction.detailTrigger,'activate',media.detail);
  if(v.revision===1)insist(v.animations.length<=1,'PROP_PACKAGE_INITIAL_ANIMATION');
@@ -87,7 +102,7 @@ export function parsePropPackage(v){
  });
  const {schemaVersion,projectId,propId,revision,officialRequestId,requestSha256,designContextSha256,title:label,parentSha256}=v;
  return {schemaVersion,projectId,propId,revision,officialRequestId,requestSha256,designContextSha256,title:label,parentSha256,
-  media,interaction:{pixelOpen,detailTrigger},animations};
+  media,interaction:{pixelOpen,detailTrigger},animations,...(scaleVariants?{scaleVariants}:{}),...(scaleSourcePixel?{scaleSourcePixel}:{})};
 }
 export function canonicalPropPackage(v){
  const text=canonical(parsePropPackage(v));

@@ -1,5 +1,5 @@
 import {canonical,sha} from './envelope.mjs';
-import {propGenerateType,propRegenerateType,propAnimationType,propTypes,propHash,pixelSourcePresentationProfile} from './prop-generate-envelope.mjs';
+import {propGenerateType,propRegenerateType,propAnimationType,propScaleType,propTypes,propHash,pixelSourcePresentationProfile} from './prop-generate-envelope.mjs';
 
 export const propKeys=Object.freeze({
  design:'prop_design',base:'prop_base',motion:'prop_motion',detail:'prop_detail',pixel:'prop_pixel',pixelSource:'prop_pixel_source',pixelDetail:'prop_pixel_detail',spirit:'prop_spirit',animDetail:'prop_animation_detail',animPixel:'prop_animation_pixel',publish:'prop_pack_publish',
@@ -33,6 +33,8 @@ export function buildPropGeneratePlan(run){
  if(!propTypes.includes(run.requestType)||typeof oid!=='string'||oid.length!==81||!official.test(oid))
   throw Error('PROP_COMPOSITE_TOPOLOGY_INVALID');
  if(run.requestType===propAnimationType)return buildAppendPlan(run);
+ if(run.requestType===propScaleType)return [{id:propTaskId(oid,propKeys.publish),key:propKeys.publish,type:propScaleType+'.publish',
+  workerType:'postprocess',dependsOn:null,input:{propId:payload.propId,source:payload.source,scalePercents:payload.scalePercents,dependsOnTaskIds:[]}}];
  const id=key=>propTaskId(oid,key),motion=payload.motion==='subtle', mode=motion?'subtle':'still';
  const regenerate=run.requestType===propRegenerateType;
  const profile=payload.presentationProfile,pixelSource=profile===pixelSourcePresentationProfile;
@@ -61,7 +63,7 @@ export function buildPropGeneratePlan(run){
  const keys=tasks.map(row=>row.key);
  // Canonical publishing must verify ALL predecessors and their bytes; the
  // scalar indexed parent does not authorize publication by itself.
- task(propKeys.publish,motion?propKeys.animPixel:propKeys.pixel,{dependsOnTaskIds:keys.map(id)});
+ task(propKeys.publish,motion?propKeys.animPixel:propKeys.pixel,{dependsOnTaskIds:keys.map(id),...(payload.scalePercents?{scalePercents:payload.scalePercents}:{})});
  if(profile)tasks.at(-1).additionalDependencies=[...(motion?[id(propKeys.pixel)]:[]),id(propKeys.spirit)];
  return tasks;
 }

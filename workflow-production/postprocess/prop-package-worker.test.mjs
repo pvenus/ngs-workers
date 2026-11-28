@@ -13,14 +13,14 @@ import {nextPropDerivationFromPath,runPropDerivationFromPath} from './prop-deriv
 
 const officialRequestId='request.official.'+'3'.repeat(64);
 const dig=i=>String(i).repeat(64);
-function make(t,{regenerate=false,motion='still',spirit=false}={}){
+function make(t,{regenerate=false,motion='still',spirit=false,scale=false}={}){
  const root=realpathSync(mkdtempSync(join(tmpdir(),'prop-publish-')));
  const dbPath=join(root,'plan.sqlite');writeFileSync(dbPath,'',{mode:0o600});
  const db=new DatabaseSync(dbPath);t.after(()=>{db.close();rmSync(root,{recursive:true,force:true});});
  db.exec(`CREATE TABLE workflow_runs(official_request_id,project_id,request_type,schema_version,payload,payload_sha256,registered_at,state,updated_at,reason);
   CREATE TABLE workflow_tasks(task_id,official_request_id,task_key,task_type,worker_type,task_input,result_ref,updated_at,depends_on_task_id,status,retry_count,depends_on_task_id_2,depends_on_task_id_3);`);
- const type=regenerate?'prop.regenerate':'prop.generate';
- const payload={schemaVersion:regenerate?'ngs.prop-regenerate.v1':'ngs.prop-generate.v1',projectId:'binari',
+ const type=scale?'prop.scale.generate':regenerate?'prop.regenerate':'prop.generate';
+ const payload=scale?{schemaVersion:'ngs.prop-scale-generate.v1',projectId:'binari',propId:'test-bell',source:{revision:4,sha256:dig(9)},scalePercents:[5,100]}:{schemaVersion:regenerate?'ngs.prop-regenerate.v1':'ngs.prop-generate.v1',projectId:'binari',
    propId:'test-bell',designContextSha256:dig(1),intent:'독립 프랍',motion,...(spirit?{presentationProfile:'spirit-v1'}:{}),...(regenerate?{source:{revision:4,sha256:dig(9)}}:{})};
  const source=canonical(payload),requestSha256=sha(source);
  db.prepare("INSERT INTO workflow_runs VALUES(?,?,?,?,?,?,1,'planned',1,NULL)")
@@ -35,9 +35,10 @@ function make(t,{regenerate=false,motion='still',spirit=false}={}){
  }
  const m=(hash,width)=>({assetId:hash+'.png',sha256:hash,width,height:width,bytes:80,mediaType:'image/png',frameDurationsMs:[]});
  const manifest={schemaVersion:'ngs.prop-package.v1',projectId:'binari',propId:payload.propId,
-  revision:regenerate?5:1,parentSha256:regenerate?dig(9):null,officialRequestId,requestSha256,
-  designContextSha256:payload.designContextSha256,title:'종',media:{detail:m(dig(3),512),pixel:m(dig(4),spirit?102:256),...(spirit?{spirit:m(dig(5),102)}:{})},
-  interaction:{pixelOpen:{action:'open',x:1,y:2,width:30,height:40},detailTrigger:null},animations:[]};
+  revision:scale||regenerate?5:1,parentSha256:scale||regenerate?dig(9):null,officialRequestId,requestSha256,
+  designContextSha256:payload.designContextSha256??dig(1),title:'종',media:{detail:m(dig(3),512),pixel:m(dig(4),spirit?102:256),...(spirit?{spirit:m(dig(5),102)}:{})},
+  interaction:{pixelOpen:{action:'open',x:1,y:2,width:30,height:40},detailTrigger:null},animations:[],...(scale?{scaleVariants:[{scalePercent:5,pixel:m(dig(6),26),spirit:m(dig(7),26)},
+   {scalePercent:100,pixel:m(dig(8),512),spirit:m(dig(3),512)}]}:{})};
  const taskId=by[propKeys.publish].id;
  const state=()=>db.prepare('SELECT status,result_ref,retry_count FROM workflow_tasks WHERE task_id=?').get(taskId);
  const run=(pds)=>runPropPackageFromPath({dbPath,taskId,officialRequestId,pds});
@@ -117,4 +118,17 @@ test('Spirit package readiness and publish bind third static receipt at one-fift
   assert.equal((await f.run(pds)).state,'completed');
   assert.equal(posted,1);
  }
+});
+
+test('scale append has its own single task and accepts only matching PDS publication ACK',async t=>{
+ const f=make(t,{scale:true});
+ assert.deepEqual(Object.keys(f.by),[propKeys.publish]);
+ assert.deepEqual(nextPropPackageFromPath(f.dbPath),{taskId:f.taskId,officialRequestId});
+ const ref=await propPackageReceipt(f.manifest);
+ const result=await f.run({
+  preparePropPublication(claim){assert.equal(claim.taskId,f.taskId);return {manifest:f.manifest};},
+  publishPropPackage(claim,manifest){assert.equal(claim.taskId,f.taskId);assert.deepEqual(manifest,f.manifest);return {ok:true,resultRef:ref};},
+ });
+ assert.equal(result.state,'completed');
+ assert.equal(f.state().result_ref,ref);
 });
