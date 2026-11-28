@@ -576,7 +576,11 @@ def run(session, call, path, expected):
         root = Path(directory).resolve()
         (root / "artifacts").mkdir(mode=0o700)
         manifest = prepare_reference(data, pairs, root, green_prop=green_prop, background=mode=="render-background-source")
-        descriptor = provider_descriptor(instruction, manifest, pairs, opaque=cinematic or green_prop)
+        if mode == "render-ui-asset":
+            descriptor = {"providerId": "codex.image_gen", "toolName": "image_gen.imagegen",
+                          "arguments": {"prompt": instruction, "transparent_background": True}}
+        else:
+            descriptor = provider_descriptor(instruction, manifest, pairs, opaque=cinematic or green_prop)
         claim = {"index": 0, "providerClaim": "claim." + digest([request_hash, "workflow.original"])[:48],
                  "providerRequest": descriptor, "providerRequestHash": digest(descriptor), "requestHash": request_hash}
         if manifest is not None:

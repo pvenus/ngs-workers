@@ -260,7 +260,7 @@ class Runner:
   return raw,{**claim,"sha256":hashlib.sha256(raw).hexdigest(),"actualToolOutput":True}
  def execution_evidence(self): return {"outcome":"joined"}
 def prohibited(*a): raise AssertionError("UI must not invoke a scene, a reference, or portrait silhouette validation")
-pairs=SimpleNamespace(descriptor=lambda prompt,manifest:{"arguments":{"prompt":prompt,"transparent_background":True}})
+pairs=SimpleNamespace(descriptor=prohibited)
 def factory(*a): raise AssertionError("wording must not use NPC portrait factory")
 factory.ui_asset=lambda *_:(Runner(),SimpleNamespace(settled=True))
 run.__globals__["bind"]=lambda *_:(factory,prohibited,prohibited,pairs,None,digest,prohibited)
