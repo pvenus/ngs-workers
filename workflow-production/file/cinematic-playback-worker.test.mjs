@@ -140,7 +140,9 @@ test('file.update binds the complete metadata from the request and normally fail
  const {fileUpdateType,fileUpdateSchema,fileUpdatePds,mapUpdateRoot,fileUpdateRef}=await import('./file-update-envelope.mjs');
  const region={id:'start',name:'Start',description:'Entry',backgroundId:'background.'+'a'.repeat(64),imageSha256:'b'.repeat(64)};
  const input={target:{root:mapUpdateRoot,path:sequenceId,kind:'metadata'},expected:{revision:2,officialRequestId:'request.official.'+'6'.repeat(64)},
-  content:{title:'A map',startRegionId:'start',startPoint:{x:500,y:827},regions:[region],connections:[],colliders:[]}};
+  content:{title:'A map',startRegionId:'start',startPoint:{x:500,y:827},regions:[region],connections:[],colliders:[],
+   decorations:[{id:'lantern',regionId:'start',prop:{propId:'lantern',revision:3,sha256:'7'.repeat(64)},
+    anchor:{x:505,y:600},scale:100,visibility:'both',imageScalePercent:20}]}};
  for(const outcome of ['completed','failed','conflict']){
   const f=setup(t,input,fileUpdateType,fileUpdateSchema),calls=[];
   const pds=await withHttp(t,async(req,packet)=>{
@@ -165,11 +167,11 @@ test('generic file.update pins a mixed assembly revision including portal condit
  const puzzle={id:'ritual-well-water',type:'binari.ritual-well-water-demo',
   layout:{altar:{regionId:'start',x:40,y:50},well:{regionId:'start',x:60,y:50}},
   attachments:{bowl:{x:0,y:1},lid:{x:2,y:3}},
-  bindings:Object.fromEntries(['table','bowl','well','lid'].map(k=>[k,{propId:k,revision:1,sha256:'a'.repeat(64)}])),
+  bindings:Object.fromEntries(['table','bowl','well','lid'].map(k=>[k,{propId:k,revision:1,sha256:'a'.repeat(64),...(k==='bowl'?{imageScalePercent:20}:{})}])),
   portalConditions:[{portalId:'walk-to-well',propRole:'bowl',requiredState:'carried-filled'}]};
  const spirit={id:'spirit-reveal',type:'binari.ritual-spirit-manifestation',
   layout:{spirit:{regionId:'start',x:10,y:90}},attachments:{},
-  bindings:{spirit:{propId:'spirit',revision:4,sha256:'b'.repeat(64)}},scale:{spirit:300}};
+  bindings:{spirit:{propId:'spirit',revision:4,sha256:'b'.repeat(64),imageScalePercent:20}},scale:{spirit:300}};
  const input={target:{root:assemblyUpdateRoot,path:sequenceId,kind:'metadata'},expected:{revision:2,officialRequestId:'request.official.'+'6'.repeat(64)},
   content:{title:'Gated assembly',mapId:'request.official.'+'7'.repeat(64),puzzles:[puzzle,spirit]}};
  const envelope={schemaVersion:fileUpdateSchema,projectId:'binari',...input};
@@ -184,7 +186,8 @@ test('generic file.update pins a mixed assembly revision including portal condit
  assert.equal(validSpirit(defaultSpirit),true);
  for(const row of [{...spirit,scale:{spirit:301}},{...spirit,portalConditions:[]},
    {...spirit,layout:{spirit:{...spirit.layout.spirit,x:9}}},{...spirit,attachments:{spirit:{x:0,y:0}}},
-   {...spirit,bindings:{spirit:{...spirit.bindings.spirit,revision:0}}},{...spirit,id:puzzle.id}]){
+   {...spirit,bindings:{spirit:{...spirit.bindings.spirit,revision:0}}},
+   {...spirit,bindings:{spirit:{...spirit.bindings.spirit,imageScalePercent:25}}},{...spirit,id:puzzle.id}]){
   assert.equal(validSpirit(row),false);
  }
  const f=setup(t,input,fileUpdateType,fileUpdateSchema),calls=[];
