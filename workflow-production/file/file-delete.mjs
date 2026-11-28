@@ -1,4 +1,4 @@
-import {fileDeleteSchema,fileDeleteTaskKey,fileDeleteType,validateFileDelete,backgroundDeleteRoot,cinematicDeleteRoot,mapDeleteRoot,assemblyDeleteRoot,cinematicDeleteTarget} from './file-delete-envelope.mjs';
+import {fileDeleteSchema,fileDeleteTaskKey,fileDeleteType,validateFileDelete,backgroundDeleteRoot,cinematicDeleteRoot,mapDeleteRoot,assemblyDeleteRoot,cinematicDeleteTarget,cinematicSequenceDeleteTarget} from './file-delete-envelope.mjs';
 // Machine-only execution boundary. One workflow claim can authorize one target.
 import {exact} from './vendor/planner-f24d23a/planner.mjs';
 
@@ -25,8 +25,10 @@ export function exactDeleteTarget(command){
   return target;
  }
  if(['cinematic-directory','cinematic-file'].includes(target.kind)){
-  const source=typeof target.id==='string'&&/^sources\/([a-f0-9]{64})\./u.exec(target.id);
-  if(!cinematicDeleteTarget(target.id,target.kind.split('-')[1],source?.[1]))throw Error('WORKFLOW_DELETE_TARGET_INVALID');
+  const source=typeof target.id==='string'&&/^(?:scenes|sources)\/([a-f0-9]{64})(?:$|[./])/u.exec(target.id);
+  const kind=target.kind.split('-')[1],id=typeof target.id==='string'?target.id.split('/').at(-1):undefined;
+  if(!cinematicDeleteTarget(target.id,kind,source?.[1])&&
+     !cinematicSequenceDeleteTarget(target.id,kind,source?.[1],id))throw Error('WORKFLOW_DELETE_TARGET_INVALID');
   return target;
  }
  if(target.kind==='prop-directory'){

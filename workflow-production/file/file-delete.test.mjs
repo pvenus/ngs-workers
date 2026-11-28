@@ -35,3 +35,20 @@ test('rejects forged paths, instructions, extra fields and multi-target envelope
  ])await assert.rejects(pds.deleteTargets(input,binding),/WORKFLOW_DELETE_TARGET_INVALID/);
  assert.throws(()=>deleteCommandFromPlannedTask({...conceptPlan,input:{...conceptPlan.input,scope:'all'}}),/WORKFLOW_DELETE_TARGET_INVALID/);
 });
+
+test('common delete sends one exact scene-sequence directory and rejects changed ownership pins',async()=>{
+ const sourceSha256='a'.repeat(64),sequenceId='request.official.'+'b'.repeat(64);
+ const target={root:'canonical-files/binari/cinematics',kind:'directory',path:'scenes/'+sourceSha256+'/sequences/'+sequenceId};
+ const input={target,expected:{sourceSha256,sequenceId}};
+ const task={type:'file.delete',key:'file_delete',workerType:'file',input};
+ const command=deleteCommandFromPlannedTask(task);
+ assert.deepEqual(command,{operation:'file.delete',targets:[{kind:'cinematic-directory',id:target.path}]});
+ const calls=[];
+ const pds=localPorts({singleTarget:true,transport:opts=>{calls.push(opts);return {ok:true};}});
+ await pds.deleteTargets(command,binding,'file.delete');
+ assert.deepEqual(calls[0].body,{claim:binding,target});
+ for(const expected of [{sourceSha256},{sourceSha256,sequenceId:'request.official.'+'c'.repeat(64)},
+   {sourceSha256:'d'.repeat(64),sequenceId}]){
+   assert.throws(()=>deleteCommandFromPlannedTask({...task,input:{target,expected}}),/NGS_FILE_DELETE_PAYLOAD_INVALID/);
+ }
+});

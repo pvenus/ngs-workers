@@ -10,6 +10,10 @@ const source=/^request\.official\.[a-f0-9]{64}$/u;
 export const cinematicDeleteRoot='canonical-files/binari/cinematics';
 const sourcePath=/^sources\/([a-f0-9]{64})\.(png|json)$/u;
 const sequencePath=/^sequences\/request\.official\.[a-f0-9]{64}$/u;
+export function cinematicSequenceDeleteTarget(path,kind,sourceSha256,sequenceId){
+ return kind==='directory'&&typeof sequenceId==='string'&&sequenceId.length===81&&source.test(sequenceId)&&
+  (path==='sequences/'+sequenceId||path==='scenes/'+sourceSha256+'/sequences/'+sequenceId);
+}
 const resultPath=/^results\/request\.official\.[a-f0-9]{64}\.(mp4|json)$/u;
 export function cinematicDeleteTarget(path,kind,sourceSha256){
  if(typeof path!=='string'||path.trim()!==path)return false;
@@ -41,6 +45,9 @@ export function validateFileDelete(value,projectId){
  if(common&&t.root===cinematicDeleteRoot&&exact(p,['sourceSha256'])&&typeof p.sourceSha256==='string'&&
     p.sourceSha256.length===64&&sha.test(p.sourceSha256)&&cinematicDeleteTarget(t.path,t.kind,p.sourceSha256))
   expected={sourceSha256:p.sourceSha256};
+ if(common&&t.root===cinematicDeleteRoot&&exact(p,['sourceSha256','sequenceId'])&&typeof p.sourceSha256==='string'&&
+    p.sourceSha256.length===64&&sha.test(p.sourceSha256)&&cinematicSequenceDeleteTarget(t.path,t.kind,p.sourceSha256,p.sequenceId))
+  expected={sequenceId:p.sequenceId,sourceSha256:p.sourceSha256};
  if(common&&t.kind==='directory'&&[mapDeleteRoot,assemblyDeleteRoot].includes(t.root)&&source.test(t.path)&&
     exact(p,['revision','officialRequestId'])&&Number.isSafeInteger(p.revision)&&p.revision>=1&&
     typeof p.officialRequestId==='string'&&source.test(p.officialRequestId))
