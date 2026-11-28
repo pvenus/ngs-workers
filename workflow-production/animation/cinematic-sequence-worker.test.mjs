@@ -289,3 +289,29 @@ test('staged request exposes every dependency, persists only its predecessor, an
  const {readdir}=await import('node:fs/promises');
  assert.deepEqual(await readdir(join(checkpointRoot,officialRequestId,'pixel')),[]);
 });
+
+test('upscale claim consumes all pinned frames once, never calls Wan, and does not write final state after handoff',async t=>{
+ const f=fixture(t),seq='request.official.'+'d'.repeat(64),key='cinematic_sequence_upscale',type='cinematic.sequence.upscale';
+ const schemaVersion='ngs.cinematic-sequence-upscale.v1',taskId='workflow.task.'+sha(canonical([officialRequestId,key]));
+ const input={sequenceId:seq,sourceSha256:sha(source),playback,expectedRevision:1};
+ const body=canonical({schemaVersion,projectId:'binari',...input});
+ f.db.prepare('UPDATE workflow_runs SET request_type=?,schema_version=?,payload=?,payload_sha256=?').run(type,schemaVersion,body,sha(body));
+ f.db.prepare('UPDATE workflow_tasks SET task_id=?,task_key=?,task_type=?,task_input=?').run(taskId,key,type,canonical(input));
+ assert.equal(chooseCinematicSequence(f.path),null);
+ assert.deepEqual({...chooseCinematicSequence(f.path,{allowUpscale:true})},{taskId,officialRequestId});
+ const original={schemaVersion:'ngs.cinematic-sequence-result.v1',officialRequestId:seq,sourceSha256:input.sourceSha256,width:128,height:128,
+  masterFps:24,frameCount:45,frames:raw.frames.map((b,index)=>({index,bytes:b.length,sha256:sha(b)}))};
+ let resized=0,staged=0;
+ const {state}=await executeCinematicSequence(f.db,{taskId,officialRequestId},new AbortController().signal,{
+  makeDir:async()=>f.root,cleanup:async()=>{},
+  runI2V:()=>assert.fail('never regenerate animation'),
+  runUpscale:async job=>{resized++;assert.deepEqual(job.output,raw);return {...raw,width:256,height:256,frames:raw.frames.map((_,i)=>still(i,{w:256,h:256}))};},
+  ports:{read:async()=>({input,original}),inputFrame:async(_claim,i)=>({...original.frames[i],base64:raw.frames[i].toString('base64')}),
+   stage:async(_claim,f)=>{assert.equal(f.index,staged++);return {ok:true,index:f.index,sha256:f.sha256};},
+   publish:async(_claim,m)=>{assert.equal(resized,1);assert.equal(staged,45);assert.equal(m.width,256);assert.deepEqual(m.playback,playback);
+    assert.equal(m.upscale.sourceSequenceId,seq);return {ok:true,resultRef};}}
+ });
+ assert.equal(state,'handed_off');
+ // A mock positive ACK cannot create a success write by itself. Real PDS commits first.
+ assert.equal(f.db.prepare('SELECT status FROM workflow_tasks').get().status,'running');
+});

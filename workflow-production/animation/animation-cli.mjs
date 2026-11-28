@@ -335,7 +335,7 @@ if(process.argv[1]===fileURLToPath(import.meta.url)){
     ['prop',[propReady.ready()?choosePropAnimation(dbPath):null]],
     ['i2v',[i2vModel&&override?chooseI2V(dbPath):null]],
     ['cinematic',[cinematicReady.ready()?chooseCinematic(dbPath):null]],
-    ['sequence',[sequenceReady.ready()?chooseCinematicSequence(dbPath):null]],
+    ['sequence',[sequenceReady.ready()?chooseCinematicSequence(dbPath,{allowUpscale:!!backgroundUpscaler&&await sequence.readyUpscale(signal)}):null]],
    ];
    const choice=oldestRunnable(dbPath,byLane.flatMap(([lane,tasks])=>tasks.filter(Boolean).map(task=>({...task,lane}))))[0];
    const {lane,...job}=choice??{};
@@ -348,7 +348,7 @@ if(process.argv[1]===fileURLToPath(import.meta.url)){
     insist(await prop.ready(signal),'PROP_I2V_PDS_UNAVAILABLE');
     signal.throwIfAborted();
     const result=await executePropAnimation(db,t,signal,{ports:prop,prepareInput:preparePropInput,renderer:{render:job=>modelSlot.runI2V(job)}});
-    if(result.state==='completed')console.log(JSON.stringify(result));
+    if(result.state==='completed'||result.state==='handed_off')console.log(JSON.stringify(result));
     else if(result.state!=='stale')console.error(JSON.stringify(result));
     if(result.rendererStop==='unknown')await invalidateReady();
     idle=result.state==='stale'||result.rendererStop==='unknown';
@@ -359,7 +359,7 @@ if(process.argv[1]===fileURLToPath(import.meta.url)){
     insist(ready?.ready===true&&ready.model===WAN_I2V_MODEL_ID&&ready.quantization===WAN_I2V_QUANTIZATION,'I2V_MODEL_UNAVAILABLE');
     signal.throwIfAborted();
     const result=await executeI2V(db,t,signal,{ports:i2v,renderer:{render:job=>modelSlot.runI2V(job)}});
-    if(result.state==='completed')console.log(JSON.stringify(result));
+    if(result.state==='completed'||result.state==='handed_off')console.log(JSON.stringify(result));
     else if(result.state!=='stale')console.error(JSON.stringify(result));
     idle=result.state==='stale'||result.rendererStop==='unknown';
    }else if(lane==='cinematic'){
@@ -367,7 +367,7 @@ if(process.argv[1]===fileURLToPath(import.meta.url)){
     insist(await cinematic.ready(signal),'CINEMATIC_PDS_UNAVAILABLE');
     signal.throwIfAborted();
     const result=await executeCinematic(db,t,signal,{ports:cinematic,runI2V:job=>modelSlot.runI2V(job)});
-    if(result.state==='completed')console.log(JSON.stringify(result));
+    if(result.state==='completed'||result.state==='handed_off')console.log(JSON.stringify(result));
     else if(result.state!=='stale')console.error(JSON.stringify(result));
     if(result.rendererStop==='unknown')await invalidateReady();
     idle=result.state==='stale'||result.rendererStop==='unknown';
@@ -378,7 +378,7 @@ if(process.argv[1]===fileURLToPath(import.meta.url)){
     const result=await executeCinematicSequence(db,t,signal,{ports:sequence,runI2V:job=>modelSlot.runI2V(job),
      checkpointRoot:join(homedir(),'Workspaces','Workers','runtime','sequence-checkpoints'),
      ...(backgroundUpscaler?{runUpscale:job=>modelSlot.runUpscale(job),probeUpscale:()=>backgroundUpscaler.probe(),runPixelCorrection:backgroundPixelCorrection}:{})});
-    if(result.state==='completed')console.log(JSON.stringify(result));
+    if(result.state==='completed'||result.state==='handed_off')console.log(JSON.stringify(result));
     else if(result.state!=='stale')console.error(JSON.stringify(result));
     if(result.rendererStop==='unknown')await invalidateReady();
     idle=result.state==='stale'||result.rendererStop==='unknown';

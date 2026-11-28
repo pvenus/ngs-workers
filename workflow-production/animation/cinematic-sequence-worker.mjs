@@ -15,6 +15,8 @@ import {WAN_I2V_FPS,WAN_I2V_LENGTH,WAN_I2V_SHORT_LENGTH,WAN_I2V_CINEMATIC_FRAMIN
 
 export const sequenceType='cinematic.sequence.generate',sequenceSchema='ngs.cinematic-sequence-generate.v1';
 export const sequenceKey='cinematic_sequence_render',sequenceTaskType='cinematic.sequence.generate.render';
+const upscaleType='cinematic.sequence.upscale',upscaleSchema='ngs.cinematic-sequence-upscale.v1',upscaleKey='cinematic_sequence_upscale';
+const upscaleInputKeys=['sequenceId','sourceSha256','expectedRevision','playback'];
 const sequencePath='/v1/cinematics/ownership/workflow-sequence',sequenceCapability='workflow.cinematic-sequence-write.v1';
 const projectId='binari',workerType='animation';
 const oid=/^request\.official\.[a-f0-9]{64}$/u,digest=/^[a-f0-9]{64}$/u;
@@ -46,9 +48,10 @@ const scope=`r.state='planned' AND r.reason IS NULL AND r.project_id=?
  AND t.worker_type=? AND t.result_ref IS NULL AND ${links}`+
  ` AND ((r.request_type=? AND r.schema_version=? AND t.task_type=? AND t.task_key=? AND t.depends_on_task_id IS NULL)
   OR (r.request_type=? AND r.schema_version=? AND t.task_type=? AND t.task_key IN (?,?) AND t.depends_on_task_id IS NULL)
-  OR (r.request_type=? AND r.schema_version=? AND t.task_key IN (${stagedKeys.map(()=>'?').join(',')})))`;
+  OR (r.request_type=? AND r.schema_version=? AND t.task_key IN (${stagedKeys.map(()=>'?').join(',')}))
+  OR (r.request_type=? AND r.schema_version=? AND t.task_type=? AND t.task_key=? AND t.depends_on_task_id IS NULL))`;
 const args=[projectId,workerType,sequenceType,sequenceSchema,sequenceTaskType,sequenceKey,
- backgroundType,backgroundSchema,backgroundType,...Object.values(backgroundKeys),backgroundType,backgroundStageSchema,...stagedKeys];
+ backgroundType,backgroundSchema,backgroundType,...Object.values(backgroundKeys),backgroundType,backgroundStageSchema,...stagedKeys,upscaleType,upscaleSchema,upscaleType,upscaleKey];
 const taskIdFor=(id,key)=>'workflow.task.'+sha(canonical([id,key]));
 const refFor=id=>projectId+'/cinematics/sequences/'+id+'/manifest.json';
 const inputKeys=['sourceSha256','motionPrompt','playback'];
@@ -58,14 +61,14 @@ function tx(db,fn){
  catch(e){db.exec('ROLLBACK');throw e;}
 }
 
-export function chooseCinematicSequence(dbPath){
+export function chooseCinematicSequence(dbPath,{allowUpscale=false}={}){
  assertDatabasePath(dbPath);
  const db=new DatabaseSync(dbPath,{readOnly:true});
  try{
   protectSchema(db);
   return db.prepare(`SELECT t.task_id AS taskId,r.official_request_id AS officialRequestId
-   FROM workflow_tasks t JOIN workflow_runs r USING(official_request_id) WHERE ${scope} AND ${workflowTaskEligibleSql(db, 't')}
-   ORDER BY r.registered_at,r.official_request_id,t.task_id LIMIT 1`).get(...args)??null;
+   FROM workflow_tasks t JOIN workflow_runs r USING(official_request_id) WHERE ${scope} AND (?=1 OR r.request_type<>?) AND ${workflowTaskEligibleSql(db, 't')}
+   ORDER BY r.registered_at,r.official_request_id,t.task_id LIMIT 1`).get(...args,Number(allowUpscale),upscaleType)??null;
  }finally{db.close();}
 }
 function candidate(db,t,stamp){
@@ -76,6 +79,16 @@ function candidate(db,t,stamp){
   .get(...args,t.taskId,t.officialRequestId,...(running?[stamp]:[]));
  if(!row)return null;
  const p=JSON.parse(row.payload);
+ if(row.request_type===upscaleType){
+  require(exact(p,['schemaVersion','projectId',...upscaleInputKeys])&&p.schemaVersion===upscaleSchema&&p.projectId===projectId&&
+   hash(p.sourceSha256)&&typeof p.sequenceId==='string'&&p.sequenceId.length===81&&oid.test(p.sequenceId)&&p.sequenceId!==t.officialRequestId&&
+   Number.isSafeInteger(p.expectedRevision)&&p.expectedRevision>=0&&p.expectedRevision<Number.MAX_SAFE_INTEGER&&validSequencePlayback(p.playback)&&
+   canonical(p)===row.payload&&sha(row.payload)===row.payload_sha256);
+  const input=Object.fromEntries(upscaleInputKeys.map(k=>[k,p[k]]));
+  require(canonical(input)===row.task_input&&row.task_id===taskIdFor(t.officialRequestId,upscaleKey)&&
+    db.prepare('SELECT count(*) AS n FROM workflow_tasks WHERE official_request_id=?').get(t.officialRequestId).n===1);
+  return {row,input,resultId:t.officialRequestId,derive:true};
+ }
  require(p?.projectId===projectId&&validCutscenePrompt(p.motionPrompt)&&validSequencePlayback(p.playback)&&
   canonical(p)===row.payload&&sha(row.payload)===row.payload_sha256);
  const only=db.prepare('SELECT * FROM workflow_tasks WHERE official_request_id=? LIMIT 8').all(t.officialRequestId);
@@ -113,7 +126,7 @@ function candidate(db,t,stamp){
 }
 
 function claimSequence(db,t){
- require(typeof t?.officialRequestId==='string'&&t.officialRequestId.length===81&&oid.test(t.officialRequestId)&&[sequenceKey,...Object.values(backgroundKeys),...stagedKeys].some(key=>t.taskId===taskIdFor(t.officialRequestId,key)));
+ require(typeof t?.officialRequestId==='string'&&t.officialRequestId.length===81&&oid.test(t.officialRequestId)&&[upscaleKey,sequenceKey,...Object.values(backgroundKeys),...stagedKeys].some(key=>t.taskId===taskIdFor(t.officialRequestId,key)));
  return tx(db,()=>{
   const found=candidate(db,t);
   if(!found)return null;
@@ -133,6 +146,13 @@ export const cinematicSequencePorts=local=>({
   const v=await local(sequencePath,{signal,maxJsonBytes:4096});
   return exact(v,['enabled','schemaVersion'])&&v.enabled===true&&v.schemaVersion===sequenceCapability;
  },
+ async readyUpscale(signal){
+  try{
+   const v=await local(sequencePath+'/upscale',{signal,maxJsonBytes:4096,timeout:3000});
+   return exact(v,['enabled','schemaVersion'])&&v.enabled===true&&v.schemaVersion==='workflow.cinematic-sequence-upscale.v1';
+  }catch{return false;}
+ },
+ inputFrame:(claim,index,signal)=>local(sequencePath+'/upscale-input-frame',{body:{claim,index},signal,maxJsonBytes:6*1024*1024}),
  read:(claim,signal)=>local(sequencePath+'/read',{body:{claim},signal,maxJsonBytes:64*1024}),
  asset:(claim,signal)=>local(sequencePath+'/asset',{body:{claim},signal,binary:true,maxBinaryBytes:maxImageBytes}),
  stage:(claim,frame)=>local(sequencePath+'/frame',{body:{claim,frame},timeout:20_000,maxJsonBytes:4096}),
@@ -176,7 +196,7 @@ export async function executeCinematicSequence(db,t,signal,{ports,runI2V,runUpsc
  if(signal.aborted)return {state:'stale',taskId:t.taskId};
  const found=claimSequence(db,t);
  if(!found)return {state:'stale',taskId:t.taskId};
- const {claim,input,row,resultId,group,phase,prior}=found;
+ const {claim,input,row,resultId,group,phase,prior,derive}=found;
  const current=()=>{
   const next=candidate(db,t,claim.claimStamp);
   require(next&&canonical(next.prior??null)===canonical(prior??null)&&['payload','task_input','payload_sha256','registered_at'].every(k=>row[k]===next.row[k]),'CINEMATIC_SEQUENCE_CLAIM_CHANGED');
@@ -194,8 +214,38 @@ export async function executeCinematicSequence(db,t,signal,{ports,runI2V,runUpsc
  let dir,result,stage='read',unknownStop=false,written=false;
  try{
   const r=await ports.read(claim,signal);
-  require(exact(r,inputKeys)&&canonical(r)===canonical(input),'CINEMATIC_SEQUENCE_SOURCE_BINDING');
+  if(!derive)require(exact(r,inputKeys)&&canonical(r)===canonical(input),'CINEMATIC_SEQUENCE_SOURCE_BINDING');
   let output,manifest;
+  if(derive){
+   const source=r?.original;
+   require(exact(r,['input','original'])&&canonical(r.input)===canonical(input)&&
+    source?.schemaVersion==='ngs.cinematic-sequence-result.v1'&&!source.group&&!source.upscale&&
+    source.officialRequestId===input.sequenceId&&source.sourceSha256===input.sourceSha256&&
+    source.masterFps===WAN_I2V_FPS&&source.frameCount===WAN_I2V_LENGTH&&source.frames?.length===WAN_I2V_LENGTH&&
+    grid(source.width)&&grid(source.height),'CINEMATIC_UPSCALE_SOURCE');
+   require(typeof runUpscale==='function','CINEMATIC_UPSCALE_MODEL_UNAVAILABLE');
+   stage='upscale_preflight';if(probeUpscale)await probeUpscale();
+   stage='read_frames';
+   const frames=[];let total=0;
+   for(const [index,meta] of source.frames.entries()){
+    signal.throwIfAborted();
+    const f=await ports.inputFrame(claim,index,signal);
+    require(exact(f,['index','bytes','sha256','base64'])&&meta.index===index&&f.index===index&&f.bytes===meta.bytes&&
+     hash(f.sha256)&&f.sha256===meta.sha256&&typeof f.base64==='string'&&f.base64.length<=4*Math.ceil(maxFrameBytes/3),'CINEMATIC_UPSCALE_FRAME_RECEIPT');
+    const bytes=Buffer.from(f.base64,'base64'),shape=png(bytes,maxFrameBytes,{rgb:true});
+    total+=bytes.length;
+    require(bytes.length===meta.bytes&&sha(bytes)===meta.sha256&&shape.width===source.width&&shape.height===source.height&&
+     total<=maxBundleBytes,'CINEMATIC_UPSCALE_FRAME_INTEGRITY');
+    frames.push(bytes);
+   }
+   signal.throwIfAborted();tx(db,current);dir=await makeDir();
+   stage='upscale';
+   try{output=await runUpscale({dir,output:{frames,width:source.width,height:source.height,fps:WAN_I2V_FPS},signal});}
+   catch(e){unknownStop=e?.rendererJoined!==true;throw e;}
+   stage='validate_upscale';
+   require(output?.width===source.width*2&&output?.height===source.height*2,'CINEMATIC_UPSCALE_OUTPUT_GEOMETRY');
+   manifest=nativeManifest(output,resultId,input,{model:backgroundUpscaleModel,scale:2,sourceWidth:source.width,sourceHeight:source.height,sourceSequenceId:input.sequenceId});
+  }else{
   const pinned=async()=>{
    const source=await ports.asset(claim,signal);png(source,maxImageBytes);
    require(sha(source)===input.sourceSha256,'CINEMATIC_SEQUENCE_SOURCE_BYTES');return source;
@@ -298,21 +348,23 @@ export async function executeCinematicSequence(db,t,signal,{ports,runI2V,runUpsc
    manifest.group=group;
   }
   }
-  const uploadSignal=AbortSignal.any([signal,AbortSignal.timeout(group?300_000:120_000)]);
+  }
+  const uploadSignal=AbortSignal.any([signal,AbortSignal.timeout(group||derive?300_000:120_000)]);
   const upload={signal:uploadSignal,current:()=>tx(db,current)};
   for(const frame of manifest.frames){
    uploadSignal.throwIfAborted();upload.current();
    stage='stage_frame';written=true;
    const payload={...frame,base64:output.frames[frame.index].toString('base64')};
-   const ack=await sameClaimPublication(()=>ports.stage(claim,payload),upload);
+   const ack=await (derive?ports.stage(claim,payload):sameClaimPublication(()=>ports.stage(claim,payload),upload));
    require(exact(ack,['ok','index','sha256'])&&ack.ok===true&&ack.index===frame.index&&ack.sha256===frame.sha256,
     'CINEMATIC_SEQUENCE_FRAME_UNCONFIRMED');
   }
   uploadSignal.throwIfAborted();upload.current();
   stage='publish';
   const expected=refFor(resultId);
-  const ack=await sameClaimPublication(()=>ports.publish(claim,manifest),upload);
+  const ack=await (derive?ports.publish(claim,manifest):sameClaimPublication(()=>ports.publish(claim,manifest),upload));
   require(exact(ack,['ok','resultRef'])&&ack.ok===true&&ack.resultRef===expected,'CINEMATIC_SEQUENCE_PUBLICATION_UNCONFIRMED');
+  if(derive)return result={state:'handed_off',taskId:t.taskId,resultRef:expected,frameCount:manifest.frameCount};
   stage='commit';
   await retrySqliteBusy(()=>commit(expected),t.taskId);const released=await releasePrevious();
   result={state:'completed',taskId:t.taskId,resultRef:expected,frameCount:manifest.frameCount,...(released?{}:{cleanup:'pending'})};
