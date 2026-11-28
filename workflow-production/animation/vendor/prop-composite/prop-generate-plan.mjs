@@ -1,9 +1,12 @@
 import {canonical,sha} from '../planner-f24d23a/envelope.mjs';
-import {propGenerateType,propRegenerateType,propAnimationType,propScaleType,propTypes,propHash,pixelSourcePresentationProfile} from './prop-generate-envelope.mjs';
+import {propGenerateType,propRegenerateType,propAnimationType,propScaleType,propTypes,propHash,scalePercents,pixelSourcePresentationProfile} from './prop-generate-envelope.mjs';
 
 export const propKeys=Object.freeze({
  design:'prop_design',base:'prop_base',motion:'prop_motion',detail:'prop_detail',pixel:'prop_pixel',pixelSource:'prop_pixel_source',pixelDetail:'prop_pixel_detail',spirit:'prop_spirit',animDetail:'prop_animation_detail',animPixel:'prop_animation_pixel',publish:'prop_pack_publish',
 });
+export const propScaleKey=n=>'prop_scale_'+String(n).padStart(3,'0');
+const scaleKeys=new Set(scalePercents.map(propScaleKey));
+export const isPropScaleKey=key=>scaleKeys.has(key);
 // This exact declarative registry is consumed by Planner, not injected by requesters.
 // Stage capability is registered even where trusted execution ports are not yet wired.
 export const propStageRegistry=Object.freeze({
@@ -17,6 +20,7 @@ export const propStageRegistry=Object.freeze({
  [propKeys.pixelDetail]:Object.freeze({type:'prop.generate.pixel-detail',workerType:'postprocess',output:'pixel-detail-rgba'}),
  [propKeys.pixel]:Object.freeze({type:'prop.generate.pixel',workerType:'postprocess',output:'pixel-rgba'}),
  [propKeys.spirit]:Object.freeze({type:'prop.generate.spirit',workerType:'postprocess',output:'spirit-rgba'}),
+ ...Object.fromEntries([...scaleKeys].map(key=>[key,Object.freeze({type:'prop.scale.derive',workerType:'postprocess',output:'scale-pair'})])),
  [propKeys.publish]:Object.freeze({type:'prop.generate.publish',workerType:'postprocess',output:'package'}),
 });
 const official=/^request\.official\.[a-f0-9]{64}$/u;
@@ -28,18 +32,34 @@ export const propRef=(key,digest)=>{
 export function isPropRef(key,value){
  return typeof value==='string'&&propHash(value.slice(-64))&&value===propRef(key,value.slice(-64));
 }
-export function buildPropGeneratePlan(run){
+export function buildPropGeneratePlan(run,{splitScales=true}={}){
  const {officialRequestId:oid,payload}=run;
  if(!propTypes.includes(run.requestType)||typeof oid!=='string'||oid.length!==81||!official.test(oid))
   throw Error('PROP_COMPOSITE_TOPOLOGY_INVALID');
  if(run.requestType===propAnimationType)return buildAppendPlan(run);
- if(run.requestType===propScaleType)return [{id:propTaskId(oid,propKeys.publish),key:propKeys.publish,type:propScaleType+'.publish',
-  workerType:'postprocess',dependsOn:null,input:{propId:payload.propId,source:payload.source,scalePercents:payload.scalePercents,dependsOnTaskIds:[]}}];
- const id=key=>propTaskId(oid,key),motion=payload.motion==='subtle', mode=motion?'subtle':'still';
+ const id=key=>propTaskId(oid,key),tasks=[];
+ const scaleTasks=(scope,parent)=>{
+  if(!splitScales||!payload.scalePercents)return parent;
+  for(const scalePercent of [...payload.scalePercents].sort((a,b)=>a-b)){
+   const key=propScaleKey(scalePercent);
+   const {type,workerType}=propStageRegistry[key];
+   tasks.push({id:id(key),key,type,workerType,
+    dependsOn:parent===null?null:id(parent),input:{...scope,scalePercent}});
+   parent=key;
+  }
+  return parent;
+ };
+ if(run.requestType===propScaleType){
+  const scope={propId:payload.propId,source:payload.source},parent=scaleTasks(scope,null);
+  tasks.push({id:id(propKeys.publish),key:propKeys.publish,type:propScaleType+'.publish',
+   workerType:'postprocess',dependsOn:parent===null?null:id(parent),
+   input:{...scope,scalePercents:payload.scalePercents,dependsOnTaskIds:tasks.map(x=>x.id)}});
+  return tasks;
+ }
+ const motion=payload.motion==='subtle', mode=motion?'subtle':'still';
  const regenerate=run.requestType===propRegenerateType;
  const profile=payload.presentationProfile,pixelSource=profile===pixelSourcePresentationProfile;
  const scope={...(profile?{presentationProfile:profile}:{}),propId:payload.propId,designContextSha256:payload.designContextSha256,...(regenerate?{source:payload.source}:{})};
- const tasks=[];
  const task=(key,parent,input)=>{
   const {type,workerType}=propStageRegistry[key];
   tasks.push({id:id(key),key,type:regenerate?type.replace(propGenerateType,propRegenerateType):type,workerType,dependsOn:parent===null?null:id(parent),input:{...scope,...input}});
@@ -60,11 +80,13 @@ export function buildPropGeneratePlan(run){
   task(propKeys.animDetail,propKeys.motion,{designTaskId:id(propKeys.design),baseTaskId:id(propKeys.base),sourceTaskId:id(propKeys.motion)});
   task(propKeys.animPixel,propKeys.animDetail,{designTaskId:id(propKeys.design),detailTaskId:id(propKeys.animDetail)});
  }
+ const scaleParent=scaleTasks(scope,propKeys.pixelDetail);
  const keys=tasks.map(row=>row.key);
  // Canonical publishing must verify ALL predecessors and their bytes; the
  // scalar indexed parent does not authorize publication by itself.
  task(propKeys.publish,motion?propKeys.animPixel:propKeys.pixel,{dependsOnTaskIds:keys.map(id),...(payload.scalePercents?{scalePercents:payload.scalePercents}:{})});
- if(profile)tasks.at(-1).additionalDependencies=[...(motion?[id(propKeys.pixel)]:[]),id(propKeys.spirit)];
+ if(profile)tasks.at(-1).additionalDependencies=[...(motion?[id(propKeys.pixel)]:[]),id(propKeys.spirit),
+  ...(splitScales&&payload.scalePercents?[id(scaleParent)]:[])];
  return tasks;
 }
 
@@ -90,9 +112,17 @@ export function exactPropTask(row,task){
   row.worker_type===task.workerType&&row.depends_on_task_id===task.dependsOn&&row.task_input===canonical(task.input)&&
   [2,3,4,5].every((n,i)=>(row['depends_on_task_id_'+n]??null)===(task.additionalDependencies?.[i]??null));
 }
-export const propCompletionLimit=12; // eleven permitted tasks, plus one sentinel for extra-row rejection
+// Ten generation stages, eleven possible scale tasks, one publish, one extra-row sentinel.
+export const propCompletionLimit=23;
+// Existing v1 runs predate scale tasks. Reconstruct either exact stored graph;
+// a mixed or partial graph cannot pass exact row and task-count checks.
+export const storedPropPlan=(run,rows)=>buildPropGeneratePlan(run,{splitScales:rows.some(r=>isPropScaleKey(r.task_key))});
+export function verifyPropScaleRefs(manifest,refs){
+ const entries=refs.filter(r=>isPropScaleKey(r.key));
+ return entries.every(r=>manifest.scaleVariants?.some(v=>r.key===propScaleKey(v.scalePercent)&&r.ref===propRef(r.key,sha(canonical(v)))));
+}
 export function checkPropPublishRows(run,rows,{published=false}={}){
- const tasks=buildPropGeneratePlan(run);
+ const tasks=storedPropPlan(run,rows);
  if(rows.length!==tasks.length)return null;
  const byId=new Map(rows.map(row=>[row.task_id,row])),refs=[];
  for(const task of tasks){

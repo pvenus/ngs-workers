@@ -4,7 +4,7 @@ import {DatabaseSync} from 'node:sqlite';
 import {canonical,sha} from './vendor/planner-f24d23a/envelope.mjs';
 import {assertDatabasePath,protectSchema,workflowTaskEligibleSql,workflowTaskRetrySetSql,markWorkflowTaskFailed} from './workflow-ready.mjs';
 import {exactProp,propValidator,propGenerateType,propRegenerateType,propAnimationType,propScaleType} from './vendor/prop-composite/prop-generate-envelope.mjs';
-import {buildPropGeneratePlan,checkPropPublishRows,exactPropTask,propCompletionLimit,propKeys} from './vendor/prop-composite/prop-generate-plan.mjs';
+import {storedPropPlan,checkPropPublishRows,exactPropTask,isPropRef,isPropScaleKey,verifyPropScaleRefs,propCompletionLimit,propKeys} from './vendor/prop-composite/prop-generate-plan.mjs';
 import {parsePropPackage,propPackageReceipt} from './vendor/prop-composite/prop-package-contract.mjs';
 
 const types=[propGenerateType,propRegenerateType];
@@ -26,10 +26,18 @@ function get(db,officialRequestId,taskId,{stamp,appendEnabled=false}={}){
  if(!root||!pick)return null;
  const payload=JSON.parse(root.payload);
  const run={officialRequestId,requestType:root.request_type,payload};
- const tasks=buildPropGeneratePlan(run),single=tasks.at(-1);
- check(root.schema_version===payload.schemaVersion&&propValidator[root.request_type](payload,root.project_id)===root.payload&&
-   sha(root.payload)===root.payload_sha256&&single.key===propKeys.publish&&exactPropTask(pick,single));
  const rows=db.prepare('SELECT * FROM workflow_tasks WHERE official_request_id=? ORDER BY task_key LIMIT '+propCompletionLimit).all(officialRequestId);
+ const tasks=storedPropPlan(run,rows),chosen=tasks.find(t=>t.id===taskId);
+ check(root.schema_version===payload.schemaVersion&&propValidator[root.request_type](payload,root.project_id)===root.payload&&
+   sha(root.payload)===root.payload_sha256&&chosen&&exactPropTask(pick,chosen));
+ if(isPropScaleKey(chosen.key)){
+  const byId=new Map(rows.map(row=>[row.task_id,row]));
+  check(rows.length===tasks.length&&tasks.every(task=>exactPropTask(byId.get(task.id),task)));
+  const parent=chosen.dependsOn===null?null:byId.get(chosen.dependsOn);
+  if(parent&&!(parent.status==='completed'&&isPropRef(parent.task_key,parent.result_ref)))return null;
+  return {root,pick,payload,refs:parent?[parent.result_ref]:[],scaleKey:chosen.key};
+ }
+ check(chosen.key===propKeys.publish);
  const refs=checkPropPublishRows(run,rows.map(row=>row.task_id===taskId&&stamp===undefined?
   {...row,status:'running',updated_at:Math.max(1,row.updated_at)}:row));
  if(!refs)return null;
@@ -45,14 +53,15 @@ export function nextPropPackageFromPath(dbPath,{appendEnabled=false}={}){
   const row=db.prepare(`SELECT t.task_id AS taskId,t.official_request_id AS officialRequestId
     FROM workflow_tasks t JOIN workflow_runs r USING(official_request_id)
     WHERE r.state='planned' AND r.reason IS NULL AND r.project_id='binari' AND ${modeSql(appendEnabled)}
-      AND ${workflowTaskEligibleSql(db, 't')} AND t.result_ref IS NULL AND t.worker_type='postprocess' AND t.task_key=?
+      AND ${workflowTaskEligibleSql(db, 't')} AND t.result_ref IS NULL AND t.worker_type='postprocess'
+      AND (t.task_type='prop.scale.derive' OR (t.task_key=?
       AND CASE WHEN r.request_type='${propScaleType}' THEN 1 WHEN r.request_type='${propAnimationType}' THEN
         (SELECT count(*) FROM workflow_tasks w WHERE w.official_request_id=t.official_request_id
          AND w.task_key IN (?,?,?) AND w.status='completed' AND w.result_ref IS NOT NULL)=3 ELSE
         (SELECT count(*) FROM workflow_tasks w WHERE w.official_request_id=t.official_request_id
          AND w.task_key IN (?,?,?,?) AND w.status='completed' AND w.result_ref IS NOT NULL)=4 AND (json_extract(r.payload,'$.presentationProfile') IS NULL OR EXISTS (
          SELECT 1 FROM workflow_tasks w WHERE w.official_request_id=t.official_request_id AND w.task_key=?
-          AND w.status='completed' AND w.result_ref IS NOT NULL)) END
+          AND w.status='completed' AND w.result_ref IS NOT NULL)) END))
     ORDER BY r.registered_at,r.official_request_id LIMIT 1`).get(...types,propKeys.publish,propKeys.motion,propKeys.animDetail,propKeys.animPixel,...parentKeys,propKeys.spirit);
   return row?{taskId:row.taskId,officialRequestId:row.officialRequestId}:null;
  }finally{db.close();}
@@ -81,11 +90,29 @@ export async function runPropPackageFromPath({dbPath,officialRequestId,taskId,pd
    check(confirmed&&canonical(confirmed.root)===canonical(found.root)&&canonical(confirmed.refs)===canonical(found.refs),
     'WORKFLOW_PROP_PACKAGE_CLAIM_CHANGED');
   };
+  const complete=expected=>retrySqliteBusy(()=>{
+   tx(db,()=>{
+    current();
+    check(db.prepare(`UPDATE workflow_tasks SET status='completed',result_ref=?,updated_at=?${saveReservationClearSql(db)}
+     WHERE task_id=? AND official_request_id=? AND status='running' AND updated_at=? AND result_ref IS NULL`)
+     .run(expected,Math.max(Date.now(),stamp+1),taskId,officialRequestId,stamp).changes===1);
+   });
+  },taskId);
   let sent=false;
   try{
+   if(found.scaleKey){
+    signal?.throwIfAborted();tx(db,current);
+    // Only private immutable staging is written. Retrying an exact pair is safe.
+    const ack=await pds.derivePropScale(claim);
+    check(exactProp(ack,['ok','resultRef'])&&ack.ok===true&&isPropRef(found.scaleKey,ack.resultRef),
+     'WORKFLOW_PROP_SCALE_STAGE_ACK');
+    await complete(ack.resultRef);
+    return {state:'completed',taskId,resultRef:ack.resultRef};
+   }
    const prepared=await pds.preparePropPublication(claim,{signal});
    check(exactProp(prepared,['manifest']));
    const m=parsePropPackage(prepared.manifest);
+   check(verifyPropScaleRefs(m,found.refs));
    const source=found.payload.source;
    const shaFor=k=>found.refs.find(x=>x.key===k)?.ref.slice(-64);
    check(m.officialRequestId===officialRequestId&&m.requestSha256===claim.payloadSha256&&
@@ -108,19 +135,12 @@ export async function runPropPackageFromPath({dbPath,officialRequestId,taskId,pd
    sent=true;
    const resp=await pds.publishPropPackage(claim,m);
    check(exactProp(resp,['ok','resultRef'])&&resp.ok===true&&resp.resultRef===expected,'WORKFLOW_PROP_PACKAGE_ACK');
-   await retrySqliteBusy(()=>{
-    tx(db,()=>{
-     current();
-     check(db.prepare(`UPDATE workflow_tasks SET status='completed',result_ref=?,updated_at=?${saveReservationClearSql(db)}
-      WHERE task_id=? AND official_request_id=? AND status='running' AND updated_at=? AND result_ref IS NULL`)
-      .run(expected,Math.max(Date.now(),stamp+1),taskId,officialRequestId,stamp).changes===1);
-    });
-   },taskId);
+   await complete(expected);
    return {state:'completed',taskId,resultRef:expected};
   }catch{
    if(!sent)try{
     tx(db,()=>{current();check(markWorkflowTaskFailed(db,{...claim,workerType:'postprocess'}));});
-    return {state:'failed',taskId,code:'WORKFLOW_PROP_PACKAGE_PREPARE_FAILED'};
+    return {state:'failed',taskId,code:found.scaleKey?'WORKFLOW_PROP_SCALE_DERIVE_FAILED':'WORKFLOW_PROP_PACKAGE_PREPARE_FAILED'};
    }catch{}
    return {state:'requires_reconciliation',taskId,code:'WORKFLOW_PROP_PACKAGE_PUBLICATION_UNCERTAIN'};
   }

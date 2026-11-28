@@ -34,6 +34,9 @@ export function propStagePorts({transport=fixedMotionHttp}={}){
    // missing ACK cannot establish that the stage did not durably commit.
    return json(stagePath,{body:{claim,artifact:{media,base64:bytes.toString('base64')}},timeout:180000});
   },
+  derivePropScale(claim){
+   return json(packagePath+'/derive-scale',{body:{claim},timeout:180000});
+  },
   preparePropPublication(claim,{signal}={}){
    return json(packagePath+'/prepare',{body:{claim},signal,limit:512*1024+8192,timeout:120000});
   },

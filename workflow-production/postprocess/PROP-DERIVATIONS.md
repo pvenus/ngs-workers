@@ -67,6 +67,14 @@ and forwards just the manifest. PDS performs authoritative Filex publication
 and readback. No ACK/claim mismatch can persist a completed task; after
 dispatch an uncertain result is held for reconciliation rather than retried.
 
+On initial or append prop scale requests, each selected percent is a separate
+existing-lane `prop.scale.derive` task. The worker claims once, sends only
+the exact claim to PDS, and records the hash of the pair descriptor returned
+after verified private staging. Each task can retry without touching the
+public prop. The final publishing task joins all completed pair hashes and
+publishes one revision; it does not derive those scales a second time.
+Existing runs with a combined scale publication task remain supported.
+
 Full isolated worker→PDS→Filex fixture (using the staged service tree
 containing `filex-writer/test_prop_stage_authority_http.py`):
 

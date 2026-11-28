@@ -13,7 +13,7 @@ import {nextPropDerivationFromPath,runPropDerivationFromPath} from './prop-deriv
 
 const officialRequestId='request.official.'+'3'.repeat(64);
 const dig=i=>String(i).repeat(64);
-function make(t,{regenerate=false,motion='still',spirit=false,scale=false}={}){
+function make(t,{regenerate=false,motion='still',spirit=false,scale=false,splitScales=true}={}){
  const root=realpathSync(mkdtempSync(join(tmpdir(),'prop-publish-')));
  const dbPath=join(root,'plan.sqlite');writeFileSync(dbPath,'',{mode:0o600});
  const db=new DatabaseSync(dbPath);t.after(()=>{db.close();rmSync(root,{recursive:true,force:true});});
@@ -25,7 +25,7 @@ function make(t,{regenerate=false,motion='still',spirit=false,scale=false}={}){
  const source=canonical(payload),requestSha256=sha(source);
  db.prepare("INSERT INTO workflow_runs VALUES(?,?,?,?,?,?,1,'planned',1,NULL)")
   .run(officialRequestId,'binari',type,payload.schemaVersion,source,requestSha256);
- const plan=buildPropGeneratePlan({officialRequestId,requestType:type,payload});
+ const plan=buildPropGeneratePlan({officialRequestId,requestType:type,payload},{splitScales});
  const by=Object.fromEntries(plan.map(x=>[x.key,x]));
  const hashes={[propKeys.design]:dig(1),[propKeys.base]:dig(2),[propKeys.detail]:dig(3),[propKeys.pixel]:dig(4),[propKeys.spirit]:dig(5)};
  for(const x of plan){
@@ -99,6 +99,9 @@ test('strict transport capability; exact binary/stdout upload wire and mutation 
  await pds.stagePropDerivation({claim},{media:expected,bytes:png},{signal});
  assert.deepEqual(calls.at(-1).opts.body,{claim,artifact:{media:expected,base64:'AQID'}});
  assert.equal(calls.at(-1).opts.signal,undefined);
+ await pds.derivePropScale(claim);
+ assert.deepEqual(calls.at(-1).opts.body,{claim});
+ assert.equal(calls.at(-1).path,packagePath+'/derive-scale');
  await pds.preparePropPublication(claim,{signal});assert.equal(calls.at(-1).path,packagePath+'/prepare');
  await pds.publishPropPackage(claim,{one:1});assert.deepEqual(calls.at(-1).opts.body,{claim,manifest:{one:1}});
 });
@@ -120,8 +123,8 @@ test('Spirit package readiness and publish bind third static receipt at one-fift
  }
 });
 
-test('scale append has its own single task and accepts only matching PDS publication ACK',async t=>{
- const f=make(t,{scale:true});
+test('historical scale append still uses its one publish task',async t=>{
+ const f=make(t,{scale:true,splitScales:false});
  assert.deepEqual(Object.keys(f.by),[propKeys.publish]);
  assert.deepEqual(nextPropPackageFromPath(f.dbPath),{taskId:f.taskId,officialRequestId});
  const ref=await propPackageReceipt(f.manifest);
@@ -131,4 +134,36 @@ test('scale append has its own single task and accepts only matching PDS publica
  });
  assert.equal(result.state,'completed');
  assert.equal(f.state().result_ref,ref);
+});
+
+test('appending two scales claims two independent retryable tasks before one publish',async t=>{
+ const f=make(t,{scale:true}),keys=['prop_scale_005','prop_scale_100'];
+ const seen=[];
+ const pds={derivePropScale(claim){
+  const task=Object.values(f.by).find(x=>x.id===claim.taskId);
+  seen.push(task.input.scalePercent);
+  if(seen.length===1)throw Error('first-stage failure');
+  const variant=f.manifest.scaleVariants.find(v=>v.scalePercent===task.input.scalePercent);
+  return {ok:true,resultRef:propRef(task.key,sha(canonical(variant)))};
+ },preparePropPublication:()=>({manifest:f.manifest}),
+ publishPropPackage:async(_claim,m)=>{
+  seen.push('publish');assert.deepEqual(m,f.manifest);
+  return {ok:true,resultRef:await propPackageReceipt(m)};
+ }};
+ const run=taskId=>runPropPackageFromPath({dbPath:f.dbPath,taskId,officialRequestId,pds});
+ const next=()=>nextPropPackageFromPath(f.dbPath)?.taskId;
+ assert.equal(next(),f.by[keys[0]].id);
+ assert.equal((await f.run(pds)).state,'not_claimable');
+ assert.equal((await run(f.by[keys[1]].id)).state,'not_claimable');
+ assert.equal((await run(next())).state,'failed');
+ assert.equal(next(),undefined);
+ f.db.prepare('UPDATE workflow_tasks SET updated_at=? WHERE task_id=?').run(Date.now()-610000,f.by[keys[0]].id);
+ assert.equal(next(),f.by[keys[0]].id);
+ assert.equal((await run(next())).state,'completed');
+ assert.equal(next(),f.by[keys[1]].id);
+ assert.equal((await run(next())).state,'completed');
+ assert.equal(next(),f.taskId);
+ assert.equal((await f.run(pds)).state,'completed');
+ assert.deepEqual(seen,[5,5,100,'publish']);
+ assert.equal(next(),undefined);
 });
