@@ -1,7 +1,8 @@
+import {titleType,titleTask,runTitleFromPath} from './title-worker.mjs';
 import {assemblyTypes,assemblyStage,runAssemblyFromPath} from './assembly-worker.mjs';
 import {mapTypes,mapStage,mapGenerateStages,mapDecorationStage} from './map-contract.mjs';
 import {runMapFromPath} from './map-worker.mjs';
-const runner=(op,ordinary,prop)=>assemblyTypes.includes(op)?runAssemblyFromPath:mapTypes.includes(op)?runMapFromPath:isPropDesignOperation(op)?prop:ordinary;
+const runner=(op,ordinary,prop)=>op===titleType?runTitleFromPath:assemblyTypes.includes(op)?runAssemblyFromPath:mapTypes.includes(op)?runMapFromPath:isPropDesignOperation(op)?prop:ordinary;
 import {isPropDesignOperation,propDesignKey,propDesignOperations} from './prop-design-contract.mjs';
 import {runPropDesignFromPath} from './prop-design-worker.mjs';
 import {probePresetDatabase,runDocumentFromPath} from './worker.mjs';
@@ -23,6 +24,7 @@ const supported=Object.freeze([
  ...Object.values(motionPoseRegistry).map(({planKey,planType})=>({workerType:'document',taskType:planType,taskKey:planKey,predecessorKey:'planning_representative'})),
  {workerType:'document',taskType:UPDATE,taskKey:'planning_update',predecessorKey:null},
  {workerType:'document',taskType:ADD,taskKey:'planning_add',predecessorKey:null},
+ {workerType:'document',taskType:titleType,taskKey:titleTask,predecessorKey:null},
  ...assemblyTypes.map(taskType=>({workerType:'document',taskType,taskKey:assemblyStage,predecessorKey:null})),
  ...mapTypes.map(taskType=>({workerType:'document',taskType,taskKey:mapStage,predecessorKey:null})),
  ...[...mapGenerateStages,mapDecorationStage].map((taskKey,i)=>({workerType:'document',taskType:mapTypes[0],taskKey,predecessorKey:i===0?null:mapGenerateStages[i-1]})),
@@ -33,7 +35,7 @@ export function parseArgs(args){
  if(args.at(-2)==='--audit-dir'&&args.at(-1).startsWith('/')){
   auditDirectory=args.at(-1);args=args.slice(0,-2);
  }
- const explicit=args.at(-2)==='--operation'&&[OVERVIEW,ART,REP,IDLE,COMBAT,CONCEPT,UPDATE,ADD,...assemblyTypes,...mapTypes,...Object.keys(propDesignOperations)].includes(args.at(-1))?args.at(-1):null;
+ const explicit=args.at(-2)==='--operation'&&[OVERVIEW,ART,REP,IDLE,COMBAT,CONCEPT,UPDATE,ADD,titleType,...assemblyTypes,...mapTypes,...Object.keys(propDesignOperations)].includes(args.at(-1))?args.at(-1):null;
  if(auditDirectory!==undefined&&(!explicit||args[0]!=='--execute'||isPropDesignOperation(explicit)))throw Error('DOCUMENT_WORKER_EXPLICIT_MODE_REQUIRED');
  if(explicit)args=args.slice(0,-2);
  const op=explicit?{operation:explicit,...(auditDirectory?{auditDirectory}:{})}:{};
@@ -84,7 +86,7 @@ export async function documentTick({dbPath,pds,operation,rendererFor,validateDef
    if(!await pds.capability(signal,operation)){unavailable=true;continue;}
    if(stopping())return {state:'stopping'};
    const result=await runner(operation,run,runProp)({dbPath,pds,...task,validateDefinition,withPlanningSnapshot,signal,
-    render:operation===PRESET||operation===assemblyTypes[1]?undefined:rendererFor(operation)});
+    render:operation===PRESET||operation===titleType||operation===assemblyTypes[1]?undefined:rendererFor(operation)});
    if(result.state!=='not_claimable')return {...result,operation};
    skipped.add(task.taskId);
    lost=true;

@@ -1,3 +1,4 @@
+import {titleType,titlePds,titleCapability} from './title-contract.mjs';
 import {assemblyTypes,assemblyPds,assemblyCapability} from './assembly-worker.mjs';
 import {mapTypes,mapPds,mapCapability} from './map-contract.mjs';
 import {propDesignOperations,propDesignPath,propDesignCapability} from './prop-design-contract.mjs';
@@ -15,6 +16,7 @@ export const idlePath='/v1/npcs/ownership/workflow-plan-idle';
 export const conceptCategoryPath='/v1/concept/category-workflow';
 export const heartbeatPath='/api/service-heartbeat';
 const routes={
+ [titleType]:{path:titlePds,schema:titleCapability},
  ...Object.fromEntries(assemblyTypes.map(v=>[v,{path:assemblyPds,schema:assemblyCapability}])),
  ...Object.fromEntries(mapTypes.map(v=>[v,{path:mapPds,schema:mapCapability}])),
  ...Object.fromEntries(Object.keys(propDesignOperations).map(v=>[v,{path:propDesignPath,schema:propDesignCapability}])),
@@ -71,7 +73,7 @@ export function requestLocalJson({port,path,method,body,deadline,signal,response
    const presetConflict=presetPublication&&path===presetPath&&method==='POST'&&resp.statusCode===409;
    const mapConflict=mapPublication&&resp.statusCode===409;
    const planConflict=method==='POST'&&resp.statusCode===409?planningPublishConflicts.get(path):null;
-   const allowedAssembly=method==='POST'&&[assemblyPds,assemblyPds+'/read'].includes(path)&&assemblyErrors[resp.statusCode];
+   const allowedAssembly=method==='POST'&&(path===titlePds?(resp.statusCode===409?['TITLE_REVISION_OR_PIN_CONFLICT']:assemblyErrors[resp.statusCode]):[assemblyPds,assemblyPds+'/read'].includes(path)&&assemblyErrors[resp.statusCode]);
    if(resp.statusCode!==200&&!presetConflict&&!mapConflict&&!planConflict&&!allowedAssembly){resp.destroy();fail('http_error');return;}
    if(!/^application\/json(?:\s*;|$)/i.test(String(resp.headers['content-type']??''))){resp.destroy();fail('invalid_content_type');return;}
    let len=0;const chunks=[];
@@ -129,6 +131,9 @@ export function localPorts({transport=requestLocalJson}={}){
    const {predecessorReceiptRef,artifact}=command;
    return await transport({port:8030,path:presetPath,method:'POST',
     body:{claim:claimOf(command,claimStamp),artifact:JSON.parse(artifact),predecessorReceiptRef},deadline:120000,presetPublication:true});
+  },
+  async publishTitle(claim,content,signal){
+   return await transport({port:8030,path:titlePds,method:'POST',body:{claim,content},deadline:30000,signal});
   },
   async readAssembly(claim,signal){
    return await transport({port:8030,path:assemblyPds+'/read',method:'POST',body:{claim},deadline:30000,signal});

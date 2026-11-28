@@ -1,3 +1,4 @@
+import {titleType} from './title-contract.mjs';
 import {createAssemblyValidator} from './assembly-validator.mjs';
 import {assemblyTypes,createAssemblyRenderer} from './assembly-worker.mjs';
 import {createDocumentSlot,documentSlotIdentity} from './document-slot.mjs';
@@ -29,7 +30,7 @@ try{
  if(settings.mode==='execute'){
   const release=workspace.tryEnter();
   let result;
-  try{result=release?await executeOnce({...settings,pds,render:settings.operation&&settings.operation!==assemblyTypes[1]?rendererFor(settings.operation):undefined,
+  try{result=release?await executeOnce({...settings,pds,render:settings.operation&&settings.operation!==titleType&&settings.operation!==assemblyTypes[1]?rendererFor(settings.operation):undefined,
    withPlanningSnapshot,validateDefinition,signal}):{state:'not_claimable',code:'DOCUMENT_WORKER_SLOT_PAUSED_OR_ACTIVE'};}finally{release?.();}
   emit({state:result.state,...(result.code?{code:result.code}:{}),...(result.stage?{stage:result.stage}:{}),...(result.codexOutcome?{codexOutcome:result.codexOutcome}:{}),
    ...(result.pdsHttpStatus?{pdsHttpStatus:result.pdsHttpStatus}:{}),...(result.pdsTransportKind?{pdsTransportKind:result.pdsTransportKind}:{}),...(result.conversion?{conversion:result.conversion}:{})});

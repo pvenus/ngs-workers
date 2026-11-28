@@ -281,3 +281,5 @@ for both document workers. The worker executes a fixed host dotnet command
 without a shell and sends only bounded JSON stdin. Missing configuration,
 wrong pin, invalid model data, or inconclusive validation fails the task
 without publishing v4 metadata; older requests do not invoke the validator.
+
+`title.generate` is the exact, model-free Unity title metadata adapter. It claims one `title_metadata` task, validates its admitted portable content against the title contract, and passes it to the fixed PDS title route. PDS validates the asset pins, writes one atomic Filex metadata revision, and owns completion. The worker verifies PDS completion without replaying a write.

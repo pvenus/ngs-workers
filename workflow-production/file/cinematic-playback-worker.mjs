@@ -1,4 +1,5 @@
 import {retrySqliteBusy,saveReservationClearSql} from './sqlite-busy-retry.mjs';
+import {titleUpdateRoot} from './title-contract.mjs';
 import {fileUpdateType,fileUpdateSchema,fileUpdateTaskKey,fileUpdateRef,validFileUpdate} from './file-update-envelope.mjs';
 /** Metadata-only file worker. No frame reads/writes and no model or encoder imports. */
 import {DatabaseSync} from 'node:sqlite';
@@ -109,6 +110,10 @@ export async function runManifestMutationFromPath({dbPath,officialRequestId,task
    require(next&&['payload','task_input','payload_sha256','registered_at'].every(k=>row[k]===next.row[k]),'CINEMATIC_PLAYBACK_CLAIM_CHANGED');
   };
   const verifyCurrent=()=>tx(db,current);
+  const titleUpdate=operation===fileUpdateType&&input.target.root===titleUpdateRoot;
+  const state=()=>db.prepare('SELECT status,result_ref FROM workflow_tasks WHERE task_id=? AND official_request_id=?').get(taskId,officialRequestId);
+  const pdsCompleted=()=>titleUpdate&&state()?.status==='completed'&&state()?.result_ref===fileUpdateRef(input);
+
   try{
    verifyCurrent();
    let ack;
@@ -122,6 +127,10 @@ export async function runManifestMutationFromPath({dbPath,officialRequestId,task
    }
    require(exact(ack,['ok','resultRef'])&&ack.ok===true&&m.ref(ack.resultRef,input),'FILE_WORKER_MANIFEST_ACK_UNCONFIRMED');
    const {resultRef}=ack;
+   if(titleUpdate){
+    require(pdsCompleted(),'FILE_WORKER_MANIFEST_ACK_UNCONFIRMED');
+    return {state:'completed',taskId,resultRef};
+   }
    await retrySqliteBusy(()=>{
     tx(db,()=>{
      current();
@@ -132,6 +141,8 @@ export async function runManifestMutationFromPath({dbPath,officialRequestId,task
    },taskId);
    return {state:'completed',taskId,resultRef};
   }catch(e){
+   if(pdsCompleted())return {state:'completed',taskId,resultRef:fileUpdateRef(input)};
+   if(titleUpdate&&state()?.status==='failed')return {state:'failed',taskId,code:'FILE_METADATA_UPDATE_FAILED'};
    if(e instanceof PlaybackRevisionConflict)try{
     tx(db,()=>{
      current();
