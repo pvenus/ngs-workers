@@ -107,7 +107,7 @@ class Runner:
  def generate(self,claim):
   d=claim["providerRequest"]; assert d["arguments"]["transparent_background"] is False
   prompt=d["arguments"]["prompt"]
-  assert "2:1, 1536×768" in prompt and "central" in prompt and "빈 마루" in prompt
+  assert "2:1, 1536×768" in prompt and "directly on the 2:1 canvas" in prompt and "빈 마루" in prompt
   assert prompt.index("마른 붓의 굵은 먹선과 큰 여백") < prompt.index("[2 Exact shot request]")
   assert json.loads(prompt.split("[2 Exact shot request]\n",1)[1])["prompt"] == "저녁의 마당, 바람에 흔들리는 한 점의 불빛."
   assert "exclude-this-other-section" not in prompt
@@ -130,12 +130,14 @@ sys.stdout.buffer.write(base64.b64decode(result["base64"]))
  assert.deepEqual(p.stdout,png);
 });
 
-test('fixed-size native landscape crops to 2:1 without resampling', {skip:process.platform!=='darwin'},()=>{
- const helper=fileURLToPath(new URL('./portrait-native.py',import.meta.url));
- const script="import runpy,sys,tempfile,pathlib; f=runpy.run_path(sys.argv[1])['cinematic_wide_png']; d=tempfile.TemporaryDirectory(); sys.stdout.buffer.write(f(sys.stdin.buffer.read(),pathlib.Path(d.name)))";
- const p=spawnSync('/usr/bin/python3',['-B','-c',script,helper],{input:backgroundPng});
- assert.equal(p.status,0,p.stderr.toString());
- assert.deepEqual([p.stdout.readUInt32BE(16),p.stdout.readUInt32BE(20)],[1536,768]);
+test('3:2 ImageGen result is not cropped or published as a new cinematic source',async t=>{
+ const f=fixture(t);
+ const pds={capability:async()=>true,readCinematicSource:async()=>input,readCinematicConcept:async()=>concept(),
+  publishCinematicSource:async()=>assert.fail('wrong aspect must not publish')};
+ const result=await imageTick({...f,mode:'run',pds,renderCinematicSource:async()=>backgroundPng},{check:safeCheck});
+ assert.equal(result.state,'failed');
+ assert.deepEqual(result.diagnostic,{stage:'validate-png',reason:'CINEMATIC_SOURCE_PNG_GEOMETRY_INVALID',width:1536,height:1024});
+ assert.equal(f.state().result_ref,null);
 });
 
 test('bad original geometry records exact dimensions without publishing; lost publish ACK stays unresolved',async t=>{
