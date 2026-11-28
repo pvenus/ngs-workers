@@ -4,10 +4,10 @@ import {maxAudioBytes} from './audio-wav.mjs';
 import {AudioDefinitelyRejected} from './audio-worker.mjs';
 
 export const audioPath='/v1/audio/ownership/workflow-generate';
-export const capabilitySchema='workflow.audio-generate-write.v1';
+export const capabilitySchema='workflow.audio-generate-write.v2';
 export const rejectBeforeWrite='WORKFLOW_AUDIO_REJECTED_BEFORE_WRITE';
 export const separatePath='/v1/audio/ownership/workflow-separate';
-export const separateCapabilitySchema='workflow.audio-separate-write.v1';
+export const separateCapabilitySchema='workflow.audio-separate-write.v2';
 const heartbeatPath='/api/service-heartbeat';
 
 export function requestLocalJson({port,path,method,body,deadline,signal,binary=false}){

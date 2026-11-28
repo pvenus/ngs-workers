@@ -3,7 +3,7 @@ import {exact} from './vendor/planner/planner.mjs';
 import {AudioDefinitelyRejected} from './audio-worker.mjs';
 
 export const audioPath='/v1/audio/ownership/workflow-generate';
-export const capabilitySchema='workflow.audio-generate-write.v1';
+export const capabilitySchema='workflow.audio-generate-write.v2';
 export const rejectBeforeWrite='WORKFLOW_AUDIO_REJECTED_BEFORE_WRITE';
 const heartbeatPath='/api/service-heartbeat';
 

@@ -45,7 +45,7 @@ function fixture(t){
 }
 
 test('BGM reads exact claim, invokes HQ port once, publishes one WAV with model BPM',async t=>{
- const {add}=fixture(t),f=add();let calls=0,reads=0,writes=0;
+ const {add,db}=fixture(t),f=add();let calls=0,reads=0,writes=0;
  const resultRef=audioResultRef('binari',f.row.officialRequestId);
  const res=await f.run({
   pds:{
@@ -57,6 +57,7 @@ test('BGM reads exact claim, invokes HQ port once, publishes one WAV with model 
     writes++;assert.equal(claim.taskId,f.ids.taskId);
     assert.deepEqual(s,{conceptId:'sound-category',sectionSha256:'ba'.repeat(32)});
     assert.deepEqual(a,{sha256:sha(wav()),mimeType:'audio/wav',bytes:wav().length,base64:wav().toString('base64'),bpm:80});
+    db.prepare("UPDATE workflow_tasks SET status='completed',result_ref=?,updated_at=? WHERE task_id=? AND status='running'").run(resultRef,claim.claimStamp+1,claim.taskId);
     return {ok:true,resultRef};
    },
   },
@@ -67,9 +68,16 @@ test('BGM reads exact claim, invokes HQ port once, publishes one WAV with model 
    return result();
   }},
  });
- assert.deepEqual(res,{state:'completed',taskId:f.ids.taskId,resultRef});assert.equal(f.get().result_ref,resultRef);
+ assert.deepEqual(res,{state:'handed_off',taskId:f.ids.taskId,resultRef});assert.equal(f.get().result_ref,resultRef);
  assert.equal(f.get().retry_count,0);assert.deepEqual([reads,calls,writes],[1,1,1]);
  assert.equal((await f.run()).state,'not_claimable');
+});
+
+test('acknowledgement never mutates workflow completion from the worker',async t=>{
+ const {add}=fixture(t),f=add();
+ assert.equal((await f.run()).state,'handed_off');
+ assert.equal(f.get().status,'running');
+ assert.equal(f.get().result_ref,null);
 });
 
 test('missing model BPM stays null; worker does not send a guessed or requested tempo',async t=>{
@@ -78,7 +86,7 @@ test('missing model BPM stays null; worker does not send a guessed or requested 
  assert.equal((await f.run({adapters:{bgm:async()=>result(wav(),null)},pds:{
   read:async()=>({...source,content:'### 컨셉 지시로 95 BPM'}),
   publish:async(claim,source,artifact)=>{assert.equal(artifact.bpm,null);return {ok:true,resultRef};},
- }})).state,'completed');
+ }})).state,'handed_off');
 });
 
 test('legacy non-BGM tasks are not polled, no other adapter can be configured; ack is required',async t=>{
@@ -90,7 +98,7 @@ test('legacy non-BGM tasks are not polled, no other adapter can be configured; a
  await assert.rejects(b.run({adapters:{effect:()=>{}}}),/AUDIO_PORTS_REQUIRED/);
  assert.equal(b.get().status,'pending');assert.equal(b.get().retry_count,0);
  store.acknowledge(a.row.officialRequestId);
- assert.equal((await a.run()).state,'completed');
+ assert.equal((await a.run()).state,'handed_off');
 });
 
 test('tampered task input or official payload never starts a model',async t=>{
@@ -198,7 +206,7 @@ test('Codex sees the selected source and brief; only its prose reaches ACE-Step'
   steps.push('caption');assert.equal(data.masterConcept.content,content);
   assert.equal(data.request.brief,'짧고 조용하게');return caption;
  },adapters:{bgm:async input=>{steps.push('ace');assert.equal(input.prompt,caption);return result();}}});
- assert.equal(r.state,'completed');assert.deepEqual(steps,['caption','ace','publish']);
+ assert.equal(r.state,'handed_off');assert.deepEqual(steps,['caption','ace','publish']);
 });
 test('invalid Codex output fails the task without rendering or publishing raw source',async t=>{
  const {add}=fixture(t),f=add();
@@ -214,7 +222,7 @@ test('auto duration forwards exact humming and publishes only length-validated P
   called++;assert.equal(input.durationSeconds,null);assert.equal(input.text,text);
   assert.equal(input.prompt,caption);return result(wav(73));
  }}});
- assert.equal(run.state,'completed');assert.equal(called,1);
+ assert.equal(run.state,'handed_off');assert.equal(called,1);
  for(const duration of [9.9,120.1]){
   const wrong=add({durationSeconds:null});
   const bad=await wrong.run({adapters:{bgm:async()=>result(wav(duration))}});
@@ -224,7 +232,7 @@ test('auto duration forwards exact humming and publishes only length-validated P
 
 test('resident loop retains one private bridge for full caption/render/publish and awaits its shutdown',async t=>{
  const {audioLifecycle}=await import('./adapters/provider/audio-resident-bridge.mjs');
- const {add,dbPath}=fixture(t),first=add(),second=add();
+ const {add,dbPath,db}=fixture(t),first=add(),second=add();
  const events=[],ctr=new AbortController;
  const adapters={bgm:async()=>{events.push('render');return result();}};
  Object.defineProperty(adapters,audioLifecycle,{value:{
@@ -233,7 +241,9 @@ test('resident loop retains one private bridge for full caption/render/publish a
   },
  }});
  const pds={capability:async()=>true,heartbeat:async()=>true,read:async()=>{events.push('read');return source;},
-  publish:async claim=>{events.push('publish');return {ok:true,resultRef:audioResultRef('binari',claim.officialRequestId)};}};
+  publish:async claim=>{events.push('publish');const resultRef=audioResultRef('binari',claim.officialRequestId);
+   db.prepare("UPDATE workflow_tasks SET status='completed',result_ref=?,updated_at=? WHERE task_id=?").run(resultRef,claim.claimStamp+1,claim.taskId);
+   return {ok:true,resultRef};}};
  let pauses=0;
  await residentAudio({dbPath,pds,adapters,signal:ctr.signal,composeCaption:async()=>{events.push('caption');return caption;},log:()=>{},
   pause:async()=>{if(++pauses===2)ctr.abort();}});
@@ -260,7 +270,7 @@ test('full-length target preserves literal lyrics and publishes only results of 
    assert.equal(run.state,'failed');assert.equal(run.code,'AUDIO_FULL_DURATION_NOT_MET');
    assert.equal(f.get().status,'failed');assert.equal(f.get().result_ref,null);assert.equal(published,0);
   }else{
-   assert.equal(run.state,'completed');assert.equal(published,1);
+   assert.equal(run.state,'handed_off');assert.equal(published,1);
    assert.deepEqual([run.targetDurationSeconds,run.actualDurationSeconds,run.targetReached],[60,60,true]);
   }
  }
@@ -278,7 +288,7 @@ test('direct concept binds only exact registered text and original supplied lyri
  composeLyrics:async()=>{assert.fail('literal input must not reach lyric composer');},
  composeCaption:async b=>{assert.deepEqual(b.masterConcept,{title:direct.title,content:conceptText});return caption;},
  adapters:{bgm:async input=>{assert.equal(input.text,text);return result();}}});
- assert.equal(output.state,'completed');
+ assert.equal(output.state,'handed_off');
 });
 
 test('generated Korean lyrics are passed to BGM unmodified and never replaced with a caption',async t=>{
@@ -289,7 +299,7 @@ test('generated Korean lyrics are passed to BGM unmodified and never replaced wi
   invoked++;assert.equal(b.lyricsRequest,lyricsRequest);assert.equal(b.masterConcept.content,source.content);return lyrics;
  },composeCaption:async b=>{assert.match(b.request.vocalMode,/vocal text/);assert(!JSON.stringify(b).includes(lyrics));return caption;},
  adapters:{bgm:async input=>{assert.equal(input.text,lyrics);assert.equal(input.prompt,caption);return result();}}});
- assert.equal(output.state,'completed');assert.equal(invoked,1);
+ assert.equal(output.state,'handed_off');assert.equal(invoked,1);
 });
 
 test('invalid lyric output fails before caption, render or publish',async t=>{
@@ -325,6 +335,7 @@ test('separation uses exact typed source from PDS and publishes one new WAV with
   },publishSeparate:async(claim,wav)=>{
    writes++;assert.equal(claim.officialRequestId,row.officialRequestId);
    assert.deepEqual(wav,{mimeType:'audio/wav',sha256:sha(output),bytes:output.length,base64:output.toString('base64')});
+   db.prepare("UPDATE workflow_tasks SET status='completed',result_ref=?,updated_at=? WHERE task_id=?").run(outputRef,claim.claimStamp+1,claim.taskId);
    return {ok:true,resultRef:outputRef};
   }},adapters:{separate:async args=>{
    renders++;assert.deepEqual(args,{sourceSha256:sha(src),sourceWav:src});
@@ -337,7 +348,7 @@ test('separation uses exact typed source from PDS and publishes one new WAV with
  age();
  assert.equal((await run('original')).state,'failed');assert.equal(writes,0);
  age();
- assert.equal((await run('valid')).state,'completed');assert.deepEqual([renders,writes],[3,1]);
+ assert.equal((await run('valid')).state,'handed_off');assert.deepEqual([renders,writes],[3,1]);
  assert.equal(db.prepare('SELECT result_ref FROM workflow_tasks WHERE task_id=?').get(target.id).result_ref,outputRef);
  assert.equal(sha(src),payload.sourceSha256);
 });
