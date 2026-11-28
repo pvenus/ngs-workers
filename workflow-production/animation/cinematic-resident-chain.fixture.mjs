@@ -113,7 +113,7 @@ try{
   const completion=await pollOnce(planner,rs);assert.equal(completion.completed,1);
   const derived=await readCinematicPublication({officialRequestId:task.officialRequestId,family:requestType});
   assert.equal(derived.manifest.upscale.sourceSequenceId,officialRequestId);
-  assert.equal(derived.manifest.title,original.title);
+  assert.match(derived.manifest.title,/^처마 너머 먼 산 · 업스케일링 · \d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2} KST$/u);
   assert.deepEqual([derived.manifest.width,derived.manifest.height],[1024,512]);
   assert.notEqual(worker.resultRef,proof.resultRef);
   assert.deepEqual((await readCinematicPublication({officialRequestId})).manifest,original);

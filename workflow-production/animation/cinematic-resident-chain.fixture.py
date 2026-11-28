@@ -44,9 +44,7 @@ class CinematicChain(unittest.TestCase):
         self.exercise('named')
 
     def test_upscale_runs_from_formal_request_to_distinct_filex_derivative(self):
-        from unittest.mock import patch
-        with patch.dict(os.environ,{'WORKFLOW_CINEMATIC_SEQUENCE_UPSCALE':'1'}):
-            self.exercise('upscale')
+        self.exercise('upscale')
 
     def exercise(self,kind):
         f=self.fixture
@@ -72,8 +70,16 @@ new PlannerStore(process.argv[1],{cinematicEnabled:true,readCinematicPublication
         marker.chmod(0o600)
         config={'schemaVersion':'pds-filex-cas.v1','projectId':'binari','enabled':True,'endpoint':f.origin,
                 'tokenFile':str(f.secret/'media'/'writer_token'),'writerScope':'cinematics'}
+        ready_options={}
+        if kind=='upscale':
+            from project_data_service.workflow_cinematic_sequence import UPSCALE_READY_SCHEMA,UPSCALE_PROVIDER
+            seedvr_marker=f.root/'cinematic-sequence-upscale-animation-ready.json'
+            seedvr_marker.write_text(json.dumps({'schemaVersion':UPSCALE_READY_SCHEMA,'provider':UPSCALE_PROVIDER,
+                                                 'checkedAt':time.time_ns()//1_000_000}))
+            seedvr_marker.chmod(0o600)
+            ready_options['upscale_readiness']=lambda:renderer_ready(seedvr_marker,schema=UPSCALE_READY_SCHEMA,provider=UPSCALE_PROVIDER)
         service=impl(PrivatePlannerClaim(str(db),identity.st_dev,identity.st_ino),
-            writer_factory=lambda:FilexCASTransport(config),readiness=lambda:renderer_ready(marker,schema=schema))
+            writer_factory=lambda:FilexCASTransport(config),readiness=lambda:renderer_ready(marker,schema=schema),**ready_options)
         pds=ThreadingHTTPServer(('127.0.0.1',0),PDS)
         setattr(pds,at,service)
         worker=threading.Thread(target=pds.serve_forever,daemon=True);worker.start()

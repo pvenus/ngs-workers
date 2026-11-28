@@ -10,6 +10,7 @@ export const defaultPropBinding=join(base,'i2v-a14b-binding.json');
 export const defaultPropReady=join(base,'prop-animation-ready.json');
 export const defaultCinematicReady=join(base,'cinematic-animation-ready.json');
 export const defaultSequenceReady=join(base,'cinematic-sequence-animation-ready.json');
+export const defaultUpscaleReady=join(base,'cinematic-sequence-upscale-animation-ready.json');
 const code='PROP_ANIMATION_READINESS_PATH';
 const require=(ok)=>{if(!ok)throw Error(code);};
 async function check(path,leaf='prop-animation-ready.json'){
@@ -32,7 +33,13 @@ export function cinematicAnimationReadiness(options){
 export function cinematicSequenceReadiness(options){
  return runtimeReadiness(options,defaultSequenceReady,'cinematic-sequence-animation-ready.json','workflow.cinematic-sequence-animation-renderer-ready.v1');
 }
-function runtimeReadiness({path=undefined,probe,assertKnown,now=Date.now},defaultPath,leaf,schemaVersion){
+export function cinematicUpscaleReadiness(options){
+ return runtimeReadiness(options,defaultUpscaleReady,'cinematic-sequence-upscale-animation-ready.json',
+  'workflow.cinematic-sequence-upscale-renderer-ready.v1','seedvr2-7b-fp16',
+  proof=>proof?.ready===true&&proof.model==='seedvr2-7b-fp16');
+}
+function runtimeReadiness({path=undefined,probe,assertKnown,now=Date.now},defaultPath,leaf,schemaVersion,provider=WAN_I2V_PROVIDER,
+ matchesProof=proof=>proof?.ready===true&&proof.model===WAN_I2V_MODEL_ID&&proof.quantization===WAN_I2V_QUANTIZATION){
  if(path===undefined)path=defaultPath;
  let closed=false,pending,valid=false;
  async function clear(){
@@ -47,12 +54,12 @@ function runtimeReadiness({path=undefined,probe,assertKnown,now=Date.now},defaul
    try{
     await check(path,leaf);assertKnown();
     const ready=await probe();
-    require(ready?.ready===true&&ready.model===WAN_I2V_MODEL_ID&&ready.quantization===WAN_I2V_QUANTIZATION);
+    require(matchesProof(ready));
     assertKnown();require(!closed);
     const checkedAt=now();require(Number.isSafeInteger(checkedAt)&&checkedAt>0);
     stage=join(dirname(path),'.animation-ready-'+randomUUID());
     await writeFile(stage,JSON.stringify({schemaVersion,
-      provider:WAN_I2V_PROVIDER,checkedAt})+'\n',{mode:0o600,flag:'wx'});
+      provider,checkedAt})+'\n',{mode:0o600,flag:'wx'});
     assertKnown();require(!closed);
     await rename(stage,path);stage=undefined;valid=true;return true;
    }catch{await clear();return false;}

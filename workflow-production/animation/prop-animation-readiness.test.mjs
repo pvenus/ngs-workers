@@ -74,3 +74,18 @@ test('sequence marker is independent from v1 encoder readiness and cannot overwr
  assert.equal(await fails.refresh(),false);
  await v2.stop();await assert.rejects(lstat(path),{code:'ENOENT'});
 });
+
+
+test('upscale readiness publishes a distinct SeedVR2 proof and drops it when the model probe fails',async t=>{
+ const {cinematicUpscaleReadiness}=await import('./prop-animation-readiness.mjs');
+ const dir=await realpath(await mkdtemp(join(tmpdir(),'cinematic-upscale-ready-')));
+ t.after(()=>rm(dir,{recursive:true,force:true}));
+ const path=join(dir,'cinematic-sequence-upscale-animation-ready.json');
+ let model='wan2.2-i2v-a14b';
+ const ready=cinematicUpscaleReadiness({path,assertKnown(){},now:()=>100,probe:async()=>({ready:true,model})});
+ assert.equal(await ready.refresh(),false);
+ model='seedvr2-7b-fp16';assert.equal(await ready.refresh(),true);
+ assert.deepEqual(JSON.parse(await readFile(path)),{schemaVersion:'workflow.cinematic-sequence-upscale-renderer-ready.v1',provider:model,checkedAt:100});
+ model='missing';assert.equal(await ready.refresh(),false);
+ await assert.rejects(readFile(path),{code:'ENOENT'});
+});

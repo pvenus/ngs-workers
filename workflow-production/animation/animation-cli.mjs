@@ -11,10 +11,10 @@ import {fileURLToPath} from 'node:url';
 import {createWarmAnimation,spawnAnimationChannel} from './animation-warm.mjs';
 import {chooseI2V,executeI2V,i2vPorts} from './i2v-worker.mjs';
 import {createReferencePaletteCorrection} from './reference-palette-correction.mjs';
-import {createSeedVR2Upscaler} from './seedvr2-upscale.mjs';
+import {createSeedVR2Upscaler,backgroundUpscaleModel} from './seedvr2-upscale.mjs';
 import {createAnimationModelSwitch} from './i2v-model-switch.mjs';
 import {choosePropAnimation,executePropAnimation,propAnimationPorts} from './prop-animation-worker.mjs';
-import {confirmBindingPath,defaultPropBinding,propAnimationReadiness,cinematicAnimationReadiness,cinematicSequenceReadiness} from './prop-animation-readiness.mjs';
+import {confirmBindingPath,defaultPropBinding,propAnimationReadiness,cinematicAnimationReadiness,cinematicSequenceReadiness,cinematicUpscaleReadiness} from './prop-animation-readiness.mjs';
 import {chooseCinematic,executeCinematic,cinematicPorts} from './cinematic-worker.mjs';
 import {chooseCinematicSequence,executeCinematicSequence,cinematicSequencePorts} from './cinematic-sequence-worker.mjs';
 import {createPropI2VInputFraming} from './prop-i2v-input-framing.mjs';
@@ -322,7 +322,13 @@ if(process.argv[1]===fileURLToPath(import.meta.url)){
  const cinematicReady=cinematicAnimationReadiness({path:process.env.WORKFLOW_CINEMATIC_ANIMATION_READY_FILE,assertKnown,
   probe:async()=>{const [proof]=await Promise.all([probeModel(),probeCutsceneEncoder()]);return proof;}});
  const sequenceReady=cinematicSequenceReadiness({path:process.env.WORKFLOW_CINEMATIC_SEQUENCE_ANIMATION_READY_FILE,probe:probeModel,assertKnown});
- const allReadiness=[propReady,cinematicReady,sequenceReady];
+ const upscaleReady=cinematicUpscaleReadiness({path:process.env.WORKFLOW_CINEMATIC_SEQUENCE_UPSCALE_READY_FILE,assertKnown,
+  probe:async()=>{
+   if(!backgroundUpscaler)return undefined;
+   await backgroundUpscaler.probe();
+   return {ready:true,model:backgroundUpscaleModel};
+  }});
+ const allReadiness=[propReady,cinematicReady,sequenceReady,upscaleReady];
  const pulseReadiness=()=>{for(const lifecycle of allReadiness)void lifecycle.refresh();};
  const readinessHeart=setInterval(pulseReadiness,30000);readinessHeart.unref();pulseReadiness();
  const invalidateReady=()=>Promise.all(allReadiness.map(lifecycle=>lifecycle.invalidate()));
@@ -335,7 +341,7 @@ if(process.argv[1]===fileURLToPath(import.meta.url)){
     ['prop',[propReady.ready()?choosePropAnimation(dbPath):null]],
     ['i2v',[i2vModel&&override?chooseI2V(dbPath):null]],
     ['cinematic',[cinematicReady.ready()?chooseCinematic(dbPath):null]],
-    ['sequence',[sequenceReady.ready()?chooseCinematicSequence(dbPath,{allowUpscale:!!backgroundUpscaler&&await sequence.readyUpscale(signal)}):null]],
+    ['sequence',[sequenceReady.ready()?chooseCinematicSequence(dbPath,{allowUpscale:upscaleReady.ready()&&await sequence.readyUpscale(signal)}):null]],
    ];
    const choice=oldestRunnable(dbPath,byLane.flatMap(([lane,tasks])=>tasks.filter(Boolean).map(task=>({...task,lane}))))[0];
    const {lane,...job}=choice??{};
