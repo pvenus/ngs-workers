@@ -299,7 +299,7 @@ test('upscale claim consumes all pinned frames once, never calls Wan, and does n
  f.db.prepare('UPDATE workflow_tasks SET task_id=?,task_key=?,task_type=?,task_input=?').run(taskId,key,type,canonical(input));
  assert.equal(chooseCinematicSequence(f.path),null);
  assert.deepEqual({...chooseCinematicSequence(f.path,{allowUpscale:true})},{taskId,officialRequestId});
- const original={schemaVersion:'ngs.cinematic-sequence-result.v1',officialRequestId:seq,sourceSha256:input.sourceSha256,width:128,height:128,
+ const original={schemaVersion:'ngs.cinematic-sequence-result.v1',title:'잎끝의 미풍',officialRequestId:seq,sourceSha256:input.sourceSha256,width:128,height:128,
   masterFps:24,frameCount:45,frames:raw.frames.map((b,index)=>({index,bytes:b.length,sha256:sha(b)}))};
  let resized=0,staged=0;
  const {state}=await executeCinematicSequence(f.db,{taskId,officialRequestId},new AbortController().signal,{
@@ -309,7 +309,7 @@ test('upscale claim consumes all pinned frames once, never calls Wan, and does n
   ports:{read:async()=>({input,original}),inputFrame:async(_claim,i)=>({...original.frames[i],base64:raw.frames[i].toString('base64')}),
    stage:async(_claim,f)=>{assert.equal(f.index,staged++);return {ok:true,index:f.index,sha256:f.sha256};},
    publish:async(_claim,m)=>{assert.equal(resized,1);assert.equal(staged,45);assert.equal(m.width,256);assert.deepEqual(m.playback,playback);
-    assert.equal(m.upscale.sourceSequenceId,seq);return {ok:true,resultRef};}}
+    assert.equal(m.upscale.sourceSequenceId,seq);assert.match(m.title,/^잎끝의 미풍 · 업스케일링 · \d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2} KST$/u);return {ok:true,resultRef};}}
  });
  assert.equal(state,'handed_off');
  // A mock positive ACK cannot create a success write by itself. Real PDS commits first.

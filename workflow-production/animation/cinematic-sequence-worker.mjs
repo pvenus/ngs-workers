@@ -17,6 +17,12 @@ export const sequenceType='cinematic.sequence.generate',sequenceSchema='ngs.cine
 const namedSchema='ngs.cinematic-sequence-generate.v2';
 const nativePlayback=()=>({durationFrames:45,speedCurve:[{frame:0,rate:1}],cameraCurve:[{frame:0,zoom:1,x:.5,y:.5}]});
 const validTitle=t=>typeof t==='string'&&t.isWellFormed()&&t===t.trim()&&[...t].length>=1&&[...t].length<=120&&Buffer.byteLength(t)<=480&&!/[\x00-\x1F\x7F]/u.test(t);
+export function cinematicUpscaleTitle(original,now=Date.now()){
+ const stamp=new Date(now+9*60*60*1000).toISOString().slice(0,19).replace('T',' ')+' KST';
+ const suffix=' · 업스케일링 · '+stamp;
+ const prior=original.title??'PNG '+original.officialRequestId.slice(-10);
+ return [...prior].slice(0,120-[...suffix].length).join('').trimEnd()+suffix;
+}
 export const sequenceKey='cinematic_sequence_render',sequenceTaskType='cinematic.sequence.generate.render';
 const upscaleType='cinematic.sequence.upscale',upscaleSchema='ngs.cinematic-sequence-upscale.v1',upscaleKey='cinematic_sequence_upscale';
 const upscaleInputKeys=['sequenceId','sourceSha256','expectedRevision','playback'];
@@ -249,7 +255,7 @@ export async function executeCinematicSequence(db,t,signal,{ports,runI2V,runUpsc
    catch(e){unknownStop=e?.rendererJoined!==true;throw e;}
    stage='validate_upscale';
    require(output?.width===source.width*2&&output?.height===source.height*2,'CINEMATIC_UPSCALE_OUTPUT_GEOMETRY');
-   manifest=nativeManifest(output,resultId,{...input,...(source.title===undefined?{}:{title:source.title})},{model:backgroundUpscaleModel,scale:2,sourceWidth:source.width,sourceHeight:source.height,sourceSequenceId:input.sequenceId});
+   manifest=nativeManifest(output,resultId,{...input,title:cinematicUpscaleTitle(source)},{model:backgroundUpscaleModel,scale:2,sourceWidth:source.width,sourceHeight:source.height,sourceSequenceId:input.sequenceId});
   }else{
   const pinned=async()=>{
    const source=await ports.asset(claim,signal);png(source,maxImageBytes);
