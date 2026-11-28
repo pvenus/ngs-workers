@@ -7,7 +7,7 @@ import {fileURLToPath} from 'node:url';
 import {setTimeout as sleep} from 'node:timers/promises';
 import {buildWanI2VGraph,WAN_I2V_MODEL_ID,WAN_I2V_QUANTIZATION,WAN_I2V_HIGH,WAN_I2V_LOW,
  WAN_I2V_HIGH_SHA256,WAN_I2V_LOW_SHA256,WAN_I2V_ENCODER,WAN_I2V_VAE,WAN_I2V_VAE_SHA256,
- WAN_I2V_INPUT_IMAGE,WAN_I2V_SAVE_NODE,WAN_I2V_SAVE_PREFIX,WAN_I2V_FPS,WAN_I2V_LENGTH} from './i2v-wan-graph.mjs';
+ WAN_I2V_INPUT_IMAGE,WAN_I2V_SAVE_NODE,WAN_I2V_SAVE_PREFIX,WAN_I2V_FPS,WAN_I2V_LENGTH,WAN_I2V_CINEMATIC_FRAMING,WAN_I2V_CINEMATIC_SIZE} from './i2v-wan-graph.mjs';
 import {png,maxBundleBytes,maxFrameBytes,maxImageBytes} from './i2v-worker.mjs';
 
 export const wanI2VBindingSchema='ngs.animation-i2v-a14b-q4km-binding.v1';
@@ -174,14 +174,16 @@ export function createWanI2V({binding,ports={}}){
    await verify(binding,cache); // Local file/header/digest verification only, no inference.
    return {ready:true,model:WAN_I2V_MODEL_ID,quantization:WAN_I2V_QUANTIZATION,fps:i2vWanFps,frames:i2vWanFrames};
   },
-  async render({dir,source,motionPrompt,signal,length=i2vWanFrames}){
+  async render({dir,source,motionPrompt,signal,length=i2vWanFrames,framing}){
    if(busy||unsafe)throw error('I2V_MODEL_OWNERSHIP_UNKNOWN',false);
    busy=true;
    let state;
    try{
     const timeout=AbortSignal.any([signal,AbortSignal.timeout(30*60_000)]);
     timeout.throwIfAborted();
-    const shape=resolution(png(source,maxImageBytes));
+    const sourceShape=png(source,maxImageBytes);
+    need(framing===undefined||framing===WAN_I2V_CINEMATIC_FRAMING,'I2V_FRAMING_INVALID');
+    const shape=framing===WAN_I2V_CINEMATIC_FRAMING?WAN_I2V_CINEMATIC_SIZE:resolution(sourceShape);
     await verify(binding,cache);
     const scratch=await realpath(dir);
     const engine=join(scratch,'i2v-comfy'),models=join(engine,'models'),custom=join(engine,'custom_nodes'),input=join(engine,'input'),out=join(engine,'output');

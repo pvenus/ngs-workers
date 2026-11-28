@@ -11,7 +11,7 @@ import {backgroundUpscaleModel,backgroundUpscaleScale,backgroundUpscaleMaxBytes}
 import {sequenceCheckpoints} from './sequence-checkpoint.mjs';
 import {backgroundAnimationPixelMethod} from './reference-palette-correction.mjs';
 import {validCutscenePrompt} from './cutscene-i2v.mjs';
-import {WAN_I2V_FPS,WAN_I2V_LENGTH,WAN_I2V_SHORT_LENGTH} from './i2v-wan-graph.mjs';
+import {WAN_I2V_FPS,WAN_I2V_LENGTH,WAN_I2V_SHORT_LENGTH,WAN_I2V_CINEMATIC_FRAMING,WAN_I2V_CINEMATIC_SIZE} from './i2v-wan-graph.mjs';
 
 export const sequenceType='cinematic.sequence.generate',sequenceSchema='ngs.cinematic-sequence-generate.v1';
 export const sequenceKey='cinematic_sequence_render',sequenceTaskType='cinematic.sequence.generate.render';
@@ -268,9 +268,12 @@ export async function executeCinematicSequence(db,t,signal,{ports,runI2V,runUpsc
   stage='prepare';dir=await makeDir();
   signal.throwIfAborted();tx(db,current);
   stage='render';
-  try{output=await runI2V({dir,source,motionPrompt:input.motionPrompt,signal});}
+  try{output=await runI2V({dir,source,motionPrompt:input.motionPrompt,signal,
+   ...(!group?{framing:WAN_I2V_CINEMATIC_FRAMING}:{})});}
   catch(e){unknownStop=e?.rendererJoined!==true;throw e;}
   stage='validate';
+  if(!group)require(output?.width===WAN_I2V_CINEMATIC_SIZE.width&&output?.height===WAN_I2V_CINEMATIC_SIZE.height,
+   'CINEMATIC_SEQUENCE_WIDE_SHAPE');
   manifest=nativeManifest(output,resultId,input);
   if(group){
    const upscale={model:backgroundUpscaleModel,scale:backgroundUpscaleScale,sourceWidth:manifest.width,sourceHeight:manifest.height};

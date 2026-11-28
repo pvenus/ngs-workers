@@ -93,8 +93,10 @@ function validPng(w,h){
  return Buffer.concat([Buffer.from('89504e470d0a1a0a','hex'),chunk('IHDR',hbytes),
   chunk('IDAT',deflateSync(Buffer.alloc((1+3*w)*h))),chunk('IEND',Buffer.alloc(0))]);
 }
-test('production adapter marshals one owned loopback prompt and joins group before returning 45 true RGB frames',async t=>{
+for(const framing of [undefined,'cinematic-wide-2x1'])
+test('production adapter preserves native size policy and returns 45 RGB frames: '+(framing??'source-adaptive'),async t=>{
  const {cfg,root}=await installFixture(t),bytes=validPng(512,512);
+ const [width,height]=framing?[512,256]:[512,512], rendered=framing?validPng(width,height):bytes;
  let child,token,joined=false,history=0,prompts=0;
  const fakeNodes=['UnetLoaderGGUF','WanImageToVideo','CLIPLoader','VAELoader','LoadImage','CLIPTextEncode',
   'ModelSamplingSD3','KSamplerAdvanced','VAEDecode','SaveImage'];
@@ -123,6 +125,7 @@ test('production adapter marshals one owned loopback prompt and joins group befo
     for(const [folder,file] of wanI2VAssetPins)
      assert.equal(await readlink(join(root,'i2v-comfy','models',folder,file)),join(cfg.modelsRoot,folder,file));
     assert.equal(p.prompt['8'].inputs.start_image[0],'4');
+    assert.deepEqual([p.prompt['8'].inputs.width,p.prompt['8'].inputs.height],[width,height]);
     assert.deepEqual(await readFile(join(root,'i2v-comfy','input','source.png')),bytes);
     return Response.json({prompt_id:p.prompt_id});
    }
@@ -130,12 +133,13 @@ test('production adapter marshals one owned loopback prompt and joins group befo
    const images=Array.from({length:WAN_I2V_LENGTH},(_,i)=>({
     filename:`${WAN_I2V_SAVE_PREFIX}_${String(i+1).padStart(5,'0')}_.png`,type:'output',subfolder:''
    }));
-   await Promise.all(images.map(i=>writeFile(join(root,'i2v-comfy','output',i.filename),bytes)));
+   await Promise.all(images.map(i=>writeFile(join(root,'i2v-comfy','output',i.filename),rendered)));
    return Response.json({[path.split('/').at(-1)]:{
     status:{status_str:'success',completed:true},outputs:{[WAN_I2V_SAVE_NODE]:{images}}}});
   },
   kill(pid,sig){assert.equal(pid,-456);if(joined)throw absent();if(sig==='SIGTERM'){joined=true;child.emit('exit',0);}},
  }});
- const result=await wan.render({dir:root,source:bytes,motionPrompt:'Gentle flame',signal:signal()});
+ const result=await wan.render({dir:root,source:bytes,motionPrompt:'Gentle flame',signal:signal(),framing});
+ assert.deepEqual([result.width,result.height],[width,height]);
  assert.equal(prompts,1);assert.equal(result.frames.length,45);assert.equal(result.fps,24);assert.equal(joined,true);
 });

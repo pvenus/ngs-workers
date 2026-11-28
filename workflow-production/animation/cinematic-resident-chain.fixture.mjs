@@ -47,7 +47,7 @@ const chunk=(tag,payload)=>{
  const inner=Buffer.concat([Buffer.from(tag),payload]);return Buffer.concat([encodeU32(payload.length),inner,encodeU32(crc32(inner))]);
 };
 function rgbFrame(index){
- const w=128,h=128,head=Buffer.concat([encodeU32(w),encodeU32(h),Buffer.from([8,2,0,0,0])]),raw=Buffer.alloc(h*(w*3+1));
+ const w=sequence?512:128,h=sequence?256:128,head=Buffer.concat([encodeU32(w),encodeU32(h),Buffer.from([8,2,0,0,0])]),raw=Buffer.alloc(h*(w*3+1));
  for(let y=0;y<h;y++)for(let x=0;x<w;x++){
   const i=y*(w*3+1)+1+x*3;raw[i]=y<48?80:140;raw[i+1]=190;raw[i+2]=x===index?200:40;
  }
@@ -74,7 +74,8 @@ try{
   assert.ok(unloaded);invocations++;assert.equal(sha(job.source),sourceSha256);assert.equal(job.motionPrompt,payload.motionPrompt);
   const frames=Array.from({length:45},(_,i)=>rgbFrame(i));
   hashes.push(...frames.map(sha));
-  return {width:128,height:128,fps:24,frames};
+  assert.equal(job.framing,sequence?'cinematic-wide-2x1':undefined);
+  return {width:sequence?512:128,height:sequence?256:128,fps:24,frames};
  }});
  assert.equal(await ports.ready(signal),true);
  const worker=await execute(db,task,signal,{ports,runI2V:job=>slot.runI2V(job)});

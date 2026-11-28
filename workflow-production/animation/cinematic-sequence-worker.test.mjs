@@ -32,6 +32,7 @@ const playback={durationFrames:120,speedCurve:[{frame:0,rate:0.5},{frame:32,rate
 const input={sourceSha256:sha(source),motionPrompt:'Low torchlight glimmers against the stone.',playback};
 const payload=canonical({schemaVersion:sequenceSchema,projectId:'binari',...input});
 const raw={width:128,height:128,fps:24,frames:Array.from({length:45},(_,i)=>still(i))};
+const wide={width:512,height:256,fps:24,frames:Array.from({length:45},(_,i)=>still(i,{w:512,h:256}))};
 function fixture(t,{legacy=false}={}){
  const root=realpathSync(mkdtempSync(join(tmpdir(),'cinematic-sequence-stage-')));
  const path=join(root,'plan.sqlite');writeFileSync(path,'',{mode:0o600});
@@ -55,8 +56,8 @@ function fixture(t,{legacy=false}={}){
   async stage(claim,row){
    assert.equal(claim,pinnedClaim);assert.equal(state().status,'running');
    assert.deepEqual(Object.keys(row).sort(),['base64','bytes','index','sha256']);
-   assert.deepEqual(Buffer.from(row.base64,'base64'),raw.frames[row.index]);
-   assert.equal(row.sha256,sha(raw.frames[row.index]));assert.equal(row.bytes,raw.frames[row.index].length);
+   assert.deepEqual(Buffer.from(row.base64,'base64'),wide.frames[row.index]);
+   assert.equal(row.sha256,sha(wide.frames[row.index]));assert.equal(row.bytes,wide.frames[row.index].length);
    if(f.frames.has(row.index))assert.deepEqual(row,f.frames.get(row.index));else f.frames.set(row.index,row);
    return {ok:true,index:row.index,sha256:row.sha256};
   },
@@ -69,7 +70,8 @@ function fixture(t,{legacy=false}={}){
   assert.ok(f.released);f.invocations++;assert.deepEqual(job.source,source);
   assert.equal(job.motionPrompt,input.motionPrompt);
   assert.ok(!Object.hasOwn(job,'playback'));
-  return raw;
+  assert.equal(job.framing,'cinematic-wide-2x1');
+  return wide;
  }};
  f.slot=createAnimationModelSwitch({async shutdown(){f.released=true;return true;}},f.renderer);
  f.run=signal=>executeCinematicSequence(db,job,signal??new AbortController().signal,{ports:f.ports,runI2V:job=>f.slot.runI2V(job),
@@ -85,8 +87,8 @@ test('official v2 uses exact native PNG bytes, native frame order and an editing
  assert.equal(f.invocations,1);assert.equal(f.cleaned,true);
  const [m]=f.published;
  assert.deepEqual(m,{schemaVersion:'ngs.cinematic-sequence-result.v1',projectId:'binari',officialRequestId,sourceSha256:input.sourceSha256,
-  width:128,height:128,masterFps:24,frameCount:45,
-  frames:raw.frames.map((b,index)=>({index,sha256:sha(b),bytes:b.length})),playback});
+  width:512,height:256,masterFps:24,frameCount:45,
+  frames:wide.frames.map((b,index)=>({index,sha256:sha(b),bytes:b.length})),playback});
  assert.equal(m.playback.durationFrames,120);
  assert.deepEqual([...f.frames.keys()],Array.from({length:45},(_,i)=>i));
  assert.equal(f.state().result_ref,resultRef);assert.equal(f.state().status,'completed');
@@ -137,12 +139,13 @@ test('wrong result refs, superseded claims, and exhausted publication retries ne
  }
 });
 test('wrong pin, mismatched curve, invalid PNG, and an unknown renderer stop cannot stage any frame',async t=>{
- for(const mode of ['source','curve','frame-count','transparent','stop']){
+ for(const mode of ['source','curve','frame-count','transparent','wrong-aspect','stop']){
   const f=fixture(t);
   if(mode==='source')f.ports.asset=async()=>still(144);
   if(mode==='curve')f.ports.read=async()=>({...input,playback:{...playback,durationFrames:300}});
-  if(mode==='frame-count')f.renderer.render=async()=>({...raw,frames:raw.frames.slice(1)});
-  if(mode==='transparent')f.renderer.render=async()=>({...raw,frames:[...raw.frames.slice(0,-1),still(2,{rgba:true})]});
+  if(mode==='frame-count')f.renderer.render=async()=>({...wide,frames:wide.frames.slice(1)});
+  if(mode==='transparent')f.renderer.render=async()=>({...wide,frames:[...wide.frames.slice(0,-1),still(2,{w:512,h:256,rgba:true})]});
+  if(mode==='wrong-aspect')f.renderer.render=async()=>raw;
   if(mode==='stop')f.renderer.render=async()=>{throw Error('MODEL_STOP_UNKNOWN');};
   const result=await f.run();
   assert.equal(result.state,mode==='stop'?'requires_reconciliation':'failed',mode);
@@ -193,7 +196,7 @@ test('background-only postprocess: '+scenario,async t=>{
     stage:async(_claim,f)=>{staged.push(f);return {ok:true,index:f.index,sha256:f.sha256};},
     publish:async(_claim,m)=>{published.push(m);return {ok:true,resultRef:'binari/cinematics/sequences/'+job.id+'/manifest.json'};},
    },
-   runI2V:async r=>{assert.equal(r.motionPrompt,input.motionPrompt);rendered.push(sha(r.source));return raw;},
+   runI2V:async r=>{assert.equal(r.motionPrompt,input.motionPrompt);assert.equal(r.framing,undefined);rendered.push(sha(r.source));return raw;},
    ...(scenario==='missing_upscaler'?{}:{runUpscale:async ({output})=>{
     assert.equal(output,raw);upscaled.push(job.variant);
     if(['confirmed_failure','unknown_failure'].includes(scenario))throw Object.assign(Error('BACKGROUND_SEEDVR2_RENDER_FAILED'),{rendererJoined:scenario==='confirmed_failure'});

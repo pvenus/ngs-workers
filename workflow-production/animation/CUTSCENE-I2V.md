@@ -9,7 +9,12 @@ New sequence requests use `cinematic.sequence.generate` /
   `[{frame,zoom,x,y}]` (zoom 1–3, normalized x/y 0–1). Curves must start at
   0 and have strictly increasing integer frames below the playback duration.
 - The existing exclusive Wan slot still renders **45 RGB PNGs at the native
-  24fps grid**, independent of the playback metadata. No FFmpeg, crop,
+  24fps grid**, fixed at **512×256 (2:1)** for official cinematic sequence
+  renders, independent of the playback metadata. Existing sequences, legacy
+  MP4, prop and background animation retain their own size policies. Compose
+  new source art in 2:1 to avoid Wan's center crop on other input ratios.
+  A separate 2× upscale, when requested, gives 1024×512, still 2:1.
+  No FFmpeg, crop,
   interpolation, matting, resizing, repack, or PNG re-encoding happens in
   sequence publication. Display-time controls are stored, not burned in.
 - Exact worker task: `cinematic_sequence_render` /

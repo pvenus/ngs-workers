@@ -82,6 +82,7 @@ new PlannerStore(process.argv[1],{cinematicEnabled:true,readCinematicPublication
             path=root/'sequences'/rn
             manifest=json.loads((path/'manifest.json').read_bytes())
             self.assertEqual(manifest['frameCount'],45)
+            self.assertEqual((manifest['width'],manifest['height']),(512,256))
             self.assertEqual(manifest['playback'],proof['playback'])
             for i,digest in enumerate(proof['hashes']):
                 self.assertEqual(sha256((path/'frames'/f'{i:04d}.png').read_bytes()).hexdigest(),digest)
