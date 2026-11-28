@@ -1,11 +1,9 @@
 import {createHash} from 'node:crypto';
-import {propGenerateType,propGenerateSchema,propRegenerateType,propRegenerateSchema,
- validatePropGenerate,validatePropRegenerate} from './vendor/prop-composite-v1/prop-generate-envelope.mjs';
+import {propGenerateType,propGenerateSchema,validatePropGenerate} from './vendor/prop-composite-v1/prop-generate-envelope.mjs';
 
 export const propDesignKey='prop_design';
 export const propDesignOperations=Object.freeze({
- 'prop.generate.design':Object.freeze({requestType:propGenerateType,schema:propGenerateSchema,validate:validatePropGenerate}),
- 'prop.regenerate.design':Object.freeze({requestType:propRegenerateType,schema:propRegenerateSchema,validate:validatePropRegenerate})
+ 'prop.generate.design':Object.freeze({requestType:propGenerateType,schema:propGenerateSchema,validate:validatePropGenerate})
 });
 export const propDesignSchema='ngs.prop-design-spec.v1';
 export const propDesignCapability='workflow.prop-design-write.v1';
@@ -34,7 +32,7 @@ export function expectedInput(payload,operation){
  const spec=propDesignOperations[operation],wire=spec.validate(payload,projectId);
  requirePropDesign(wire===canonical(payload));
  return {propId:payload.propId,designContextSha256:payload.designContextSha256,intent:payload.intent,
-  motion:payload.motion??'still',...(payload.presentationProfile?{presentationProfile:payload.presentationProfile}:{}),...(spec.requestType===propRegenerateType?{source:payload.source}:{})};
+  motion:payload.motion??'still',...(payload.presentationProfile?{presentationProfile:payload.presentationProfile}:{})};
 }
 export function verifiedDesignInput(doc,input){
  const need=(ok)=>requirePropDesign(ok,'PROP_DESIGN_CONTEXT_INVALID');

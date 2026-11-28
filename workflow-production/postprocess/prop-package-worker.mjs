@@ -3,12 +3,12 @@ import {retrySqliteBusy,saveReservationClearSql} from './sqlite-busy-retry.mjs';
 import {DatabaseSync} from 'node:sqlite';
 import {canonical,sha} from './vendor/planner-f24d23a/envelope.mjs';
 import {assertDatabasePath,protectSchema,workflowTaskEligibleSql,workflowTaskRetrySetSql,markWorkflowTaskFailed} from './workflow-ready.mjs';
-import {exactProp,propValidator,propGenerateType,propRegenerateType,propAnimationType,propScaleType} from './vendor/prop-composite/prop-generate-envelope.mjs';
+import {exactProp,propValidator,propGenerateType,propAnimationType,propScaleType} from './vendor/prop-composite/prop-generate-envelope.mjs';
 import {storedPropPlan,checkPropPublishRows,exactPropTask,isPropRef,isPropScaleKey,verifyPropScaleRefs,propCompletionLimit,propKeys} from './vendor/prop-composite/prop-generate-plan.mjs';
 import {parsePropPackage,propPackageReceipt} from './vendor/prop-composite/prop-package-contract.mjs';
 
-const types=[propGenerateType,propRegenerateType];
-const stillSql="((r.request_type IN (?,?) AND CASE WHEN json_valid(r.payload) THEN coalesce(json_extract(r.payload,'$.motion'),'still')='still' ELSE 0 END) OR r.request_type='prop.scale.generate')";
+const types=[propGenerateType];
+const stillSql="((r.request_type=? AND CASE WHEN json_valid(r.payload) THEN coalesce(json_extract(r.payload,'$.motion'),'still')='still' ELSE 0 END) OR r.request_type='prop.scale.generate')";
 const modeSql=appendEnabled=>appendEnabled
  ?`((${stillSql}) OR r.request_type='${propAnimationType}')`
  :stillSql;

@@ -44,8 +44,8 @@ function make(t,{regenerate=false,motion='still',spirit=false,scale=false,splitS
  const run=(pds)=>runPropPackageFromPath({dbPath,taskId,officialRequestId,pds});
  return {db,dbPath,by,taskId,payload,manifest,state,run};
 }
-test('create and regenerate: same still worker publishes exact immutable manifest and completes only on verified ACK',async t=>{
- for(const regenerate of [false,true]){
+test('still worker publishes exact immutable manifest and completes only on verified ACK',async t=>{
+ for(const regenerate of [false]){
   const f=make(t,{regenerate});
   const refs=await propPackageReceipt(f.manifest);
   assert.deepEqual(nextPropPackageFromPath(f.dbPath),{taskId:f.taskId,officialRequestId});
@@ -58,7 +58,7 @@ test('create and regenerate: same still worker publishes exact immutable manifes
  }
 });
 test('partial or changed receipt stops before publish; uncertain publish retains exact running task',async t=>{
- const f=make(t,{regenerate:true});
+ const f=make(t);
  let posted=0;
  const pds={preparePropPublication(){return {manifest:{...f.manifest,parentSha256:dig(8)}};},
   publishPropPackage(){posted++;throw Error('ack lost');}};
@@ -107,7 +107,7 @@ test('strict transport capability; exact binary/stdout upload wire and mutation 
 });
 
 test('Spirit package readiness and publish bind third static receipt at one-fifth canvas',async t=>{
- for(const regenerate of [false,true]){
+ for(const regenerate of [false]){
   const f=make(t,{regenerate,spirit:true});
   const row=f.by[propKeys.spirit].id;
   f.db.prepare("UPDATE workflow_tasks SET status='pending' WHERE task_id=?").run(row);
@@ -166,4 +166,11 @@ test('appending two scales claims two independent retryable tasks before one pub
  assert.equal((await f.run(pds)).state,'completed');
  assert.deepEqual(seen,[5,5,100,'publish']);
  assert.equal(next(),undefined);
+});
+
+test('retired full prop regeneration is not selected or directly claimed by the postprocess publisher',async t=>{
+ const f=make(t,{regenerate:true});
+ assert.equal(nextPropPackageFromPath(f.dbPath),null);
+ assert.equal((await f.run({preparePropPublication:()=>assert.fail('must not prepare')})).state,'not_claimable');
+ assert.equal(f.state().status,'pending');
 });

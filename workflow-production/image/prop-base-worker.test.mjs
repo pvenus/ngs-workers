@@ -102,7 +102,7 @@ function fixture(t,operation='prop.generate',mode='valid'){
   }})};
  return {options,state,db,base,design,calls,artifact};
 }
-for(const type of ['prop.generate','prop.regenerate'])test(type+' runs one approved image in existing resident image tick',async t=>{
+for(const type of ['prop.generate'])test(type+' runs one approved image in existing resident image tick',async t=>{
  const f=fixture(t,type);
  assert.deepEqual({...nextPropBaseFromPath(f.options.dbPath)},{taskId:f.base.id,officialRequestId:f.options.officialRequestId,operation:f.base.type});
  const r=await imageTick(f.options);
@@ -190,7 +190,7 @@ test('lost save response marks failed and the normal retry renders and saves aga
 });
 
 test('official spirit profile reaches the isolated base image renderer',async t=>{
- for(const type of ['prop.generate','prop.regenerate']){
+ for(const type of ['prop.generate']){
   const f=fixture(t,type,'spirit');
   assert.equal((await imageTick(f.options)).state,'completed');
   const q=f.calls.find(c=>c[0]==='render')[1];
@@ -200,7 +200,7 @@ test('official spirit profile reaches the isolated base image renderer',async t=
  }
 });
 
-for(const operation of ['prop.generate','prop.regenerate'])test(operation+' pixel source reads exact RGBA detail and makes a new stage-scoped render',async t=>{
+for(const operation of ['prop.generate'])test(operation+' pixel source reads exact RGBA detail and makes a new stage-scoped render',async t=>{
  const f=fixture(t,operation,'pixel-v2');
  assert.equal(nextPropBaseFromPath(f.options.dbPath).operation,f.base.type);
  assert.equal((await runPropBaseFromPath(f.options)).state,'completed');
@@ -214,4 +214,13 @@ test('pixel source cannot generate with corrupted cinematic reference',async t=>
  const f=fixture(t,'prop.generate','pixel-v2 corrupted');
  assert.equal((await runPropBaseFromPath(f.options)).state,'failed');
  assert.equal(f.calls.some(c=>c[0]==='render'),false);
+});
+
+test('retired full prop regeneration is neither selected nor directly rendered',async t=>{
+ for(const profile of ['', 'pixel-v2']){
+  const f=fixture(t,'prop.regenerate',profile);
+  assert.equal(nextPropBaseFromPath(f.options.dbPath),null);
+  await assert.rejects(runPropBaseFromPath(f.options),/BINDING_INVALID/);
+  assert.equal(f.calls.some(c=>c[0]==='render'),false);
+ }
 });

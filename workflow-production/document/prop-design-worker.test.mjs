@@ -35,7 +35,9 @@ function fixture(t,{kind='generate',motion,presentationProfile,parent=null,wireE
  const reqType='prop.'+kind,operation=reqType+'.design';
  const payload={schemaVersion:'ngs.prop-'+kind+'.v1',projectId:'binari',propId:'brass-lamp',intent:'검은 놋쇠 등잔 하나',
   designContextSha256:context.contextSha256,...(motion?{motion}:{}),...(presentationProfile?{presentationProfile}:{}),...(kind==='regenerate'?{source:{revision:7,sha256:'a'.repeat(64)}}:{})};
- const input=expectedInput(payload,operation),wire=canonical(payload);
+ const input=kind==='regenerate'?
+  {propId:payload.propId,designContextSha256:payload.designContextSha256,intent:payload.intent,motion:payload.motion??'still',source:payload.source}:
+  expectedInput(payload,operation),wire=canonical(payload);
  db.prepare("INSERT INTO workflow_runs VALUES(?,'planned',NULL,'binari',?,?,?,?,1)").run(officialRequestId,reqType,payload.schemaVersion,wire,sha(wire));
  db.prepare("INSERT INTO workflow_tasks VALUES(?,?,?,?,'prop_design','document',?,NULL,?,?,?)")
   .run(taskId,officialRequestId,canonical(wireEdit(input)),operation,parent,status,Date.now()-age,retry);
@@ -44,9 +46,9 @@ function fixture(t,{kind='generate',motion,presentationProfile,parent=null,wireE
   row:()=>db.prepare('SELECT * FROM workflow_tasks WHERE task_id=?').get(taskId)};
 }
 
-test('resident document tick claims both exact official create and regenerate; stage publish is typed and one result',async t=>{
- for(const kind of ['generate','regenerate']){
-  const f=fixture(t,{kind,motion:kind==='regenerate'?'subtle':undefined});
+test('resident document tick claims only exact official create; stage publish is typed and one result',async t=>{
+ for(const motion of [undefined,'subtle']){
+  const f=fixture(t,{motion});
   const calls=[];
   const pds={
    async capability(_s,op){calls.push('capability');return op===f.operation;},
@@ -85,7 +87,7 @@ test('predecessor and exact task input, current stamp and paired context pins st
  const p=()=>{throw Error('must not call');};
  const blocked=fixture(t,{parent:'wrong-parent'});
  assert.equal((await runPropDesignFromPath({...blocked,pds:{readPropDesign:p,publishPropDesign:p},render:p})).state,'not_claimable');
- const mismatched=fixture(t,{kind:'regenerate',wireEdit:v=>({...v,source:{...v.source,revision:8}})});
+ const mismatched=fixture(t,{wireEdit:v=>({...v,designContextSha256:'a'.repeat(64)})});
  await assert.rejects(runPropDesignFromPath({...mismatched,pds:{readPropDesign:p,publishPropDesign:p},render:p}),/BINDING_INVALID/);
  assert.equal(mismatched.row().status,'pending');
  for(const revoke of [false,true]){
@@ -131,7 +133,7 @@ test('readiness is explicit, transport scoped, and Codex prompt carries only ver
   return {};
  }});
  const s=dirSignal(),claim={taskId:f.taskId};
- assert.equal(await pds.capability(s,'prop.regenerate.design'),true);
+ assert.equal(await pds.capability(s,'prop.generate.design'),true);
  await pds.readPropDesign(claim,s);await pds.publishPropDesign(claim,model);
  assert.deepEqual(calls.map(c=>[c.path,c.method]),[[propDesignPath,'GET'],[propDesignPath+'/read','POST'],[propDesignPath,'POST']]);
  assert.deepEqual(calls[2].body,{claim,artifact:model});assert.equal(calls[2].signal,undefined);
@@ -189,4 +191,12 @@ test('official spirit design profile reaches artistic instruction but not immuta
   },
  };
  assert.equal((await runPropDesignFromPath({...f,pds,render:rendering})).state,'completed');
+});
+
+test('retired full prop regeneration is not selected or directly claimed by the document worker',async t=>{
+ const f=fixture(t,{kind:'regenerate'}),blocked=()=>assert.fail('must not render');
+ const pds={readPropDesign:blocked,publishPropDesign:blocked,capability:blocked};
+ assert.equal((await documentTick({dbPath:f.dbPath,pds,rendererFor:blocked,signal:dirSignal()})).state,'idle');
+ await assert.rejects(runPropDesignFromPath({...f,pds,render:blocked}),/BINDING_INVALID/);
+ assert.equal(f.row().status,'pending');
 });

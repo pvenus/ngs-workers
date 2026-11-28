@@ -24,8 +24,6 @@ const routes={...Object.fromEntries(Object.entries(chainPath).map(([op,path])=>[
  'cinematic.source.generate':{path:cinematicSourcePath,schema:'workflow.cinematic-source-write.v1'},
  'prop.generate.base':{path:propBasePath,schema:'workflow.prop-stage.v1'},
  'prop.generate.pixel-source':{path:propBasePath,schema:'workflow.prop-stage.v1'},
- 'prop.regenerate.pixel-source':{path:propBasePath,schema:'workflow.prop-stage.v1'},
- 'prop.regenerate.base':{path:propBasePath,schema:'workflow.prop-stage.v1'},
  'prop.image-generate':{path:propImagePath,schema:'workflow.prop-image-write.v1'},
  'motion-preset.convert-2d.image':{path:motionImagePath,schema:'workflow.motion-preset-convert-2d.v1'},
  'npc.portrait-representative':{path:portraitPath,schema:'workflow.representative-portrait-write.v1'},

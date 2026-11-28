@@ -21,7 +21,7 @@ import {renderPropInScratch} from './prop-derivation-provider.mjs';
 import {propTaskId,propKeys} from './vendor/prop-composite/prop-generate-plan.mjs';
 
 const [dbPath,officialRequestId,rawPort,operation,label,profile,referenceDigest]=process.argv.slice(2);
-assert.ok(dbPath&&officialRequestId&&/^[1-9]\d{3,4}$/.test(rawPort)&&['prop.generate','prop.regenerate','prop.animation.generate'].includes(operation)&&label);
+assert.ok(dbPath&&officialRequestId&&/^[1-9]\d{3,4}$/.test(rawPort)&&['prop.generate','prop.animation.generate'].includes(operation)&&label);
 const port=Number(rawPort);
 const python=process.env.WORKFLOW_PROP_TEST_PYTHON??'python3';
 const taskId=key=>propTaskId(officialRequestId,key);

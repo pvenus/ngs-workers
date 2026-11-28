@@ -2,8 +2,7 @@ import {retrySqliteBusy,isSqliteBusyExhausted,saveReservationClearSql} from './s
 /** Formal static prop image stage: one exact approved design in, one durable RGB/RGBA PNG receipt out. */
 import {DatabaseSync} from 'node:sqlite';
 import {canonical,sha} from './vendor/prop-composite-v1/envelope.mjs';
-import {exactProp as exact,propGenerateType,propGenerateSchema,propRegenerateType,propRegenerateSchema,
- validatePropGenerate,validatePropRegenerate} from './vendor/prop-composite-v1/prop-generate-envelope.mjs';
+import {exactProp as exact,propGenerateType,propGenerateSchema,validatePropGenerate} from './vendor/prop-composite-v1/prop-generate-envelope.mjs';
 import {buildPropGeneratePlan,exactPropTask,propKeys,propRef,propTaskId,isPropRef} from './vendor/prop-composite-v1/prop-generate-plan.mjs';
 import {assertDatabasePath,protectSchema,workflowTaskEligibleSql,workflowTaskRetrySetSql,markWorkflowTaskFailed} from './workflow-ready.mjs';
 import {settleFailure} from './failure-state.mjs';
@@ -12,9 +11,7 @@ import {validatePropDesign} from './prop-image-design.mjs';
 
 export const propBaseOperations=Object.freeze({
  'prop.generate.base':Object.freeze({type:propGenerateType,schema:propGenerateSchema,validate:validatePropGenerate,key:propKeys.base}),
- 'prop.regenerate.base':Object.freeze({type:propRegenerateType,schema:propRegenerateSchema,validate:validatePropRegenerate,key:propKeys.base}),
  'prop.generate.pixel-source':Object.freeze({type:propGenerateType,schema:propGenerateSchema,validate:validatePropGenerate,key:propKeys.pixelSource}),
- 'prop.regenerate.pixel-source':Object.freeze({type:propRegenerateType,schema:propRegenerateSchema,validate:validatePropRegenerate,key:propKeys.pixelSource}),
 });
 const worker='image', projectId='binari', official=/^request\.official\.[a-f0-9]{64}$/u;
 const signature=Buffer.from('89504e470d0a1a0a','hex');

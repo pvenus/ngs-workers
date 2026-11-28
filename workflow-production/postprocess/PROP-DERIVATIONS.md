@@ -1,8 +1,8 @@
 # Formal prop derivatives: staged worker connector
 
 `nextPropDerivationFromPath` and `runPropDerivationFromPath` handle the four
-postprocess derivative keys in the registered Planner graph, both under
-`prop.generate` and `prop.regenerate`, or the two animation-only derivative
+postprocess derivative keys in the registered Planner graph, under
+`prop.generate`, or the two animation-only derivative
 keys under `prop.animation.generate`. Neither the connector nor the Pillow
 renderer has Filex authority. This derivation worker never selects or claims the final
 package publish key or NPC work. No launch/import is active by default.
@@ -15,7 +15,7 @@ not a new worker-facing/public HTTP spec:
   `canvas:{width,height}`, and either a source `media` descriptor (one original
   PNG or an existing detail PNG/APNG), or a pinned RGB-sequence `manifest`.
   All animated stages additionally require a `geometry` proof and exact static
-  media for the target lane. On initial/regenerate subtleties this is a completed
+  media for the target lane. On initial subtleties this is a completed
   static task's `{taskId,resultRef,media}`; appends use the selected canonical
   package's `{revision,sha256,media}`. RGB source is presently the private tested
   `ngs.prop-native-rgb-sequence.v1` shape in the connector; reconcile it with the
@@ -53,7 +53,7 @@ stub only learned alpha inference and the intermediate PDS transport.
 ## Resident still lane
 
 The same Postprocess resident checks both loopback PDS stage and package
-capabilities before considering work. Only ordinary still create/regenerate
+capabilities before considering work. Only ordinary still creation
 is admitted; neither an authored motion request nor a subtly animated create
 is accepted even if its task row is already in the local DB. Native provider
 uses the existing frame-alpha Python, module root and pinned BiRefNet/SAM
@@ -67,13 +67,14 @@ and forwards just the manifest. PDS performs authoritative Filex publication
 and readback. No ACK/claim mismatch can persist a completed task; after
 dispatch an uncertain result is held for reconciliation rather than retried.
 
-On initial or append prop scale requests, each selected percent is a separate
+On initial or selected-size generation requests, each selected percent is a separate
 existing-lane `prop.scale.derive` task. The worker claims once, sends only
 the exact claim to PDS, and records the hash of the pair descriptor returned
 after verified private staging. Each task can retry without touching the
 public prop. The final publishing task joins all completed pair hashes and
 publishes one revision; it does not derive those scales a second time.
-Existing runs with a combined scale publication task remain supported.
+Selected scales may replace prior outputs. Full prop regeneration is no
+longer claimed. Historical add-only scale topology remains supported.
 
 Full isolated worker→PDS→Filex fixture (using the staged service tree
 containing `filex-writer/test_prop_stage_authority_http.py`):
@@ -82,7 +83,7 @@ containing `filex-writer/test_prop_stage_authority_http.py`):
 cd "$STAGED_BACKEND_SERVICES"
 PYTHONPATH=data-service:filex-writer WORKFLOW_PROP_TEST_PYTHON=/path/to/python-with-pillow \
   /path/to/python3 -B "$WORKERS/workflow-production/postprocess/prop-resident-chain.fixture.py" \
-  WorkerChain.test_actual_static_worker_chain_create_regenerate
+  WorkerChain.test_actual_static_worker_chain_create
 ```
 
 The fixture supplies model-free Codex, diffusion and matting results

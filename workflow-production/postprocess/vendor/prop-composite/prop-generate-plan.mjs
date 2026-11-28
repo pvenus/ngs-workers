@@ -32,7 +32,8 @@ export const propRef=(key,digest)=>{
 export function isPropRef(key,value){
  return typeof value==='string'&&propHash(value.slice(-64))&&value===propRef(key,value.slice(-64));
 }
-export function buildPropGeneratePlan(run,{splitScales=true}={}){
+export const propScaleReplacePublish=propScaleType+'.replace-publish';
+export function buildPropGeneratePlan(run,{splitScales=true,replaceScales=splitScales}={}){
  const {officialRequestId:oid,payload}=run;
  if(!propTypes.includes(run.requestType)||typeof oid!=='string'||oid.length!==81||!official.test(oid))
   throw Error('PROP_COMPOSITE_TOPOLOGY_INVALID');
@@ -50,8 +51,9 @@ export function buildPropGeneratePlan(run,{splitScales=true}={}){
   return parent;
  };
  if(run.requestType===propScaleType){
+  if(replaceScales&&!splitScales)throw Error('PROP_COMPOSITE_TOPOLOGY_INVALID');
   const scope={propId:payload.propId,source:payload.source},parent=scaleTasks(scope,null);
-  tasks.push({id:id(propKeys.publish),key:propKeys.publish,type:propScaleType+'.publish',
+  tasks.push({id:id(propKeys.publish),key:propKeys.publish,type:replaceScales?propScaleReplacePublish:propScaleType+'.publish',
    workerType:'postprocess',dependsOn:parent===null?null:id(parent),
    input:{...scope,scalePercents:payload.scalePercents,dependsOnTaskIds:tasks.map(x=>x.id)}});
   return tasks;
@@ -114,9 +116,10 @@ export function exactPropTask(row,task){
 }
 // Ten generation stages, eleven possible scale tasks, one publish, one extra-row sentinel.
 export const propCompletionLimit=23;
-// Existing v1 runs predate scale tasks. Reconstruct either exact stored graph;
-// a mixed or partial graph cannot pass exact row and task-count checks.
-export const storedPropPlan=(run,rows)=>buildPropGeneratePlan(run,{splitScales:rows.some(r=>isPropScaleKey(r.task_key))});
+// Historical combined and fan-out add-only runs retain their exact persisted graph.
+// Unknown or partial topology still fails the exact row checks.
+export const storedPropPlan=(run,rows)=>buildPropGeneratePlan(run,{splitScales:rows.some(r=>isPropScaleKey(r.task_key)),
+ replaceScales:rows.some(r=>r.task_key===propKeys.publish&&r.task_type===propScaleReplacePublish)});
 export function verifyPropScaleRefs(manifest,refs){
  const entries=refs.filter(r=>isPropScaleKey(r.key));
  return entries.every(r=>manifest.scaleVariants?.some(v=>r.key===propScaleKey(v.scalePercent)&&r.ref===propRef(r.key,sha(canonical(v)))));

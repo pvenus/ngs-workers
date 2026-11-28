@@ -2,12 +2,13 @@ import {retrySqliteBusy,saveReservationClearSql} from './sqlite-busy-retry.mjs';
 /** Exact formal prop derivative execution. No filesystem authority or global scan. */
 import {DatabaseSync} from 'node:sqlite';
 import {canonical,sha} from './vendor/planner-f24d23a/envelope.mjs';
-import {exactProp,propValidator,propAnimationType,propTypes,spiritPresentationProfile,pixelSourcePresentationProfile} from './vendor/prop-composite/prop-generate-envelope.mjs';
+import {exactProp,propValidator,propAnimationType,propGenerateType,spiritPresentationProfile,pixelSourcePresentationProfile} from './vendor/prop-composite/prop-generate-envelope.mjs';
 import {buildPropGeneratePlan,exactPropTask,isPropRef,propKeys,propRef} from './vendor/prop-composite/prop-generate-plan.mjs';
 import {propRenderDiagnostic} from './prop-derivation-provider.mjs';
 import {verifyPropMedia,propPackageMediaLimit} from './vendor/prop-composite/prop-package-contract.mjs';
 import {assertDatabasePath,protectSchema,workflowTaskEligibleSql,workflowTaskRetrySetSql,markWorkflowTaskFailed} from './workflow-ready.mjs';
 
+const propTypes=[propGenerateType,propAnimationType];
 const roles={
  [propKeys.detail]:'detail',[propKeys.pixelDetail]:'detail',[propKeys.pixel]:'pixel',[propKeys.spirit]:'spirit',
  [propKeys.animDetail]:'detail',[propKeys.animPixel]:'pixel',
@@ -26,7 +27,7 @@ function selected(db,taskId,officialRequestId,status,stamp){
  const claiming=status==='eligible';
  const row=db.prepare("SELECT * FROM workflow_runs WHERE official_request_id=? AND state='planned' AND reason IS NULL").get(officialRequestId);
  const task=db.prepare(`SELECT t.* FROM workflow_tasks t WHERE t.task_id=? AND t.official_request_id=? AND t.result_ref IS NULL${claiming?` AND ${workflowTaskEligibleSql(db, 't')}`:''}`).get(taskId,officialRequestId);
- if(!row||!task||task.worker_type!=='postprocess'||!(Object.hasOwn(roles,task.task_key))||
+ if(!row||!propTypes.includes(row.request_type)||!task||task.worker_type!=='postprocess'||!(Object.hasOwn(roles,task.task_key))||
     (!claiming&&(task.status!==status||task.updated_at!==stamp)))return null;
  check(Object.hasOwn(propValidator,row.request_type)&&row.project_id==='binari');
  const payload=JSON.parse(row.payload);

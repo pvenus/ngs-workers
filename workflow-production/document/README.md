@@ -182,7 +182,7 @@ heading. A failed new add does not automatically render again.
 
 ## 공식 프랍 디자인 문서 단계
 
-기존 Document worker의 `--run` → `prop.generate.design` / `prop.regenerate.design` (`prop_design`, 무선행) 단계입니다. PDS의 정확한 `workflow.prop-design-write.v1` 기능 응답을 확인하지 못하면 공식 요청을 잡지 않습니다. 선택한 요청과 같은 `project / propId / source pin / context SHA`만 허용하고 PDS에서 받은 Master Visual 필드 두 개와 Prop Design Markdown을 독립 해시 검증합니다. 풀 재생성의 이전 버전은 비교·출처 고정용이며, 오래된 이미지나 캡션을 기존 디자인 대신 모델에 넣지 않습니다.
+기존 Document worker의 `--run` → `prop.generate.design` (`prop_design`, 무선행) 단계입니다. PDS의 정확한 `workflow.prop-design-write.v1` 기능 응답을 확인하지 못하면 공식 요청을 잡지 않습니다. 선택한 요청과 같은 `project / propId / context SHA`만 허용하고 PDS에서 받은 Master Visual 필드 두 개와 Prop Design Markdown을 독립 해시 검증합니다. 이전 풀 재생성 요청은 더 이상 작업을 인수하지 않습니다.
 
 고정 Codex CLI 권한 읽기 전용, 도구/웹/플러그인 비활성, 임시 경로·입출력·시간 상한을 재사용합니다. 요청/자료는 형식화된 입력값 하나이며 임의 경로·실행 코드가 아닙니다. 결과는 하나의 `ngs.prop-design-spec.v1` 메타데이터입니다. 제목, 한 프랍 기본 이미지용 설명, 명시적으로 요청한 경우의 한 동작, 픽셀·비픽셀 이미지 자체의 독립 클릭 범위를 포함합니다. 범위는 정수 천분율로 기록하며 배치나 퍼즐 전이를 쓰지 않습니다. 설정되지 않은 동작이나 클릭 범위는 생성 후 암묵 적용하지 않습니다.
 
